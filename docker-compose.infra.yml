@@ -1,0 +1,100 @@
+version: '3.8'
+
+# Infrastructure services for development
+# Run with: docker-compose -f docker-compose.infra.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: balbes-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-balbes}
+      POSTGRES_USER: ${POSTGRES_USER:-balbes}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-balbes} -d ${POSTGRES_DB:-balbes_agents}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - balbes
+
+  redis:
+    image: redis:7-alpine
+    container_name: balbes-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 2gb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - balbes
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: balbes-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      RABBITMQ_DEFAULT_VHOST: /
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - balbes
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: balbes-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334"  # gRPC port
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - balbes
+
+networks:
+  balbes:
+    name: balbes_network
+    driver: bridge
+
+# Usage:
+# docker-compose -f docker-compose.infra.yml up -d     # Start
+# docker-compose -f docker-compose.infra.yml ps        # Status
+# docker-compose -f docker-compose.infra.yml logs -f   # Logs
+# docker-compose -f docker-compose.infra.yml down      # Stop

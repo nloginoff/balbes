@@ -1,26 +1,123 @@
-# Python cache and bytecode
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# Build and packaging artifacts
+*.so
+.Python
 build/
+develop-eggs/
 dist/
-*.egg-info/
+downloads/
+eggs/
 .eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
-# Virtual environments
+# Virtual Environment
 .venv/
 venv/
+ENV/
 env/
+.virtualenv/
 
-# Test and tooling caches
+# Testing
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
 .coverage
+htmlcov/
+.tox/
+.nox/
 coverage.xml
+*.cover
 
-# IDE/editor files
-.idea/
+# Linting
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# IDEs
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Data (IMPORTANT!)
+data/
+!data/.gitkeep
+!data/logs/.gitkeep
+!data/coder_output/.gitkeep
+!data/postgres/.gitkeep
+!data/redis/.gitkeep
+!data/rabbitmq/.gitkeep
+!data/qdrant/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Backups
+backups/
+*.sql
+*.tar.gz
+*.backup
+
+# Docker
+.dockerignore
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Node.js (Frontend)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+dist/
+build/
+
+# Frontend build artifacts
+services/web/frontend/dist/
+services/web/frontend/build/
+
+# Jupyter Notebooks (если будут)
+.ipynb_checkpoints/
+*.ipynb
+
+# SSL Certificates
+*.pem
+*.key
+*.crt
+*.csr
+
+# Secrets (double-check these never get committed!)
+secrets/
+credentials/
+*.secret
+*_secret.*
+*_private.*

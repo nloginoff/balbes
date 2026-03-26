@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  postgres-test:
+    image: postgres:15
+    container_name: balbes-test-postgres
+    environment:
+      POSTGRES_USER: balbes_test
+      POSTGRES_PASSWORD: balbes_test_secret
+      POSTGRES_DB: balbes_test
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U balbes_test -d balbes_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: balbes-test-redis
+    ports:
+      - "6380:6379"
+    tmpfs:
+      - /data
+    command: redis-server --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 3
+
+  qdrant-test:
+    image: qdrant/qdrant:latest
+    container_name: balbes-test-qdrant
+    ports:
+      - "6335:6333"
+    tmpfs:
+      - /qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+networks:
+  default:
+    name: balbes-test-network

@@ -5,29 +5,74 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "balbes"
 version = "0.1.0"
-description = "Clean Python starter project."
+description = "Multi-Agent AI System with Telegram and Web interface."
 readme = "README.md"
-requires-python = ">=3.13"
-authors = [{ name = "Your Name" }]
-dependencies = []
+requires-python = ">=3.10"
+authors = [{ name = "balbes" }]
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "httpx>=0.27.0",
+    "aio-pika>=9.4.0",
+    "python-telegram-bot>=21.0",
+    "psycopg[binary]>=3.1.0",
+    "asyncpg>=0.29.0",
+    "redis>=5.0.0",
+    "qdrant-client>=1.8.0",
+    "pyyaml>=6.0",
+    "tiktoken>=0.6.0",
+    "python-multipart>=0.0.9",
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "jinja2>=3.1.0",
+]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0.0",
+  "pytest-asyncio>=0.23.0",
+  "pytest-cov>=4.1.0",
   "pre-commit>=3.8.0",
   "ruff>=0.6.0",
+  "mypy>=1.8.0",
 ]
 
 [project.scripts]
 balbes = "balbes.main:main"
 
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["shared*"]
+
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = [".", "shared"]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
+extend-exclude = ["data", "backups", ".venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "E402",  # Module imports after code (needed for FastAPI dynamic imports)
+    "B008",  # FastAPI Query/Depends in function defaults is idiomatic
+    "B904",  # Exception chaining - will be fixed in cleanup phase
+    "SIM105",  # contextlib.suppress - will be refactored later
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.13"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

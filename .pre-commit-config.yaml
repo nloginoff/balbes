@@ -3,13 +3,21 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-yaml
+        exclude: ^config/.*\.yaml$  # Allow template variables
       - id: end-of-file-fixer
+        exclude: ^data/
       - id: trailing-whitespace
+        exclude: ^data/
       - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: mixed-line-ending
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.2
     hooks:
       - id: ruff
-        args: ["--fix"]
+        args: ["--fix", "--extend-ignore=B,SIM"]
       - id: ruff-format
