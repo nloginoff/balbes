@@ -32,7 +32,7 @@ echo "✅ Activated Python virtual environment"
 echo ""
 echo "📦 Starting Docker infrastructure (dev)..."
 if ! docker ps | grep -q balbes-dev-postgres; then
-    sg docker -c 'docker-compose -f docker-compose.dev.yml up -d'
+    sg docker -c 'docker compose -f docker-compose.dev.yml up -d'
     echo "⏳ Waiting for infrastructure to be ready..."
     sleep 10
 else

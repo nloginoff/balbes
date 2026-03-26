@@ -33,7 +33,7 @@ read -p "Stop Docker infrastructure (dev)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     cd /home/balbes/projects/dev
-    sg docker -c 'docker-compose -f docker-compose.dev.yml down'
+    sg docker -c 'docker compose -f docker-compose.dev.yml down'
 fi
 
 # Cleanup logs

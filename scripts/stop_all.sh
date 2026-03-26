@@ -44,7 +44,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
     echo "Stopping Docker containers..."
     cd /home/balbes/projects/dev
-    sg docker -c 'docker-compose down'
+    sg docker -c 'docker compose down'
 fi
 
 echo ""

@@ -160,11 +160,14 @@ class OrchestratorAgent:
                 return {}
 
             response = await self.http_client.get(
-                f"{self.memory_service_url}/api/v1/context/{user_id}"
+                f"{self.memory_service_url}/api/v1/context/orchestrator/{user_id}"
             )
 
             if response.status_code == 200:
-                return response.json()
+                return response.json().get("value", {})
+            elif response.status_code == 404:
+                # No context found - not an error
+                return {}
             return {}
 
         except Exception as e:

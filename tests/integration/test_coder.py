@@ -30,11 +30,17 @@ logger = logging.getLogger("test.coder")
 # =============================================================================
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="function")
 async def http_client():
     """HTTP client for API testing"""
-    async with httpx.AsyncClient() as client:
+    client = httpx.AsyncClient(timeout=30.0)
+    try:
         yield client
+    finally:
+        try:
+            await client.aclose()
+        except RuntimeError:
+            pass
 
 
 @pytest.fixture
@@ -320,7 +326,7 @@ async def test_multiple_skill_creation():
 async def test_coder_health_check(http_client):
     """Test health check endpoint"""
     try:
-        response = await http_client.get("http://localhost:8004/health")
+        response = await http_client.get("http://localhost:8103/health")
         assert response.status_code in [200, 503]
     except httpx.ConnectError:
         pytest.skip("Coder service not running")
@@ -330,7 +336,7 @@ async def test_coder_health_check(http_client):
 async def test_coder_root_endpoint(http_client):
     """Test root endpoint"""
     try:
-        response = await http_client.get("http://localhost:8004/")
+        response = await http_client.get("http://localhost:8103/")
         assert response.status_code == 200
         data = response.json()
         assert "service" in data
@@ -344,7 +350,7 @@ async def test_skill_generation_api(http_client):
     """Test skill generation via API"""
     try:
         response = await http_client.post(
-            "http://localhost:8004/api/v1/skills/generate",
+            "http://localhost:8103/api/v1/skills/generate",
             json={
                 "name": "APITestSkill",
                 "description": "Skill created via API",
@@ -369,7 +375,7 @@ async def test_skill_generation_api(http_client):
 async def test_get_generated_skills_api(http_client):
     """Test getting generated skills via API"""
     try:
-        response = await http_client.get("http://localhost:8004/api/v1/skills/generated")
+        response = await http_client.get("http://localhost:8103/api/v1/skills/generated")
 
         if response.status_code == 200:
             data = response.json()
@@ -395,7 +401,7 @@ async def test_coder_config():
 
     settings = get_settings()
 
-    assert settings.coder_port == 8004
+    assert settings.coder_port == 8103
     assert settings.orchestrator_port == 8102
     assert settings.skills_registry_port == 8101
 

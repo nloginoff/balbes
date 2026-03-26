@@ -32,7 +32,7 @@ sleep 2
 echo ""
 echo "🧹 Cleaning up Docker test infrastructure..."
 cd /home/balbes/projects/dev
-sg docker -c 'docker-compose -f docker-compose.test.yml down -v'
+sg docker -c 'docker compose -f docker-compose.test.yml down -v'
 
 # Cleanup logs
 rm -f /tmp/balbes-test-*.log

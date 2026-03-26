@@ -31,8 +31,8 @@ echo "✅ Activated Python virtual environment"
 # Start Docker infrastructure (test - uses tmpfs, no persistence)
 echo ""
 echo "📦 Starting Docker infrastructure (test)..."
-sg docker -c 'docker-compose -f docker-compose.test.yml down -v 2>/dev/null || true'
-sg docker -c 'docker-compose -f docker-compose.test.yml up -d'
+sg docker -c 'docker compose -f docker-compose.test.yml down -v 2>/dev/null || true'
+sg docker -c 'docker compose -f docker-compose.test.yml up -d'
 echo "⏳ Waiting for test infrastructure..."
 sleep 10
 

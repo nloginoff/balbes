@@ -41,7 +41,7 @@ fi
 # Start Docker infrastructure (prod)
 echo ""
 echo "📦 Starting Docker infrastructure (prod)..."
-sg docker -c 'docker-compose -f docker-compose.prod.yml up -d'
+sg docker -c 'docker compose -f docker-compose.prod.yml up -d'
 echo "⏳ Waiting for infrastructure to be ready..."
 sleep 15
 

@@ -525,7 +525,7 @@ class APIService:
 
             response = await self.http_client.post(
                 f"{self.orchestrator_url}/api/v1/tasks",
-                json={
+                params={
                     "user_id": "web_backend",
                     "description": description,
                 },

@@ -31,11 +31,17 @@ logger = logging.getLogger("test.web_backend")
 # ============================================================================
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="function")
 async def http_client():
     """HTTP client for API testing"""
-    async with httpx.AsyncClient() as client:
+    client = httpx.AsyncClient(timeout=30.0)
+    try:
         yield client
+    finally:
+        try:
+            await client.aclose()
+        except RuntimeError:
+            pass  # Event loop already closed
 
 
 @pytest.fixture
@@ -329,7 +335,7 @@ async def test_login_endpoint(http_client):
             "http://localhost:8200/api/v1/auth/login",
             json={
                 "username": "admin",
-                "password": "admin",
+                "password": "admin123",
             },
         )
 
@@ -351,7 +357,7 @@ async def test_get_agents_endpoint(http_client):
         # First login
         login_response = await http_client.post(
             "http://localhost:8200/api/v1/auth/login",
-            json={"username": "admin", "password": "admin"},
+            json={"username": "admin", "password": "admin123"},
         )
 
         if login_response.status_code != 200:
@@ -361,7 +367,9 @@ async def test_get_agents_endpoint(http_client):
 
         # Get agents
         response = await http_client.get(
-            "http://localhost:8200/api/v1/agents", headers={"Authorization": f"Bearer {token}"}
+            "http://localhost:8200/api/v1/agents",
+            params={"user_id": "admin"},
+            headers={"Authorization": f"Bearer {token}"},
         )
 
         if response.status_code == 200:
@@ -380,7 +388,7 @@ async def test_get_dashboard_status(http_client):
         # First login
         login_response = await http_client.post(
             "http://localhost:8200/api/v1/auth/login",
-            json={"username": "admin", "password": "admin"},
+            json={"username": "admin", "password": "admin123"},
         )
 
         if login_response.status_code != 200:
@@ -391,6 +399,7 @@ async def test_get_dashboard_status(http_client):
         # Get status
         response = await http_client.get(
             "http://localhost:8200/api/v1/dashboard/status",
+            params={"user_id": "admin"},
             headers={"Authorization": f"Bearer {token}"},
         )
 

@@ -15,10 +15,11 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def event_loop():
     """Create event loop for async tests"""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     yield loop
     loop.close()
 
@@ -134,3 +135,26 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "integration: Integration tests (require services running)")
     config.addinivalue_line("markers", "e2e: End-to-end tests (require full system)")
     config.addinivalue_line("markers", "slow: Slow tests (may take several seconds)")
+
+
+@pytest.fixture
+async def openrouter_available() -> bool:
+    """Check if OpenRouter API is available"""
+    import httpx
+
+    from shared.config import get_settings
+
+    settings = get_settings()
+    if not settings.openrouter_api_key or settings.openrouter_api_key.startswith("sk-or-v1-dev"):
+        return False
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                "https://openrouter.ai/api/v1/embeddings",
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+                json={"model": "text-embedding-3-small", "input": "test"},
+            )
+            return response.status_code == 200
+    except Exception:
+        return False

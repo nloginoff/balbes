@@ -19,7 +19,7 @@ echo ""
 echo "📦 Checking infrastructure..."
 if ! docker ps | grep -q balbes-redis; then
     echo "Starting Docker infrastructure..."
-    sg docker -c 'docker-compose up -d'
+    sg docker -c 'docker compose up -d'
     echo "Waiting for infrastructure to be ready..."
     sleep 10
 fi

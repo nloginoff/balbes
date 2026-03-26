@@ -28,6 +28,20 @@ def find_project_root() -> Path:
 PROJECT_ROOT = find_project_root()
 
 
+def get_env_file() -> str:
+    """Get environment-specific .env file based on ENV variable"""
+    import os
+
+    env = os.getenv("ENV", "dev")
+    env_file = PROJECT_ROOT / f".env.{env}"
+
+    # Fallback to .env if environment-specific file doesn't exist
+    if not env_file.exists():
+        env_file = PROJECT_ROOT / ".env"
+
+    return str(env_file)
+
+
 class Settings(BaseSettings):
     """
     Global settings for Balbes Multi-Agent System.
@@ -36,7 +50,7 @@ class Settings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=str(PROJECT_ROOT / ".env"),
+        env_file=get_env_file(),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",  # Ignore extra env vars

@@ -39,7 +39,7 @@ sleep 2
 # Docker stays running for production (data persistence)
 echo ""
 echo "📦 Production Docker containers kept running (data persistence)"
-echo "   To stop Docker: sg docker -c 'docker-compose -f docker-compose.prod.yml down'"
+echo "   To stop Docker: sg docker -c 'docker compose -f docker-compose.prod.yml down'"
 echo ""
 echo "✅ Production services stopped!"
 echo "   Infrastructure still running (PostgreSQL, Redis, Qdrant)"

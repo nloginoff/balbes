@@ -30,11 +30,17 @@ logger = logging.getLogger("test.orchestrator")
 # =============================================================================
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="function")
 async def http_client():
     """HTTP client for API testing"""
-    async with httpx.AsyncClient() as client:
+    client = httpx.AsyncClient(timeout=30.0)
+    try:
         yield client
+    finally:
+        try:
+            await client.aclose()
+        except RuntimeError:
+            pass  # Event loop already closed
 
 
 @pytest.fixture
@@ -346,7 +352,7 @@ async def test_task_execution_api(http_client, user_id):
     try:
         response = await http_client.post(
             "http://localhost:8102/api/v1/tasks",
-            json={
+            params={
                 "user_id": user_id,
                 "description": "Test task via API",
             },
