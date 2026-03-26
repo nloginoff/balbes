@@ -4,8 +4,23 @@
 
 **Started**: 2026-03-26
 **Target completion**: ~2026-04-15 (20 дней)
-**Current status**: 📝 Stage 8 Complete → Ready for Stage 9 (Production Deployment)
-**Overall MVP Progress**: 80% (8 out of 10 stages complete)
+**Current status**: ✅ Stage 8 Complete + Dev environment stabilized (production-like in local scope)
+**Overall MVP Progress**: 80% (8 out of 10 stages complete; next: Stage 9)
+
+### 🔄 Actual Snapshot (updated)
+
+- [x] Этап 0: Planning & Documentation
+- [x] Этап 2: Memory Service
+- [x] Этап 3: Skills Registry
+- [x] Этап 4: Orchestrator Agent
+- [x] Этап 5: Coder Agent
+- [x] Этап 6: Web Backend
+- [x] Этап 7: Web Frontend
+- [x] Этап 8: Integration & Testing
+- [ ] Этап 9: Production Deployment
+- [ ] Этап 10: Final Testing
+
+**Verified test status (dev, latest run)**: `133 passed, 0 skipped`
 
 ---
 
@@ -28,7 +43,7 @@
 
 ## 📋 In Progress
 
-**NONE - Stage 5 Complete! 🎉**
+**NONE - Stage 8 Complete, Stage 9 pending**
 
 ---
 
@@ -563,27 +578,26 @@
 
 ```
 Planning:        ████████████████████ 100% ✅
-Core (Этап 1):   ░░░░░░░░░░░░░░░░░░░░   0%
 Memory (Этап 2): ████████████████████ 100% ✅
-Skills (Этап 3): ░░░░░░░░░░░░░░░░░░░░   0%
-Orch (Этап 4):   ░░░░░░░░░░░░░░░░░░░░   0%
-Coder (Этап 5):  ░░░░░░░░░░░░░░░░░░░░   0%
-Web BE (Этап 6): ░░░░░░░░░░░░░░░░░░░░   0%
-Web FE (Этап 7): ░░░░░░░░░░░░░░░░░░░░   0%
-Test (Этап 8):   ░░░░░░░░░░░░░░░░░░░░   0%
+Skills (Этап 3): ████████████████████ 100% ✅
+Orch (Этап 4):   ████████████████████ 100% ✅
+Coder (Этап 5):  ████████████████████ 100% ✅
+Web BE (Этап 6): ████████████████████ 100% ✅
+Web FE (Этап 7): ████████████████████ 100% ✅
+Test (Этап 8):   ████████████████████ 100% ✅
 Deploy (Этап 9): ░░░░░░░░░░░░░░░░░░░░   0%
 Final (Этап 10): ░░░░░░░░░░░░░░░░░░░░   0%
 
-Overall MVP:     ████░░░░░░░░░░░░░░░░  20%
+Overall MVP:     ████████████████░░░░  80%
 ```
 
 ---
 
 ## 🎯 Current Focus
 
-**Phase**: Memory Service Complete ✅
-**Next**: Начать Этап 3 - Skills Registry
-**First task**: 3.1 Skills Registry Service (создать registry.py)
+**Phase**: Stage 8 complete + dev parity checks complete ✅
+**Next**: Начать Этап 9 - Production Deployment
+**First task**: подготовить production compose + Nginx + deployment runbook
 
 ---
 
