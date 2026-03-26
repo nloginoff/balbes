@@ -15,6 +15,82 @@ This guide covers deploying Balbes on a production VPS server with Docker and sy
 
 ---
 
+## Pre-Deploy Validation Checklist (Living)
+
+Run this checklist before every deploy. Keep it updated whenever API contracts,
+ports, auth flows, or test suites change.
+
+### 0) Start dev environment
+
+```bash
+cd /home/balbes/projects/dev
+ENV=dev ./scripts/start_dev.sh
+```
+
+### 1) Smoke health checks
+
+```bash
+curl -sf http://localhost:8100/health   # Memory
+curl -sf http://localhost:8101/health   # Skills
+curl -sf http://localhost:8102/health   # Orchestrator
+curl -sf http://localhost:8103/health   # Coder
+curl -sf http://localhost:8200/health   # Web Backend
+```
+
+### 2) Full automated test gate
+
+```bash
+ENV=dev python -m pytest tests/ -q
+```
+
+Expected: all tests pass with zero failures.
+
+### 3) Critical manual API checks
+
+```bash
+# Login
+curl -s -X POST http://localhost:8200/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+
+# Dashboard (requires user_id query parameter)
+curl -s "http://localhost:8200/api/v1/dashboard/status?user_id=admin" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# Create task (requires user_id query parameter)
+curl -s -X POST "http://localhost:8200/api/v1/tasks?user_id=admin" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"agent_id":"orchestrator","description":"pre-deploy check","payload":{}}'
+```
+
+### 4) Frontend sanity check
+
+```bash
+cd web-frontend
+npm run dev
+```
+
+Verify login, dashboard, agents, skills, tasks, and task creation from UI.
+
+### 5) Go/No-Go criteria
+
+- [ ] All health endpoints return success
+- [ ] `ENV=dev python -m pytest tests/ -q` passes
+- [ ] Manual login + dashboard + create task succeed
+- [ ] No recurring errors in `/tmp/balbes-dev-*.log`
+- [ ] Secrets are not tracked in git (`.env.dev`, `.env.test`)
+
+### Checklist maintenance rule
+
+- Update this section immediately after any change to:
+  - API endpoints or required query/body fields
+  - auth credentials or token flow
+  - service ports or startup scripts
+  - test commands, expected totals, or pass criteria
+
+---
+
 ## Quick Deployment (Development)
 
 ### 1. Install Dependencies
