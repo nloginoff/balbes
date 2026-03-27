@@ -5,7 +5,8 @@
 
 set -e
 
-PROJECT_ROOT="/home/balbes/projects/dev"
+#PROJECT_ROOT="/home/balbes/projects/dev"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "🚢 Starting Balbes - PRODUCTION MODE"

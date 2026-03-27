@@ -3,6 +3,9 @@
 # Stop Balbes PRODUCTION environment
 # Usage: ./scripts/stop_prod.sh
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🛑 Stopping Balbes - PRODUCTION MODE"
 echo "========================================"
 echo ""
@@ -39,7 +42,7 @@ sleep 2
 # Docker stays running for production (data persistence)
 echo ""
 echo "📦 Production Docker containers kept running (data persistence)"
-echo "   To stop Docker: sg docker -c 'docker compose -f docker-compose.prod.yml down'"
+echo "   To stop Docker: cd \"$PROJECT_ROOT\" && sg docker -c 'docker compose -f docker-compose.prod.yml down'"
 echo ""
 echo "✅ Production services stopped!"
 echo "   Infrastructure still running (PostgreSQL, Redis, Qdrant)"
