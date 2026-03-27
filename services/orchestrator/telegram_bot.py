@@ -260,33 +260,21 @@ Connected services:
 
                 # Send result
                 if result.get("status") == "success":
-                    result_text = f"""
-✅ **Task Completed**
-
-📌 **Task**: {task_description[:100]}...
-
-🎯 **Skill Used**: {result.get("skill_used", "N/A")}
-
-📊 **Result**:
-```
-{str(result.get("result", {}))[:200]}
-```
-
-⏱️ **Duration**: {result.get("duration_ms", 0):.0f}ms
-                    """
+                    result_text = (
+                        "✅ Task Completed\n\n"
+                        f"📌 Task: {task_description[:100]}...\n\n"
+                        f"🎯 Skill Used: {result.get('skill_used', 'N/A')}\n\n"
+                        f"📊 Result:\n{str(result.get('result', {}))[:200]}\n\n"
+                        f"⏱️ Duration: {result.get('duration_ms', 0):.0f}ms"
+                    )
                 else:
-                    result_text = f"""
-❌ **Task Failed**
+                    result_text = (
+                        "❌ Task Failed\n\n"
+                        f"📌 Task: {task_description[:100]}...\n\n"
+                        f"❌ Error: {result.get('error', 'Unknown error')}"
+                    )
 
-📌 **Task**: {task_description[:100]}...
-
-❌ **Error**: {result.get("error", "Unknown error")}
-                    """
-
-                await update.message.reply_text(
-                    result_text,
-                    parse_mode="Markdown",
-                )
+                await update.message.reply_text(result_text)
 
                 logger.info(f"Task completed for user {user.id}: {result.get('status')}")
             else:
