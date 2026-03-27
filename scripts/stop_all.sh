@@ -5,6 +5,9 @@
 
 set -e
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🛑 Stopping Balbes Multi-Agent System..."
 echo "========================================"
 
@@ -43,8 +46,7 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
     echo "Stopping Docker containers..."
-    cd /home/balbes/projects/dev
-    sg docker -c 'docker compose down'
+    sg docker -c 'docker compose -f docker-compose.dev.yml down'
 fi
 
 echo ""

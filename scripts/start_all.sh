@@ -5,7 +5,7 @@
 
 set -e
 
-PROJECT_ROOT="/home/balbes/projects/dev"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "🚀 Starting Balbes Multi-Agent System..."
@@ -17,9 +17,9 @@ source .venv/bin/activate
 # Check if infrastructure is running
 echo ""
 echo "📦 Checking infrastructure..."
-if ! docker ps | grep -q balbes-redis; then
+if ! docker ps | grep -q balbes-dev-redis; then
     echo "Starting Docker infrastructure..."
-    sg docker -c 'docker compose up -d'
+    sg docker -c 'docker compose -f docker-compose.dev.yml up -d'
     echo "Waiting for infrastructure to be ready..."
     sleep 10
 fi

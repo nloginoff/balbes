@@ -3,6 +3,9 @@
 # Stop Balbes TESTING environment
 # Usage: ./scripts/stop_test.sh
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🛑 Stopping Balbes - TESTING MODE"
 echo "========================================"
 
@@ -31,7 +34,6 @@ sleep 2
 # Stop and cleanup Docker (test always cleans up)
 echo ""
 echo "🧹 Cleaning up Docker test infrastructure..."
-cd /home/balbes/projects/dev
 sg docker -c 'docker compose -f docker-compose.test.yml down -v'
 
 # Cleanup logs

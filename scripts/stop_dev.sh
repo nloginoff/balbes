@@ -3,6 +3,9 @@
 # Stop Balbes DEVELOPMENT environment
 # Usage: ./scripts/stop_dev.sh
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 echo "🛑 Stopping Balbes - DEVELOPMENT MODE"
 echo "========================================"
 
@@ -32,7 +35,6 @@ sleep 2
 read -p "Stop Docker infrastructure (dev)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    cd /home/balbes/projects/dev
     sg docker -c 'docker compose -f docker-compose.dev.yml down'
 fi
 
