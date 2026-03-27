@@ -61,6 +61,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 ignore = [
     "E501",  # Line too long (handled by formatter)
     "E402",  # Module imports after code (needed for FastAPI dynamic imports)
+    "UP017",  # Keep timezone.utc for Python 3.10 runtime compatibility
     "B008",  # FastAPI Query/Depends in function defaults is idiomatic
     "B904",  # Exception chaining - will be fixed in cleanup phase
     "SIM105",  # contextlib.suppress - will be refactored later

@@ -10,7 +10,7 @@ Provides CRUD operations for:
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -201,7 +201,7 @@ class PostgresClient:
                     agent_id,
                     status.value,
                     current_task_id,
-                    datetime.now(UTC),
+                    datetime.now(timezone.utc),
                 )
 
                 logger.debug(f"Updated agent status: {agent_id} -> {status.value}")
@@ -234,7 +234,7 @@ class PostgresClient:
                     agent_id,
                     tokens_today,
                     tokens_hour,
-                    datetime.now(UTC),
+                    datetime.now(timezone.utc),
                 )
 
         except Exception as e:
@@ -403,7 +403,7 @@ class PostgresClient:
             raise DatabaseConnectionError("Database pool not initialized")
 
         try:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
 
             async with self.pool.acquire() as conn:
                 if status == TaskStatus.RUNNING:
@@ -673,7 +673,7 @@ class PostgresClient:
 
         try:
             # Determine time range
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
 
             if period == "today":
                 start_time = now.replace(hour=0, minute=0, second=0, microsecond=0)
