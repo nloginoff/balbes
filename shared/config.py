@@ -43,6 +43,9 @@ def get_env_file() -> str:
 
 
 class Settings(BaseSettings):
+    # Runtime environment
+    env: str = Field(default="dev", description="Runtime environment: dev/test/prod")
+
     """
     Global settings for Balbes Multi-Agent System.
 
@@ -76,6 +79,8 @@ class Settings(BaseSettings):
     web_auth_token: str = Field(..., description="Secret token for web login")
     jwt_secret: str = Field(..., description="JWT secret key")
     jwt_expiration_hours: int = Field(default=24, description="JWT token expiration")
+    web_admin_username: str = Field(default="admin", description="Default web admin username")
+    web_admin_password: str = Field(default="admin123", description="Default web admin password")
 
     # =============================================================================
     # PostgreSQL

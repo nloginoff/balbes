@@ -214,19 +214,26 @@ class AuthManager:
 
     def _init_default_user(self) -> None:
         """Initialize default admin user"""
-        password_hash = hashlib.sha256(b"admin123").hexdigest()
+        admin_username = settings.web_admin_username
+        admin_password = settings.web_admin_password
+
+        # Never allow shipping prod with the known default password.
+        if settings.env.lower() == "prod" and admin_password == "admin123":
+            raise RuntimeError("WEB_ADMIN_PASSWORD must be changed in production")
+
+        password_hash = hashlib.sha256(admin_password.encode()).hexdigest()
 
         default_user = {
-            "user_id": "admin",
-            "username": "admin",
-            "email": "admin@balbes.local",
+            "user_id": admin_username,
+            "username": admin_username,
+            "email": f"{admin_username}@balbes.local",
             "full_name": "Administrator",
             "password_hash": password_hash,
             "is_active": True,
             "created_at": datetime.now(timezone.utc),
         }
-        self.users_db["admin"] = default_user
-        logger.info("Default admin user initialized")
+        self.users_db[admin_username] = default_user
+        logger.info("Default admin user initialized from environment")
 
     def verify_password(self, plain_password: str, password_hash: str) -> bool:
         """Verify password"""

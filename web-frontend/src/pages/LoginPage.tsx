@@ -76,10 +76,6 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign in'}
             </Button>
-
-            <p className="text-center text-sm text-muted-foreground">
-              Default credentials: admin / admin123
-            </p>
           </form>
         </CardContent>
       </Card>
