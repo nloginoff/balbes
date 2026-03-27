@@ -86,7 +86,10 @@ web-frontend/
 
 ## API Integration
 
-The frontend connects to Web Backend API at `http://localhost:8200`
+The frontend uses `VITE_API_URL`:
+
+- Dev: `http://localhost:8200`
+- Production behind Nginx (same domain): `/api`
 
 All API requests automatically include JWT token in headers.
 
@@ -116,10 +119,16 @@ npm run lint
 
 ## Environment Variables
 
-Create `.env` file:
+### Development (`.env`)
 
 ```env
 VITE_API_URL=http://localhost:8200
+```
+
+### Production (`.env.production`)
+
+```env
+VITE_API_URL=/api
 ```
 
 ## Production Deployment

@@ -242,6 +242,14 @@ cp .env.prod.example .env.prod
 nano .env.prod
 ```
 
+For frontend build behind Nginx (same domain, API via `/api`), create production frontend env:
+
+```bash
+cd web-frontend
+cp .env.production.example .env.production
+cd ..
+```
+
 **Production `.env.prod` example**:
 
 ```env
@@ -305,6 +313,14 @@ Use the project scripts as the primary method:
 ```bash
 ENV=prod ./scripts/start_prod.sh
 ./scripts/status_all_envs.sh
+```
+
+If frontend API routing or domain config changed, rebuild frontend before Nginx checks:
+
+```bash
+cd web-frontend
+npm run build
+cd ..
 ```
 
 ### Step 5.1: Script-only smoke check (required)

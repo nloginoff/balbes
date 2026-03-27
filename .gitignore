@@ -59,6 +59,7 @@ dmypy.json
 .env.dev
 .env.test
 .env.prod
+.env.production
 .env.local
 .env.*.local
 
