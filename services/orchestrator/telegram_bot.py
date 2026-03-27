@@ -8,11 +8,14 @@ Handles:
 - Inline query processing
 """
 
+import asyncio
+import contextlib
 import logging
 
 import httpx
 from telegram import (
     BotCommand,
+    ChatAction,
     Update,
     User,
 )
@@ -237,8 +240,19 @@ Connected services:
         task_description = message.text
 
         try:
-            # Show processing indicator
-            processing_msg = await update.message.reply_text("⏳ Processing your request...")
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            typing_task: asyncio.Task | None = None
+
+            async def typing_indicator() -> None:
+                """Send typing action periodically while task is processing."""
+                if chat_id is None:
+                    return
+                while True:
+                    await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+                    await asyncio.sleep(4)
+
+            if chat_id is not None:
+                typing_task = asyncio.create_task(typing_indicator())
 
             # Send task to orchestrator
             if not self.http_client:
@@ -255,30 +269,24 @@ Connected services:
             if response.status_code == 200:
                 result = response.json()
 
-                # Delete processing message
-                await processing_msg.delete()
-
-                # Send result
+                # Chat-style output: return only assistant message text, no technical metadata
                 if result.get("status") == "success":
-                    result_text = (
-                        "✅ Task Completed\n\n"
-                        f"📌 Task: {task_description[:100]}...\n\n"
-                        f"🎯 Skill Used: {result.get('skill_used', 'N/A')}\n\n"
-                        f"📊 Result:\n{str(result.get('result', {}))[:200]}\n\n"
-                        f"⏱️ Duration: {result.get('duration_ms', 0):.0f}ms"
-                    )
+                    payload = result.get("result", {})
+                    if isinstance(payload, dict):
+                        result_text = str(
+                            payload.get("output") or payload.get("result") or ""
+                        ).strip()
+                    else:
+                        result_text = str(payload).strip()
+                    if not result_text:
+                        result_text = "Готово."
                 else:
-                    result_text = (
-                        "❌ Task Failed\n\n"
-                        f"📌 Task: {task_description[:100]}...\n\n"
-                        f"❌ Error: {result.get('error', 'Unknown error')}"
-                    )
+                    result_text = "Не удалось выполнить запрос. Попробуй уточнить формулировку."
 
                 await update.message.reply_text(result_text)
 
                 logger.info(f"Task completed for user {user.id}: {result.get('status')}")
             else:
-                await processing_msg.delete()
                 await update.message.reply_text(
                     f"❌ Request failed: {response.status_code}\n{response.text}"
                 )
@@ -286,6 +294,11 @@ Connected services:
         except Exception as e:
             logger.error(f"Message handling failed: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Error: {str(e)}")
+        finally:
+            if "typing_task" in locals() and typing_task:
+                typing_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await typing_task
 
 
 def run_bot() -> None:
