@@ -10,6 +10,7 @@ Orchestrator Agent - главный координирующий агент си
 """
 
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -260,64 +261,98 @@ class OrchestratorAgent:
             logger.warning("OpenRouter API key is not configured, using fallback response")
             return self._build_fallback_response(description=description)
 
-        model = settings.default_chat_model
-        provider_prefix = "openrouter/"
-        openrouter_model = (
-            model[len(provider_prefix) :] if model.startswith(provider_prefix) else model
-        )
+        candidate_models = self._get_chat_model_candidates()
 
         system_prompt = (
             "You are Balbes assistant. Reply in the user's language. "
             "Be concise and practical. If task is ambiguous, ask one clarifying question."
         )
 
-        try:
-            response = await self.http_client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": openrouter_model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Context: {context if context else '{}'}\n\n"
-                                f"User request: {description}"
-                            ),
-                        },
-                    ],
-                    "temperature": 0.4,
-                },
-            )
-
-            if response.status_code != 200:
-                logger.warning(
-                    f"OpenRouter request failed: {response.status_code} {response.text[:300]}"
+        for model in candidate_models:
+            openrouter_model = self._normalize_openrouter_model(model)
+            try:
+                response = await self.http_client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": openrouter_model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"Context: {context if context else '{}'}\n\n"
+                                    f"User request: {description}"
+                                ),
+                            },
+                        ],
+                        "temperature": 0.4,
+                    },
                 )
-                return self._build_fallback_response(description=description)
 
-            data = response.json()
-            output = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "Не удалось получить ответ от модели.")
-            )
+                if response.status_code == 200:
+                    data = response.json()
+                    output = (
+                        data.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "Не удалось получить ответ от модели.")
+                    )
+                    return {
+                        "skill": "direct_llm_chat",
+                        "input": description,
+                        "output": output,
+                        "model": model,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
 
-            return {
-                "skill": "direct_llm_chat",
-                "input": description,
-                "output": output,
-                "model": model,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+                # 429/5xx -> try next model
+                if response.status_code == 429 or response.status_code >= 500:
+                    logger.warning(
+                        "OpenRouter model unavailable, trying fallback model: "
+                        f"{model} -> {response.status_code}"
+                    )
+                    continue
 
-        except Exception as e:
-            logger.warning(f"Failed to generate LLM response: {e}")
-            return self._build_fallback_response(description=description)
+                logger.warning(
+                    f"OpenRouter request failed on model {model}: "
+                    f"{response.status_code} {response.text[:300]}"
+                )
+                break
+
+            except Exception as e:
+                logger.warning(f"Failed to generate LLM response on model {model}: {e}")
+                continue
+
+        return self._build_fallback_response(description=description)
+
+    def _get_chat_model_candidates(self) -> list[str]:
+        """
+        Get ordered candidate list for chat completion.
+        Can be overridden via CHAT_FALLBACK_MODELS (comma-separated).
+        """
+        env_fallbacks = os.getenv("CHAT_FALLBACK_MODELS", "").strip()
+        if env_fallbacks:
+            extra = [m.strip() for m in env_fallbacks.split(",") if m.strip()]
+        else:
+            extra = [
+                "openrouter/meta-llama/llama-3.1-8b-instruct:free",
+                "openrouter/openai/gpt-4o-mini",
+            ]
+
+        # Keep order and uniqueness
+        candidates: list[str] = []
+        for model in [settings.default_chat_model, *extra]:
+            if model not in candidates:
+                candidates.append(model)
+        return candidates
+
+    def _normalize_openrouter_model(self, model: str) -> str:
+        """Convert 'openrouter/<model>' to OpenRouter model id format."""
+        provider_prefix = "openrouter/"
+        return model[len(provider_prefix) :] if model.startswith(provider_prefix) else model
 
     def _should_use_skills(self, description: str) -> bool:
         """
