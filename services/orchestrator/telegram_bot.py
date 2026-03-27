@@ -15,10 +15,10 @@ import logging
 import httpx
 from telegram import (
     BotCommand,
-    ChatAction,
     Update,
     User,
 )
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CommandHandler,
