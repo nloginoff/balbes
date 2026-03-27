@@ -1,0 +1,165 @@
+# Multi-provider LLM Configuration
+
+providers:
+  openrouter:
+    api_key: ${OPENROUTER_API_KEY}
+    base_url: "https://openrouter.ai/api/v1"
+    timeout: 60
+    headers:
+      HTTP-Referer: "https://your-domain.com"
+      X-Title: "Balbes Multi-Agent System"
+
+    models:
+      # Premium models for code generation and complex reasoning
+      - id: "anthropic/claude-3.5-sonnet"
+        display_name: "Claude 3.5 Sonnet"
+        cost_per_1k_tokens: 0.015
+        context_window: 200000
+        capabilities: ["code", "reasoning", "long_context", "analysis"]
+        recommended_for: ["coder", "orchestrator"]
+
+      - id: "openai/gpt-4-turbo"
+        display_name: "GPT-4 Turbo"
+        cost_per_1k_tokens: 0.01
+        context_window: 128000
+        capabilities: ["code", "reasoning", "analysis"]
+        recommended_for: ["coder", "orchestrator"]
+
+      # Mid-tier models for general tasks
+      - id: "openai/gpt-4o-mini"
+        display_name: "GPT-4o Mini"
+        cost_per_1k_tokens: 0.0005
+        context_window: 128000
+        capabilities: ["basic", "fast", "cheap"]
+        recommended_for: ["cheap_fallback"]
+
+      # Free models for fallback
+      - id: "stepfun/step-3.5-flash:free"
+        display_name: "StepFun Step 3.5 Flash (Free)"
+        cost_per_1k_tokens: 0.0
+        context_window: 65536
+        capabilities: ["basic", "fast", "cheap"]
+        recommended_for: ["free_fallback", "cheap_fallback"]
+
+      - id: "meta-llama/llama-3.1-8b-instruct:free"
+        display_name: "Llama 3.1 8B (Free)"
+        cost_per_1k_tokens: 0.0
+        context_window: 8192
+        capabilities: ["basic"]
+        recommended_for: ["free_fallback"]
+
+  aitunnel:
+    api_key: ${AITUNNEL_API_KEY}
+    base_url: "https://api.aitunnel.com/v1"
+    timeout: 60
+
+    models:
+      - id: "gpt-4-turbo"
+        display_name: "GPT-4 Turbo"
+        cost_per_1k_tokens: 0.01
+        context_window: 128000
+        capabilities: ["code", "reasoning"]
+
+# Fallback Strategy
+fallback_strategy:
+  # What to do when model is unavailable
+  on_error: "next_in_chain"  # Options: next_in_chain, fail
+  max_fallback_attempts: 3
+
+  # What to do when token limit exceeded
+  on_token_limit: "switch_to_cheap"  # Options: switch_to_cheap, pause, fail
+
+  # What to do when rate limited by provider
+  on_rate_limit: "wait_and_retry"  # Options: wait_and_retry, next_in_chain
+  rate_limit_wait_seconds: 60
+
+# Default fallback chain (used if not specified in agent config)
+default_fallback_chain:
+  - provider: openrouter
+    model: "anthropic/claude-3.5-sonnet"
+
+  - provider: openrouter
+    model: "openai/gpt-4-turbo"
+
+  - provider: aitunnel
+    model: "gpt-4-turbo"
+
+  - provider: openrouter
+    model: "openai/gpt-4o-mini"
+
+  - provider: openrouter
+    model: "stepfun/step-3.5-flash:free"
+
+  - provider: openrouter
+    model: "meta-llama/llama-3.1-8b-instruct:free"
+
+# Cheap models for automatic switching when token limit exceeded
+cheap_models:
+  - provider: openrouter
+    model: "stepfun/step-3.5-flash:free"
+
+  - provider: openrouter
+    model: "openai/gpt-4o-mini"
+
+  - provider: openrouter
+    model: "meta-llama/llama-3.1-8b-instruct:free"
+
+# Token limits (defaults, can be overridden per agent)
+token_limits:
+  daily_limit_per_agent: 100000
+  hourly_limit_per_agent: 15000
+  alert_threshold: 0.8  # Alert at 80% usage
+  action_on_exceeded: "switch_to_cheap"  # Options: switch_to_cheap, pause
+
+# Embeddings configuration for Qdrant
+embeddings:
+  provider: openrouter
+  model: "openai/text-embedding-3-small"
+  dimensions: 1536
+  cost_per_1k_tokens: 0.0001
+  batch_size: 100  # Batch embeddings for efficiency
+  cache_ttl: 86400  # Cache embeddings in Redis for 24h
+
+# Notification settings
+notifications:
+  telegram_user_id: ${TELEGRAM_USER_ID}
+
+  triggers:
+    - type: token_limit_warning
+      threshold: 0.8
+      message_template: "⚠️ Token Budget Alert\\n\\nAgent: @{agent_id}\\nUsage: {tokens_used:,} / {limit:,} ({percentage:.1f}%)\\nCost: ${cost:.2f}\\n\\nRemaining: {remaining:,} tokens"
+
+    - type: token_limit_exceeded
+      message_template: "🚨 Token Limit Exceeded!\\n\\nAgent: @{agent_id}\\nUsage: {tokens_used:,} / {limit:,}\\n\\nAutomatically switched to: {cheap_model}\\n\\n⚠️ Quality may be lower."
+
+    - type: model_fallback
+      message_template: "⚠️ Model Fallback\\n\\nAgent: @{agent_id}\\nPrimary: {model} (unavailable)\\nFallback: {fallback_model}\\n\\nTask continues..."
+
+    - type: agent_error
+      message_template: "❌ Agent Error\\n\\nAgent: @{agent_id}\\nError: {error_message}\\nTask: #{task_id}"
+
+    - type: task_completed
+      message_template: "✅ Task Completed\\n\\nAgent: @{agent_id}\\nTask: #{task_id}\\nDuration: {duration}s\\nTokens: {tokens:,}"
+
+    - type: task_failed
+      message_template: "❌ Task Failed\\n\\nAgent: @{agent_id}\\nTask: #{task_id}\\nError: {error}"
+
+# Retry configuration
+retry:
+  max_attempts: 3
+  backoff_strategy: "exponential"  # Options: linear, exponential, constant
+  initial_delay_seconds: 1
+  max_delay_seconds: 30
+
+# Rate limiting
+rate_limiting:
+  enabled: true
+  window_seconds: 60
+  max_requests_per_window: 10
+
+# Timeouts
+timeouts:
+  llm_call: 60
+  skill_execution: 30
+  database_query: 10
+  http_request: 30

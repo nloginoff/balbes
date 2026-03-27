@@ -269,7 +269,7 @@ async def seed_initial_agents(conn: asyncpg.Connection):
             'orchestrator',
             'Orchestrator',
             'idle',
-            'openrouter/anthropic/claude-3.5-sonnet',
+            'openrouter/stepfun/step-3.5-flash:free',
             '{
                 "agent_id": "orchestrator",
                 "token_limits": {"daily": 100000, "hourly": 15000}
@@ -286,7 +286,7 @@ async def seed_initial_agents(conn: asyncpg.Connection):
             'coder',
             'Coder Agent',
             'idle',
-            'openrouter/anthropic/claude-3.5-sonnet',
+            'openrouter/stepfun/step-3.5-flash:free',
             '{
                 "agent_id": "coder",
                 "token_limits": {"daily": 100000, "hourly": 15000}
