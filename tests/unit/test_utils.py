@@ -2,7 +2,7 @@
 Unit tests for shared.utils module.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from shared.utils import (
     chunk_text,
@@ -28,7 +28,7 @@ class TestUtilityFunctions:
         """Test UTC timestamp generation"""
         now = utc_now()
         assert isinstance(now, datetime)
-        assert now.tzinfo == UTC
+        assert now.tzinfo == timezone.utc
 
     def test_sanitize_filename(self):
         """Test filename sanitization"""

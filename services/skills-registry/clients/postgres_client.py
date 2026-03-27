@@ -4,7 +4,7 @@ PostgreSQL client for skills storage and metadata.
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import asyncpg
@@ -78,7 +78,7 @@ class PostgresClient:
 
         try:
             async with self.pool.acquire() as conn:
-                now = datetime.now(UTC)
+                now = datetime.now(timezone.utc)
 
                 row = await conn.fetchrow(
                     """
@@ -223,7 +223,7 @@ class PostgresClient:
 
         try:
             async with self.pool.acquire() as conn:
-                now = datetime.now(UTC)
+                now = datetime.now(timezone.utc)
 
                 await conn.execute(
                     """

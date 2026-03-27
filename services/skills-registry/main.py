@@ -11,7 +11,7 @@ Provides endpoints for:
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -112,7 +112,7 @@ async def balbes_exception_handler(request: Request, exc: BalbesException) -> JS
         content={
             "detail": exc.message,
             "error_code": exc.__class__.__name__,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -124,7 +124,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -138,7 +138,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content={
             "detail": "Internal server error",
             "error_code": "INTERNAL_ERROR",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -155,7 +155,7 @@ async def health_check() -> dict:
     health_status = {
         "service": "skills-registry",
         "status": "healthy",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     # Check PostgreSQL connection

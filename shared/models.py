@@ -4,7 +4,7 @@ Shared Pydantic models for the Balbes Multi-Agent System.
 Defines all data models used across services for type safety and validation.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
@@ -88,8 +88,8 @@ class Agent(BaseModel):
     current_task_id: UUID | None = None
     current_model: str
     config: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    last_activity: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_activity: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     tokens_used_today: int = 0
     tokens_used_hour: int = 0
 
@@ -114,7 +114,7 @@ class Task(BaseModel):
     result: dict[str, Any] | None = None
     error: str | None = None
     created_by: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: datetime | None = None
     completed_at: datetime | None = None
     retry_count: int = 0
@@ -132,7 +132,7 @@ class Task(BaseModel):
     def is_timeout(self) -> bool:
         """Check if task has timed out"""
         if self.started_at and not self.completed_at:
-            elapsed = (datetime.now(UTC) - self.started_at).total_seconds()
+            elapsed = (datetime.now(timezone.utc) - self.started_at).total_seconds()
             return elapsed > self.timeout_seconds
         return False
 
@@ -146,7 +146,7 @@ class Message(BaseModel):
     type: MessageType
     payload: dict[str, Any] = Field(default_factory=dict)
     task_id: UUID | None = None
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def is_broadcast(self) -> bool:
@@ -164,7 +164,7 @@ class Memory(BaseModel):
     content: str
     metadata: dict[str, Any] = Field(default_factory=dict)
     embedding: list[float] | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ttl_seconds: int | None = None
     tags: list[str] = Field(default_factory=list)
 
@@ -177,7 +177,7 @@ class ActionLog(BaseModel):
     task_id: UUID | None = None
     action: str
     details: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     duration_ms: int | None = None
     success: bool = True
     error: str | None = None
@@ -195,7 +195,7 @@ class TokenUsage(BaseModel):
     completion_tokens: int
     total_tokens: int
     cost_usd: float
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     fallback_used: bool = False
     cached: bool = False
 
@@ -281,7 +281,7 @@ class HealthStatus(BaseModel):
     service: str
     status: str
     details: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def is_healthy(self) -> bool:
@@ -294,7 +294,7 @@ class WebSocketMessage(BaseModel):
 
     event: str
     data: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class TokenBudget(BaseModel):

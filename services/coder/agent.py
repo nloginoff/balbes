@@ -11,7 +11,7 @@ Capabilities:
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -75,7 +75,7 @@ class CoderAgent:
             Created skill details
         """
         skill_id = str(uuid4())
-        start_time = datetime.now(UTC)
+        start_time = datetime.now(timezone.utc)
 
         try:
             logger.info(f"[{skill_id}] Creating skill: {name}")
@@ -117,8 +117,8 @@ class CoderAgent:
                 "code": generated_code,
                 "tests": test_cases,
                 "status": "created",
-                "created_at": datetime.now(UTC).isoformat(),
-                "duration_ms": (datetime.now(UTC) - start_time).total_seconds() * 1000,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
                 "registered": False,
             }
 
@@ -167,7 +167,7 @@ class CoderAgent:
                 "name": name,
                 "status": "failed",
                 "error": str(e),
-                "duration_ms": (datetime.now(UTC) - start_time).total_seconds() * 1000,
+                "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
             }
 
     async def improve_skill(
@@ -222,7 +222,7 @@ class CoderAgent:
             "skill_name": skill_name,
             "status": "improved",
             "code_lines": len(improved_code.split("\n")),
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     async def get_generated_skills(self) -> list[dict[str, Any]]:
@@ -388,7 +388,7 @@ if __name__ == "__main__":
 
         # Add improvement comment to code
         improvement_comment = f"""
-# IMPROVEMENTS APPLIED ({datetime.now(UTC).isoformat()}):
+# IMPROVEMENTS APPLIED ({datetime.now(timezone.utc).isoformat()}):
 # Feedback: {feedback}
 # Test Results: {json.dumps(test_results, indent=2)}
 """

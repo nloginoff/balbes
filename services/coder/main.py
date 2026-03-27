@@ -11,7 +11,7 @@ Coder Service - FastAPI приложение для Coder Agent.
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from agent import CoderAgent
 from api import skills as skills_api
@@ -97,7 +97,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -111,7 +111,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content={
             "detail": "Internal server error",
             "error_code": "INTERNAL_ERROR",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -139,7 +139,7 @@ async def health_check() -> dict:
     return {
         "service": "coder",
         "status": "healthy",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "agent_id": coder_agent.agent_id,
     }
 
@@ -176,7 +176,7 @@ async def get_status() -> dict:
         "status": "online",
         "agent_id": coder_agent.agent_id,
         "generated_skills_count": len(generated_skills),
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 

@@ -2,7 +2,7 @@
 Unit tests for shared.models module.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -71,8 +71,8 @@ class TestTask:
             agent_id="test_agent",
             description="Test",
             created_by="user",
-            started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC),
-            completed_at=datetime(2026, 1, 1, 12, 5, 30, tzinfo=UTC),
+            started_at=datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            completed_at=datetime(2026, 1, 1, 12, 5, 30, tzinfo=timezone.utc),
         )
 
         assert task.duration_seconds == 330.0

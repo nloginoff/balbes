@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
 from uuid import UUID
@@ -27,7 +27,7 @@ def utc_now() -> datetime:
     Returns:
         datetime: Current UTC time with timezone info
     """
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def to_json(obj: Any) -> str:

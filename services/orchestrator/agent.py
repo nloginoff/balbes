@@ -10,7 +10,7 @@ Orchestrator Agent - главный координирующий агент си
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -69,7 +69,7 @@ class OrchestratorAgent:
             Результат выполнения задачи
         """
         task_id = str(uuid4())
-        start_time = datetime.now(UTC)
+        start_time = datetime.now(timezone.utc)
 
         try:
             logger.info(f"[{task_id}] Starting task: {description[:50]}...")
@@ -88,7 +88,7 @@ class OrchestratorAgent:
                     "task_id": task_id,
                     "status": "failed",
                     "error": "No relevant skills found for this task",
-                    "duration_ms": (datetime.now(UTC) - start_time).total_seconds() * 1000,
+                    "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
                 }
 
             # Шаг 3: Выбрать лучший скилл
@@ -121,7 +121,7 @@ class OrchestratorAgent:
                 success=True,
             )
 
-            duration_ms = (datetime.now(UTC) - start_time).total_seconds() * 1000
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             logger.info(f"[{task_id}] Task completed in {duration_ms:.0f}ms")
 
             return {
@@ -144,7 +144,7 @@ class OrchestratorAgent:
                 success=False,
             )
 
-            duration_ms = (datetime.now(UTC) - start_time).total_seconds() * 1000
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
 
             return {
                 "task_id": task_id,
@@ -212,7 +212,7 @@ class OrchestratorAgent:
             "skill": skill_name,
             "input": description,
             "output": f"Executed {skill_name} successfully",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
     async def _save_task_context(
@@ -233,7 +233,7 @@ class OrchestratorAgent:
                     "user_id": user_id,
                     "description": description,
                     "selected_skill": selected_skill["name"],
-                    "created_at": datetime.now(UTC).isoformat(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                 },
                 "ttl": 3600,  # 1 час
             }
@@ -286,7 +286,7 @@ class OrchestratorAgent:
         return {
             "agent_id": self.agent_id,
             "status": "online",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "services": {
                 "memory_service": f"http://localhost:{settings.memory_service_port}",
                 "skills_registry": f"http://localhost:{settings.skills_registry_port}",

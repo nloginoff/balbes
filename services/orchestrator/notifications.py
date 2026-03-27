@@ -9,7 +9,7 @@ Handles:
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -62,7 +62,7 @@ class Notification:
         self.message = message
         self.level = level
         self.data = data or {}
-        self.created_at = datetime.now(UTC)
+        self.created_at = datetime.now(timezone.utc)
         self.sent = False
         self.read = False
 

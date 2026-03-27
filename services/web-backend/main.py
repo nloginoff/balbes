@@ -13,7 +13,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from api import agents as agents_api
 from api import dashboard as dashboard_api
@@ -156,7 +156,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -170,7 +170,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content={
             "detail": "Internal server error",
             "error_code": "INTERNAL_ERROR",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -289,7 +289,7 @@ async def health_check() -> dict:
     return {
         "service": "web_backend",
         "status": "healthy",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": services_status,
     }
 
@@ -338,7 +338,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
                 json.dumps(
                     {
                         "type": "ack",
-                        "timestamp": datetime.now(UTC).isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                         "message": "Message received",
                     }
                 )

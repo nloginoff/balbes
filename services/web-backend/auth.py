@@ -13,7 +13,7 @@ Provides REST API endpoints for:
 import hashlib
 import json
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -223,7 +223,7 @@ class AuthManager:
             "full_name": "Administrator",
             "password_hash": password_hash,
             "is_active": True,
-            "created_at": datetime.now(UTC),
+            "created_at": datetime.now(timezone.utc),
         }
         self.users_db["admin"] = default_user
         logger.info("Default admin user initialized")
@@ -247,12 +247,12 @@ class AuthManager:
         import base64
         import hashlib
 
-        expires = datetime.now(UTC) + timedelta(hours=self.jwt_expiration)
+        expires = datetime.now(timezone.utc) + timedelta(hours=self.jwt_expiration)
 
         payload = {
             "user_id": user_id,
             "exp": int(expires.timestamp()),
-            "iat": int(datetime.now(UTC).timestamp()),
+            "iat": int(datetime.now(timezone.utc).timestamp()),
         }
 
         # Simple JWT encoding without external library
@@ -322,7 +322,7 @@ class AuthManager:
 
             # Check expiration
             exp = payload.get("exp", 0)
-            if exp < datetime.now(UTC).timestamp():
+            if exp < datetime.now(timezone.utc).timestamp():
                 logger.warning("Token expired")
                 return None
 
@@ -368,7 +368,7 @@ class AuthManager:
             "full_name": full_name or username,
             "password_hash": self.get_password_hash(password),
             "is_active": True,
-            "created_at": datetime.now(UTC),
+            "created_at": datetime.now(timezone.utc),
             "preferences": {},
         }
 

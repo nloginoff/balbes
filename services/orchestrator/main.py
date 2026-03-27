@@ -11,7 +11,7 @@ Orchestrator Service - FastAPI приложение для главного аг
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from agent import OrchestratorAgent
 from api import notifications as notifications_api
@@ -109,7 +109,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         status_code=exc.status_code,
         content={
             "detail": exc.detail,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -123,7 +123,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         content={
             "detail": "Internal server error",
             "error_code": "INTERNAL_ERROR",
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
 
@@ -149,7 +149,7 @@ async def health_check() -> dict:
     return {
         "service": "orchestrator",
         "status": "healthy",
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "agent": agent_status,
     }
 

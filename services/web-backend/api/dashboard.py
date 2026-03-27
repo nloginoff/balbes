@@ -3,7 +3,7 @@ Dashboard API endpoints.
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 
 from auth import DashboardData, SystemStatus
 from fastapi import APIRouter, HTTPException, status
@@ -32,7 +32,7 @@ async def get_system_status(user_id: str) -> SystemStatus:
     services = await backend_main.api_service.check_services_health()
 
     return SystemStatus(
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         agents_online=5,
         total_tasks=42,
         completed_tasks=38,
@@ -67,7 +67,7 @@ async def get_dashboard_overview(user_id: str) -> DashboardData:
     token_stats = await backend_main.api_service.get_token_stats()
 
     status_data = SystemStatus(
-        timestamp=datetime.now(UTC),
+        timestamp=datetime.now(timezone.utc),
         agents_online=len([a for a in agents if a.get("status") == "online"]),
         total_tasks=len(tasks),
         services=services,

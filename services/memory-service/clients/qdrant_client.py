@@ -8,7 +8,7 @@ Provides methods for:
 """
 
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -213,7 +213,7 @@ class QdrantClient:
                 "content": content,
                 "scope": scope,
                 "metadata": metadata or {},
-                "created_at": datetime.now(UTC).isoformat(),
+                "created_at": datetime.now(timezone.utc).isoformat(),
             }
 
             # Store in Qdrant

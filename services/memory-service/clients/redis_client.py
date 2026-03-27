@@ -10,7 +10,7 @@ Provides methods for:
 
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import redis.asyncio as aioredis
@@ -99,14 +99,14 @@ class RedisClient:
 
             await self.client.setex(redis_key, ttl, value_json)
 
-            expires_at = datetime.now(UTC).timestamp() + ttl
+            expires_at = datetime.now(timezone.utc).timestamp() + ttl
 
             logger.debug(f"Set context: {redis_key} (TTL: {ttl}s)")
 
             return {
                 "status": "ok",
                 "key": key,
-                "expires_at": datetime.fromtimestamp(expires_at, tz=UTC).isoformat(),
+                "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
             }
 
         except Exception as e:
@@ -216,7 +216,7 @@ class RedisClient:
                 "role": role,
                 "content": content,
                 "metadata": metadata or {},
-                "timestamp": datetime.now(UTC).isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
 
             message_json = json.dumps(message)
@@ -337,7 +337,7 @@ class RedisClient:
             raise MemoryStorageError("Redis client not connected")
 
         try:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             today_key = self._token_key(agent_id, now.strftime("%Y-%m-%d"))
             hour_key = self._token_key(agent_id, now.strftime("%Y-%m-%d-%H"))
 
@@ -387,7 +387,7 @@ class RedisClient:
             raise MemoryRetrievalError("Redis client not connected")
 
         try:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             today_key = self._token_key(agent_id, now.strftime("%Y-%m-%d"))
             hour_key = self._token_key(agent_id, now.strftime("%Y-%m-%d-%H"))
 
