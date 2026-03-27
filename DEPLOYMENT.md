@@ -4,14 +4,19 @@
 
 This guide covers deploying Balbes on a production VPS server with Docker and systemd.
 
+> Note: The authoritative and actively maintained flow is:
+> 1) environment-specific `.env.*` files, 2) `scripts/start_*.sh`/`stop_*.sh`,
+> 3) ports `18100-18200` for production services with isolated infra ports.
+> If older examples below conflict with that flow, prefer the script-based flow.
+
 ## Prerequisites
 
-- Linux VPS (Ubuntu 20.04+ recommended)
-- Docker & Docker Compose installed
+- Linux VPS (Ubuntu 22.04+ recommended)
+- Docker with Compose v2 plugin (`docker compose`)
 - 4GB+ RAM, 2+ CPU cores
 - 20GB+ disk space
-- Python 3.11+
-- Node.js 18+ (for frontend)
+- Python 3.13 (default `python3`)
+- Node.js 20+ (for frontend build)
 
 ---
 
@@ -100,7 +105,8 @@ Verify login, dashboard, agents, skills, tasks, and task creation from UI.
 cd /home/balbes/projects/dev
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 
 # Frontend dependencies
 cd web-frontend
@@ -111,7 +117,7 @@ npm install
 
 ```bash
 # Start Redis, PostgreSQL, Qdrant
-sg docker -c 'docker-compose up -d'
+sg docker -c 'docker compose -f docker-compose.dev.yml up -d'
 
 # Wait for services to be ready
 sleep 10
@@ -170,12 +176,12 @@ curl http://localhost:5173         # Frontend
 Internet
     │
     └─> Nginx (Port 80/443)
-         ├─> Frontend (Port 5173)
-         └─> API Gateway (Port 8200)
-              ├─> Memory Service (8100)
-              ├─> Skills Registry (8101)
-              ├─> Orchestrator (8102)
-              └─> Coder Agent (8103)
+         ├─> Frontend static build
+         └─> API Gateway (Port 18200)
+              ├─> Memory Service (18100)
+              ├─> Skills Registry (18101)
+              ├─> Orchestrator (18102)
+              └─> Coder Agent (18103)
 ```
 
 ### Step 1: Prepare VPS
@@ -193,11 +199,11 @@ newgrp docker
 # Install Docker Compose
 sudo apt install docker-compose-plugin -y
 
-# Install Python 3.11+
-sudo apt install python3.11 python3.11-venv python3-pip -y
+# Install Python 3.13+
+sudo apt install python3.13 python3.13-venv python3-pip -y
 
-# Install Node.js 18+
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+# Install Node.js 20+
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install nodejs -y
 
 # Install Nginx
@@ -214,9 +220,10 @@ sudo chown -R $USER:$USER balbes
 cd balbes
 
 # Setup Python environment
-python3.11 -m venv .venv
+python3.13 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 
 # Setup frontend
 cd web-frontend
@@ -229,38 +236,38 @@ cd ..
 
 ```bash
 # Create production .env
-cp .env.example .env
+cp .env.prod.example .env.prod
 
-# Edit .env with production values
-nano .env
+# Edit .env.prod with production values
+nano .env.prod
 ```
 
-**Production `.env` example**:
+**Production `.env.prod` example**:
 
 ```env
 # PostgreSQL
 POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+POSTGRES_PORT=15432
 POSTGRES_USER=balbes
 POSTGRES_PASSWORD=<strong-password>
 POSTGRES_DB=balbes
 
 # Redis
 REDIS_HOST=localhost
-REDIS_PORT=6379
+REDIS_PORT=16379
 REDIS_PASSWORD=<strong-password>
 
 # Qdrant
 QDRANT_HOST=localhost
-QDRANT_PORT=6333
+QDRANT_PORT=16333
 QDRANT_API_KEY=<api-key>
 
 # Services
-MEMORY_SERVICE_URL=http://localhost:8100
-SKILLS_REGISTRY_URL=http://localhost:8101
-ORCHESTRATOR_URL=http://localhost:8102
-CODER_URL=http://localhost:8103
-WEB_BACKEND_URL=http://localhost:8200
+MEMORY_SERVICE_URL=http://localhost:18100
+SKILLS_REGISTRY_URL=http://localhost:18101
+ORCHESTRATOR_URL=http://localhost:18102
+CODER_URL=http://localhost:18103
+WEB_BACKEND_PORT=18200
 
 # OpenRouter
 OPENROUTER_API_KEY=<your-key>
@@ -269,6 +276,8 @@ OPENROUTER_API_KEY=<your-key>
 TELEGRAM_BOT_TOKEN=<your-token>
 
 # JWT
+WEB_AUTH_TOKEN=<random-token>
+JWT_SECRET=<random-64-char-secret>
 JWT_SECRET_KEY=<random-64-char-secret>
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
@@ -278,17 +287,39 @@ JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
 
 ```bash
 # Start Docker containers
-docker-compose up -d
+sg docker -c 'docker compose --env-file .env.prod -f docker-compose.prod.yml up -d'
 
 # Wait for services
 sleep 15
 
 # Initialize database
 source .venv/bin/activate
+ENV=prod \
 python scripts/init_db.py
 ```
 
-### Step 5: Setup Systemd Services
+### Step 5: Start production services
+
+Use the project scripts as the primary method:
+
+```bash
+ENV=prod ./scripts/start_prod.sh
+./scripts/status_all_envs.sh
+```
+
+Manual mode in `start_prod.sh` writes logs to:
+
+```bash
+~/projects/balbes/logs/prod/*.log
+```
+
+and tracks PIDs in:
+
+```bash
+~/projects/balbes/.pids-prod.txt
+```
+
+### Optional: Setup Systemd Services
 
 Create service files for each microservice:
 
@@ -313,10 +344,10 @@ WantedBy=multi-user.target
 ```
 
 Create similar files for:
-- `balbes-skills.service` (port 8101)
-- `balbes-orchestrator.service` (port 8102)
-- `balbes-coder.service` (port 8103)
-- `balbes-web-backend.service` (port 8200)
+- `balbes-skills.service` (port 18101)
+- `balbes-orchestrator.service` (port 18102)
+- `balbes-coder.service` (port 18103)
+- `balbes-web-backend.service` (port 18200)
 
 Enable and start:
 
@@ -695,13 +726,16 @@ sudo journalctl -u balbes-memory -n 50
 docker logs balbes-memory-service
 
 # Check port conflicts
-sudo lsof -i :8100
+sudo lsof -i :18100
 
 # Check dependencies
 docker ps
 psql -h localhost -U balbes -d balbes -c "SELECT 1;"
 redis-cli -h localhost ping
-curl http://localhost:6333/health
+curl http://localhost:16333/health
+
+# If Qdrant shows SSL wrong version errors:
+# ensure clients use HTTP mode (https=False) and restart services
 ```
 
 ### High Memory Usage

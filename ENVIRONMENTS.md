@@ -42,8 +42,9 @@
 
 ┌──────────────────────────────────────────────────┐
 │ PRODUCTION (prod)                                │
-│ - Services: 8100-8199 (standard)                │
+│ - Services: 18100-18200                         │
 │ - Frontend: 80/443 (Nginx)                      │
+│ - Infra: 15432/16379/16333/15673               │
 │ - DB: balbes (production)                       │
 │ - Docker: balbes-prod-*                         │
 │ - Optimized: ✅                                 │
@@ -56,15 +57,15 @@
 
 | Service | Dev | Test | Prod |
 |---------|-----|------|------|
-| Memory | 8100 | 9100 | 8100 |
-| Skills | 8101 | 9101 | 8101 |
-| Orchestrator | 8102 | 9102 | 8102 |
-| Coder | 8103 | 9103 | 8103 |
-| Web Backend | 8200 | 9200 | 8200 |
+| Memory | 8100 | 9100 | 18100 |
+| Skills | 8101 | 9101 | 18101 |
+| Orchestrator | 8102 | 9102 | 18102 |
+| Coder | 8103 | 9103 | 18103 |
+| Web Backend | 8200 | 9200 | 18200 |
 | Frontend | 5173 | 5174 | 80/443 |
-| PostgreSQL | 5432 | 5433 | 5432 |
-| Redis | 6379 | 6380 | 6379 |
-| Qdrant | 6333 | 6334 | 6333 |
+| PostgreSQL | 5432 | 5433 | 15432 |
+| Redis | 6379 | 6380 | 16379 |
+| Qdrant | 6333 | 6334 | 16333 |
 
 ---
 
@@ -89,19 +90,19 @@ DEBUG=true
 
 # PostgreSQL (shared, different DB)
 POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+POSTGRES_PORT=15432
 POSTGRES_USER=balbes
 POSTGRES_PASSWORD=balbes_secret
 POSTGRES_DB=balbes_dev
 
 # Redis (different port)
 REDIS_HOST=localhost
-REDIS_PORT=6379
+REDIS_PORT=16379
 REDIS_PREFIX=dev
 
 # Qdrant (different port)
 QDRANT_HOST=localhost
-QDRANT_PORT=6333
+QDRANT_PORT=16333
 QDRANT_COLLECTION_PREFIX=dev
 
 # Services (dev ports)
@@ -204,17 +205,17 @@ QDRANT_PORT=6333
 QDRANT_API_KEY=CHANGE_THIS_QDRANT_KEY
 QDRANT_COLLECTION_PREFIX=prod
 
-# Services (standard ports)
-MEMORY_SERVICE_PORT=8100
-SKILLS_REGISTRY_PORT=8101
-ORCHESTRATOR_PORT=8102
-CODER_PORT=8103
-WEB_BACKEND_PORT=8200
+# Services (production ports)
+MEMORY_SERVICE_PORT=18100
+SKILLS_REGISTRY_PORT=18101
+ORCHESTRATOR_PORT=18102
+CODER_PORT=18103
+WEB_BACKEND_PORT=18200
 
-MEMORY_SERVICE_URL=http://localhost:8100
-SKILLS_REGISTRY_URL=http://localhost:8101
-ORCHESTRATOR_URL=http://localhost:8102
-CODER_URL=http://localhost:8103
+MEMORY_SERVICE_URL=http://localhost:18100
+SKILLS_REGISTRY_URL=http://localhost:18101
+ORCHESTRATOR_URL=http://localhost:18102
+CODER_URL=http://localhost:18103
 
 # Frontend (served by Nginx)
 FRONTEND_PORT=80
@@ -223,7 +224,9 @@ FRONTEND_PORT=80
 OPENROUTER_API_KEY=your-real-api-key-here
 TELEGRAM_BOT_TOKEN=your-real-bot-token-here
 
-# JWT (secure!)
+# Web/JWT (secure!)
+WEB_AUTH_TOKEN=CHANGE_THIS_WEB_AUTH_TOKEN
+JWT_SECRET=CHANGE_THIS_JWT_SECRET
 JWT_SECRET_KEY=GENERATE_RANDOM_64_CHAR_SECRET_KEY_HERE
 JWT_ALGORITHM=HS256
 JWT_ACCESS_TOKEN_EXPIRE_MINUTES=1440
@@ -292,7 +295,7 @@ pytest tests/ -v
 # All 3 run independently!
 # Dev: ports 8100-8200 + DB balbes_dev
 # Test: ports 9100-9200 + DB balbes_test
-# Prod: ports 8100-8200 + DB balbes (separate containers)
+# Prod: ports 18100-18200 + DB balbes (separate containers)
 ```
 
 ---
@@ -388,7 +391,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: balbes
     ports:
-      - "5432:5432"
+      - "15432:5432"
     volumes:
       - postgres_prod_data:/var/lib/postgresql/data
     restart: always
@@ -398,7 +401,7 @@ services:
     container_name: balbes-prod-redis
     command: redis-server --requirepass ${REDIS_PASSWORD}
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - redis_prod_data:/data
     restart: always
@@ -409,7 +412,7 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     ports:
-      - "6333:6333"
+      - "16333:6333"
     volumes:
       - qdrant_prod_data:/qdrant/storage
     restart: always
@@ -441,7 +444,8 @@ Server (одна машина)
 │   └── Cleanup: AUTO
 │
 └── Production Environment
-    ├── Ports: 8100-8200 (via Docker network)
+    ├── Ports: 18100-18200 (service layer)
+    ├── Infra ports: 15432/16379/16333/15673
     ├── DB: balbes (separate Docker)
     ├── Redis: separate Docker
     └── Isolated: Docker network
@@ -493,6 +497,19 @@ class RedisClient:
         return f"{self.prefix}:{key}"
 ```
 
+### 4. Qdrant in local production
+
+For local dockerized production, Qdrant runs on HTTP (`TLS disabled`).
+If API key protection is enabled, clients must still connect with HTTP mode.
+
+Current clients in this repo explicitly set `https=False` for local Qdrant
+connections in:
+
+- `services/memory-service/clients/qdrant_client.py`
+- `services/skills-registry/clients/qdrant_client.py`
+
+If you see `SSL: WRONG_VERSION_NUMBER`, verify both client config and container env.
+
 ---
 
 ## Quick Commands
@@ -516,8 +533,7 @@ pytest tests/ -v
 ### Start Production
 ```bash
 export ENV=prod
-source .env.prod
-docker-compose -f docker-compose.prod.yml up -d
+./scripts/start_prod.sh
 ```
 
 ---

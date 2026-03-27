@@ -10,7 +10,8 @@ Production-ready AI multi-agent system with memory, skills, and orchestration.
 # 1. Setup (first time only)
 cd /home/balbes/projects/dev
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 cd web-frontend && npm install && cd ..
 
 # 2. Start dev environment
@@ -41,8 +42,8 @@ ENV=test pytest tests/ -v
 
 ```bash
 # Configure production
-cp .env.prod .env.prod.local
-nano .env.prod.local  # Set real passwords!
+cp .env.prod.example .env.prod
+nano .env.prod  # Set real passwords and tokens
 
 # Start production
 ./scripts/start_prod.sh
@@ -53,7 +54,7 @@ nano .env.prod.local  # Set real passwords!
 You can run **dev**, **test**, and **prod** simultaneously:
 - **Dev**: ports 8100-8200, DB `balbes_dev`
 - **Test**: ports 9100-9200, DB `balbes_test`
-- **Prod**: ports 8100-8200, separate Docker network
+- **Prod**: ports 18100-18200, separate Docker network
 
 See **`MULTI_ENV_QUICKSTART.md`** for details.
 
@@ -105,10 +106,14 @@ dev/
 │   └── test_performance.py # Performance tests
 ├── scripts/
 │   ├── init_db.py         # Database initialization
-│   ├── start_all.sh       # Start all services
-│   ├── stop_all.sh        # Stop all services
-│   └── status.sh          # Check system status
-├── docker-compose.yml      # Infrastructure
+│   ├── start_dev.sh       # Start development
+│   ├── start_test.sh      # Start testing
+│   ├── start_prod.sh      # Start production
+│   ├── stop_*.sh          # Stop environments
+│   └── status_all_envs.sh # Check all environments
+├── docker-compose.dev.yml
+├── docker-compose.test.yml
+├── docker-compose.prod.yml
 ├── .env                    # Configuration
 ├── DEPLOYMENT.md          # Production deployment
 └── TODO.md                # Development progress
@@ -184,7 +189,11 @@ pytest -v
 | E2E Tests | 10 | System-wide |
 | Performance | 8 | Benchmarks |
 
-**Total**: 148 tests
+Run full suite with:
+
+```bash
+ENV=dev python -m pytest tests/ -q
+```
 
 ## 📊 Performance Metrics
 
@@ -237,14 +246,17 @@ JWT_ALGORITHM=HS256
 ## 🛠️ Management Scripts
 
 ```bash
-# Start all services
-./scripts/start_all.sh
+# Start development
+./scripts/start_dev.sh
 
-# Stop all services
-./scripts/stop_all.sh
+# Start testing
+./scripts/start_test.sh
+
+# Start production
+./scripts/start_prod.sh
 
 # Check status
-./scripts/status.sh
+./scripts/status_all_envs.sh
 
 # Initialize database
 python scripts/init_db.py
@@ -257,7 +269,7 @@ docker exec balbes-postgres pg_dump -U balbes balbes > backup.sql
 
 - **`QUICKSTART.md`** - Get started in 5 minutes
 - **`DEPLOYMENT.md`** - Production deployment guide
-- **`TODO.md`** - Development progress (70% complete)
+- **`TODO.md`** - Development progress snapshot
 - **`STAGE7_SUMMARY.md`** - Latest completion report
 - **Service READMEs** - Each service has detailed docs
 
@@ -350,7 +362,7 @@ sudo lsof -i :8101
 
 # Check Docker
 docker ps
-docker-compose logs
+docker compose logs
 
 # Check logs
 tail -f /tmp/balbes-*.log
@@ -379,7 +391,7 @@ cd /home/balbes/projects/dev
 source .venv/bin/activate
 
 # Reinstall dependencies
-pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 ```
 
 ## 📚 API Documentation
@@ -417,7 +429,7 @@ git push origin feature/new-feature
 
 ## 📊 MVP Progress
 
-**Status**: 70% Complete (7/10 stages)
+**Status**: Stages 1-8 complete, Stage 9 in progress
 
 - ✅ Stage 1: Infrastructure
 - ✅ Stage 2: Memory Service
@@ -427,7 +439,7 @@ git push origin feature/new-feature
 - ✅ Stage 6: Web Backend
 - ✅ Stage 7: Web Frontend
 - 🔄 Stage 8: Integration Testing (In Progress)
-- ⏳ Stage 9: Production Deployment
+- 🔄 Stage 9: Production Deployment & runbook hardening
 - ⏳ Stage 10: Final Testing & Docs
 
 ## 🤝 Contributing

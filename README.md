@@ -11,7 +11,8 @@ cd /home/balbes/projects/dev
 
 # First time setup
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 
 # Start dev environment
 ./scripts/start_dev.sh
@@ -49,7 +50,7 @@ ENV=test pytest tests/ -v
 │                                            │
 │  🟦 DEV     → 8100-8200 → balbes_dev      │
 │  🟨 TEST    → 9100-9200 → balbes_test     │
-│  🟩 PROD    → 8100-8200 → balbes (Docker) │
+│  🟩 PROD    → 18100-18200 → balbes        │
 │                                            │
 │  All run simultaneously! No conflicts! ✨  │
 └────────────────────────────────────────────┘
@@ -59,7 +60,7 @@ ENV=test pytest tests/ -v
 |-------------|-------|----------|-------|
 | **Dev** | 8100-8200 | `balbes_dev` | Development + hot reload |
 | **Test** | 9100-9200 | `balbes_test` | Automated tests (auto-cleanup) |
-| **Prod** | 8100-8200 | `balbes` | Production (isolated) |
+| **Prod** | 18100-18200 | `balbes` | Production (isolated) |
 
 See **[SOLUTION.md](SOLUTION.md)** for complete details.
 
@@ -86,7 +87,7 @@ dev/
 │   └── status_all_envs.sh # Check all environments
 │
 ├── tests/
-│   ├── integration/      # 130 unit tests
+│   ├── integration/      # integration and service tests
 │   ├── test_e2e.py      # 10 E2E tests
 │   └── test_performance.py # 8 performance tests
 │
@@ -116,7 +117,7 @@ dev/
 
 ## 🧪 Testing
 
-### 148 Total Tests
+### Test Suite
 
 ```bash
 # Quick unit tests
@@ -138,9 +139,11 @@ ENV=test pytest -v
 
 ### Test Results
 
-- **Unit tests**: 130 tests, 100% pass
-- **E2E tests**: 10 tests, 5 passed, 6 skipped (need all services)
-- **Performance**: 8 tests, 7 passed, 2 skipped
+Run the authoritative status with:
+
+```bash
+ENV=dev python -m pytest tests/ -q
+```
 
 **Performance**: 6ms response, 65 req/s, 100% success rate
 
@@ -164,6 +167,12 @@ ENV=test pytest tests/ -v    # Test
 
 # Status of all
 ./scripts/status_all_envs.sh
+```
+
+Manual `prod` mode logs are written to:
+
+```bash
+~/projects/balbes/logs/prod/*.log
 ```
 
 ---
@@ -203,8 +212,8 @@ ENV=test pytest tests/ -v    # Test
 ✅ Stage 6: Web Backend
 ✅ Stage 7: Web Frontend
 ✅ Stage 8: Integration & Testing
-⏳ Stage 9: Production Deployment (Next)
-⏳ Stage 10: Final Testing
+🔄 Stage 9: Production Deployment & hardening
+⏳ Stage 10: Final polish and docs cleanup
 
 ---
 
