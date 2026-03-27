@@ -83,11 +83,22 @@ class OrchestratorAgent:
             relevant_skills = await self._search_skills(description)
 
             if not relevant_skills:
-                logger.warning(f"[{task_id}] No relevant skills found")
+                logger.warning(f"[{task_id}] No relevant skills found, using fallback response")
+                fallback_result = self._build_fallback_response(description=description)
+
+                await self._save_result(
+                    user_id=user_id,
+                    task_id=task_id,
+                    skill_name="fallback_chat",
+                    result=fallback_result,
+                    success=True,
+                )
+
                 return {
                     "task_id": task_id,
-                    "status": "failed",
-                    "error": "No relevant skills found for this task",
+                    "status": "success",
+                    "result": fallback_result,
+                    "skill_used": "fallback_chat",
                     "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
                 }
 
@@ -212,6 +223,18 @@ class OrchestratorAgent:
             "skill": skill_name,
             "input": description,
             "output": f"Executed {skill_name} successfully",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _build_fallback_response(self, description: str) -> dict[str, Any]:
+        """Return a safe response when no skill matches query."""
+        return {
+            "skill": "fallback_chat",
+            "input": description,
+            "output": (
+                "Пока не нашел точный скилл под эту задачу. "
+                "Уточни, что именно нужно сделать и какой результат ожидаешь."
+            ),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
