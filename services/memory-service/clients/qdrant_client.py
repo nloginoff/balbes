@@ -53,6 +53,7 @@ class QdrantClient:
                 host=settings.qdrant_host,
                 port=settings.qdrant_port,
                 api_key=settings.qdrant_api_key if settings.qdrant_api_key else None,
+                https=False,
                 timeout=30,
             )
 
