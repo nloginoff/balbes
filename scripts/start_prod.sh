@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 echo "🚢 Starting Balbes - PRODUCTION MODE"
 echo "========================================"
 echo "Environment: PROD"
-echo "Ports: 8100-8200"
+echo "Ports: services=${MEMORY_SERVICE_PORT:-18100}..${WEB_BACKEND_PORT:-18200}, infra=${POSTGRES_PORT:-15432}/${REDIS_PORT:-16379}/${QDRANT_PORT:-16333}/${RABBITMQ_PORT:-15673}"
 echo "Database: balbes"
 echo ""
 
@@ -78,23 +78,23 @@ else
     source .venv/bin/activate
 
     cd "$PROJECT_ROOT/services/memory-service"
-    uvicorn main:app --host 0.0.0.0 --port 8100 --workers 2 > /var/log/balbes-memory.log 2>&1 &
+    uvicorn main:app --host 0.0.0.0 --port "${MEMORY_SERVICE_PORT:-18100}" --workers 2 > /var/log/balbes-memory.log 2>&1 &
     echo "$!" >> /tmp/balbes-prod-pids.txt
 
     cd "$PROJECT_ROOT/services/skills-registry"
-    uvicorn main:app --host 0.0.0.0 --port 8101 --workers 2 > /var/log/balbes-skills.log 2>&1 &
+    uvicorn main:app --host 0.0.0.0 --port "${SKILLS_REGISTRY_PORT:-18101}" --workers 2 > /var/log/balbes-skills.log 2>&1 &
     echo "$!" >> /tmp/balbes-prod-pids.txt
 
     cd "$PROJECT_ROOT/services/orchestrator"
-    uvicorn main:app --host 0.0.0.0 --port 8102 --workers 2 > /var/log/balbes-orchestrator.log 2>&1 &
+    uvicorn main:app --host 0.0.0.0 --port "${ORCHESTRATOR_PORT:-18102}" --workers 2 > /var/log/balbes-orchestrator.log 2>&1 &
     echo "$!" >> /tmp/balbes-prod-pids.txt
 
     cd "$PROJECT_ROOT/services/coder"
-    uvicorn main:app --host 0.0.0.0 --port 8103 --workers 2 > /var/log/balbes-coder.log 2>&1 &
+    uvicorn main:app --host 0.0.0.0 --port "${CODER_PORT:-18103}" --workers 2 > /var/log/balbes-coder.log 2>&1 &
     echo "$!" >> /tmp/balbes-prod-pids.txt
 
     cd "$PROJECT_ROOT/services/web-backend"
-    uvicorn main:app --host 0.0.0.0 --port 8200 --workers 4 > /var/log/balbes-web-backend.log 2>&1 &
+    uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > /var/log/balbes-web-backend.log 2>&1 &
     echo "$!" >> /tmp/balbes-prod-pids.txt
 
     sleep 5
@@ -117,19 +117,19 @@ check_service() {
     fi
 }
 
-check_service "http://localhost:8100/health" "Memory Service"
-check_service "http://localhost:8101/health" "Skills Registry"
-check_service "http://localhost:8102/health" "Orchestrator"
-check_service "http://localhost:8103/health" "Coder Agent"
-check_service "http://localhost:8200/health" "Web Backend"
+check_service "http://localhost:${MEMORY_SERVICE_PORT:-18100}/health" "Memory Service"
+check_service "http://localhost:${SKILLS_REGISTRY_PORT:-18101}/health" "Skills Registry"
+check_service "http://localhost:${ORCHESTRATOR_PORT:-18102}/health" "Orchestrator"
+check_service "http://localhost:${CODER_PORT:-18103}/health" "Coder Agent"
+check_service "http://localhost:${WEB_BACKEND_PORT:-18200}/health" "Web Backend"
 
 echo ""
 echo "========================================"
 echo "✅ Production environment started!"
 echo ""
 echo "🌐 Access:"
-echo "   API: http://localhost:8200"
-echo "   Docs: http://localhost:8200/docs"
+echo "   API: http://localhost:${WEB_BACKEND_PORT:-18200}"
+echo "   Docs: http://localhost:${WEB_BACKEND_PORT:-18200}/docs"
 echo ""
 echo "📊 Monitoring:"
 echo "   systemctl status balbes-*"
