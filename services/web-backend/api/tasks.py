@@ -40,7 +40,7 @@ async def get_tasks(agent_id: str = None, user_id: str = None) -> dict:
 
 
 @router.post("")
-async def create_task(request: TaskCreate, user_id: str) -> dict:
+async def create_task(request: TaskCreate, user_id: str | None = None) -> dict:
     """
     Create and submit task.
 
@@ -73,7 +73,7 @@ async def create_task(request: TaskCreate, user_id: str) -> dict:
 
 
 @router.get("/{task_id}")
-async def get_task(task_id: str, user_id: str) -> dict:
+async def get_task(task_id: str, user_id: str | None = None) -> dict:
     """
     Get task details.
 

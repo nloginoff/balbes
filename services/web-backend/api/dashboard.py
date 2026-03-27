@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/v1/dashboard", tags=["dashboard"])
 
 
 @router.get("/status")
-async def get_system_status(user_id: str) -> SystemStatus:
+async def get_system_status(user_id: str | None = None) -> SystemStatus:
     """
     Get system status overview.
 
@@ -44,7 +44,7 @@ async def get_system_status(user_id: str) -> SystemStatus:
 
 
 @router.get("/overview")
-async def get_dashboard_overview(user_id: str) -> DashboardData:
+async def get_dashboard_overview(user_id: str | None = None) -> DashboardData:
     """
     Get complete dashboard overview.
 

@@ -13,7 +13,7 @@ router = APIRouter(prefix="/api/v1/skills", tags=["skills"])
 
 
 @router.get("")
-async def get_skills(user_id: str) -> dict:
+async def get_skills(user_id: str | None = None) -> dict:
     """
     Get all skills.
 
@@ -37,7 +37,7 @@ async def get_skills(user_id: str) -> dict:
 
 
 @router.post("")
-async def create_skill(request: SkillCreate, user_id: str) -> dict:
+async def create_skill(request: SkillCreate, user_id: str | None = None) -> dict:
     """
     Create new skill.
 

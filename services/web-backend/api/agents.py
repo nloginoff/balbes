@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 
 @router.get("")
-async def get_agents(user_id: str) -> dict:
+async def get_agents(user_id: str | None = None) -> dict:
     """
     Get all agents.
 
@@ -36,7 +36,7 @@ async def get_agents(user_id: str) -> dict:
 
 
 @router.get("/{agent_id}")
-async def get_agent_details(agent_id: str, user_id: str) -> dict:
+async def get_agent_details(agent_id: str, user_id: str | None = None) -> dict:
     """
     Get agent details and statistics.
 
