@@ -47,39 +47,24 @@ class BalbesTelegramBot:
         self.http_client: httpx.AsyncClient | None = None
         self.orchestrator_url = f"http://localhost:{settings.orchestrator_port}"
 
-    async def initialize(self) -> None:
-        """Initialize Telegram bot and HTTP client"""
+    def initialize(self) -> None:
+        """Initialize Telegram bot"""
         logger.info("Initializing Telegram bot...")
-
-        self.http_client = httpx.AsyncClient(timeout=30.0)
 
         self.app = Application.builder().token(self.token).build()
 
         # Add handlers
         self._setup_handlers()
 
-        # Set bot commands
-        await self._set_commands()
-
         logger.info("Telegram bot initialized")
 
-    async def start_polling(self) -> None:
+    def start_polling(self) -> None:
         """Start bot polling"""
         if not self.app:
             raise RuntimeError("Bot not initialized")
 
         logger.info("Starting bot polling...")
-        await self.app.run_polling()
-
-    async def stop(self) -> None:
-        """Stop bot and cleanup"""
-        if self.app:
-            await self.app.stop()
-
-        if self.http_client:
-            await self.http_client.aclose()
-
-        logger.info("Telegram bot stopped")
+        self.app.run_polling()
 
     def _setup_handlers(self) -> None:
         """Setup message handlers"""
@@ -189,8 +174,7 @@ Connected services:
         """Handle /status command"""
         try:
             if not self.http_client:
-                await update.message.reply_text("❌ HTTP client not initialized")
-                return
+                self.http_client = httpx.AsyncClient(timeout=30.0)
 
             response = await self.http_client.get(f"{self.orchestrator_url}/api/v1/status")
 
@@ -225,8 +209,7 @@ Connected services:
 
         try:
             if not self.http_client:
-                await update.message.reply_text("❌ HTTP client not initialized")
-                return
+                self.http_client = httpx.AsyncClient(timeout=30.0)
 
             # Call Memory Service to clear context
             response = await self.http_client.delete(
@@ -259,8 +242,7 @@ Connected services:
 
             # Send task to orchestrator
             if not self.http_client:
-                await update.message.reply_text("❌ HTTP client not initialized")
-                return
+                self.http_client = httpx.AsyncClient(timeout=30.0)
 
             response = await self.http_client.post(
                 f"{self.orchestrator_url}/api/v1/tasks",
@@ -318,24 +300,16 @@ Connected services:
             await update.message.reply_text(f"❌ Error: {str(e)}")
 
 
-async def run_bot() -> None:
+def run_bot() -> None:
     """Run Telegram bot"""
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured, skipping bot initialization")
         return
 
     bot = BalbesTelegramBot()
-    await bot.initialize()
-
-    try:
-        await bot.start_polling()
-    except Exception as e:
-        logger.error(f"Bot error: {e}", exc_info=True)
-    finally:
-        await bot.stop()
+    bot.initialize()
+    bot.start_polling()
 
 
 if __name__ == "__main__":
-    import asyncio
-
-    asyncio.run(run_bot())
+    run_bot()
