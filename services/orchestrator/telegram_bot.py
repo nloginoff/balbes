@@ -246,7 +246,7 @@ Connected services:
 
             response = await self.http_client.post(
                 f"{self.orchestrator_url}/api/v1/tasks",
-                json={
+                params={
                     "user_id": str(user.id),
                     "description": task_description,
                 },
