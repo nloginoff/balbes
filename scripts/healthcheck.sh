@@ -1,110 +1,121 @@
 #!/bin/bash
-# Health check script for all services
+# Health check script for Balbes environments
+# Usage:
+#   ./scripts/healthcheck.sh              # auto detect env (dev/test/prod)
+#   ./scripts/healthcheck.sh dev|test|prod
 
 set -e
 
-echo "=================================================="
-echo "Balbes Multi-Agent System - Health Check"
-echo "=================================================="
-echo ""
-
-# Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Track overall health
+MODE="${1:-auto}"
 ALL_HEALTHY=true
+TOTAL=0
+PASSED=0
 
-# Function to check service
-check_service() {
-    local name=$1
-    local command=$2
-
-    if eval "$command" > /dev/null 2>&1; then
-        echo -e "${GREEN}✅${NC} $name"
-    else
-        echo -e "${RED}❌${NC} $name"
-        ALL_HEALTHY=false
-    fi
-}
-
-# Function to check HTTP endpoint
 check_http() {
-    local name=$1
-    local url=$2
-
+    local name="$1"
+    local url="$2"
+    TOTAL=$((TOTAL + 1))
     if curl -sf "$url" > /dev/null 2>&1; then
+        PASSED=$((PASSED + 1))
         echo -e "${GREEN}✅${NC} $name - $url"
     else
-        echo -e "${RED}❌${NC} $name - $url"
         ALL_HEALTHY=false
+        echo -e "${RED}❌${NC} $name - $url"
     fi
 }
 
-# Infrastructure
-echo "📦 Infrastructure Services"
+check_container() {
+    local name="$1"
+    local container="$2"
+    TOTAL=$((TOTAL + 1))
+    if docker ps --format "{{.Names}}" 2>/dev/null | grep -q "^${container}\$"; then
+        PASSED=$((PASSED + 1))
+        echo -e "${GREEN}✅${NC} $name (${container})"
+    else
+        ALL_HEALTHY=false
+        echo -e "${RED}❌${NC} $name (${container})"
+    fi
+}
+
+detect_mode() {
+    if curl -sf "http://localhost:18100/health" > /dev/null 2>&1 || curl -sf "http://localhost:18200/health" > /dev/null 2>&1; then
+        echo "prod"
+    elif curl -sf "http://localhost:9100/health" > /dev/null 2>&1 || curl -sf "http://localhost:9200/health" > /dev/null 2>&1; then
+        echo "test"
+    else
+        echo "dev"
+    fi
+}
+
+if [[ "$MODE" == "auto" ]]; then
+    MODE="$(detect_mode)"
+fi
+
+case "$MODE" in
+    dev|test|prod) ;;
+    *)
+        echo "Invalid mode: $MODE"
+        echo "Usage: ./scripts/healthcheck.sh [dev|test|prod]"
+        exit 1
+        ;;
+esac
+
+echo "=================================================="
+echo "Balbes Health Check ($MODE)"
+echo "=================================================="
 echo ""
 
-check_service "PostgreSQL" "docker exec balbes-postgres pg_isready -U balbes -d balbes_agents"
-check_service "Redis" "docker exec balbes-redis redis-cli ping | grep -q PONG"
-check_service "RabbitMQ" "curl -sf -u guest:guest http://localhost:15672/api/health/checks/alarms | grep -q '\"status\":\"ok\"'"
-check_service "Qdrant" "curl -sf http://localhost:6333/healthz | grep -q 'ok'"
-
-echo ""
 echo "🚀 Application Services"
 echo ""
-
-check_http "Memory Service" "http://localhost:8100/health"
-check_http "Skills Registry" "http://localhost:8101/health"
-check_http "Web Backend" "http://localhost:8200/health"
-
-# Check if agent processes are running (for dev mode)
-echo ""
-echo "🤖 Agent Processes"
-echo ""
-
-if ps aux | grep -q "[p]ython.*orchestrator/main.py"; then
-    echo -e "${GREEN}✅${NC} Orchestrator (running)"
+if [[ "$MODE" == "dev" ]]; then
+    check_http "Memory Service" "http://localhost:8100/health"
+    check_http "Skills Registry" "http://localhost:8101/health"
+    check_http "Orchestrator" "http://localhost:8102/health"
+    check_http "Coder Agent" "http://localhost:8103/health"
+    check_http "Web Backend" "http://localhost:8200/health"
+elif [[ "$MODE" == "test" ]]; then
+    check_http "Memory Service" "http://localhost:9100/health"
+    check_http "Skills Registry" "http://localhost:9101/health"
+    check_http "Orchestrator" "http://localhost:9102/health"
+    check_http "Coder Agent" "http://localhost:9103/health"
+    check_http "Web Backend" "http://localhost:9200/health"
 else
-    echo -e "${YELLOW}⚠️${NC}  Orchestrator (not running - start with: make dev-orch)"
+    check_http "Memory Service" "http://localhost:18100/health"
+    check_http "Skills Registry" "http://localhost:18101/health"
+    check_http "Orchestrator" "http://localhost:18102/health"
+    check_http "Coder Agent" "http://localhost:18103/health"
+    check_http "Web Backend" "http://localhost:18200/health"
 fi
 
-if ps aux | grep -q "[p]ython.*coder/main.py"; then
-    echo -e "${GREEN}✅${NC} Coder (running)"
+echo ""
+echo "📦 Infrastructure (Docker containers)"
+echo ""
+if [[ "$MODE" == "dev" ]]; then
+    check_container "PostgreSQL" "balbes-dev-postgres"
+    check_container "Redis" "balbes-dev-redis"
+    check_container "Qdrant" "balbes-dev-qdrant"
+    check_container "RabbitMQ" "balbes-dev-rabbitmq"
+elif [[ "$MODE" == "test" ]]; then
+    check_container "PostgreSQL" "balbes-test-postgres"
+    check_container "Redis" "balbes-test-redis"
+    check_container "Qdrant" "balbes-test-qdrant"
 else
-    echo -e "${YELLOW}⚠️${NC}  Coder (not running - start with: make dev-coder)"
+    check_container "PostgreSQL" "balbes-prod-postgres"
+    check_container "Redis" "balbes-prod-redis"
+    check_container "Qdrant" "balbes-prod-qdrant"
+    check_container "RabbitMQ" "balbes-prod-rabbitmq"
 fi
 
-# Check Docker containers (for prod mode)
-if docker ps --format '{{.Names}}' | grep -q 'balbes-orchestrator'; then
-    echo -e "${GREEN}✅${NC} Orchestrator container (running)"
-fi
-
-if docker ps --format '{{.Names}}' | grep -q 'balbes-coder'; then
-    echo -e "${GREEN}✅${NC} Coder container (running)"
-fi
-
-# Summary
 echo ""
 echo "=================================================="
 if [ "$ALL_HEALTHY" = true ]; then
-    echo -e "${GREEN}✅ All critical services are healthy!${NC}"
-    echo ""
-    echo "System is ready to use:"
-    echo "  - Telegram bot: /start"
-    echo "  - Web UI: http://localhost:5173"
-    echo "  - Memory API: http://localhost:8100/docs"
-    echo "  - Skills API: http://localhost:8101/docs"
-    echo "  - Web API: http://localhost:8200/docs"
+    echo -e "${GREEN}✅ All checks passed ($PASSED/$TOTAL)${NC}"
 else
-    echo -e "${RED}❌ Some services are not healthy${NC}"
-    echo ""
-    echo "Troubleshooting:"
-    echo "  1. Check Docker: docker ps"
-    echo "  2. Start infrastructure: make infra-up"
-    echo "  3. Check logs: make infra-logs"
-    echo "  4. See docs/DEPLOYMENT.md for details"
+    echo -e "${YELLOW}⚠️  Partial health: $PASSED/$TOTAL checks passed${NC}"
 fi
 echo "=================================================="
