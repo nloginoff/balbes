@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # =============================================================================
     openrouter_api_key: str | None = Field(default=None, description="OpenRouter API key")
     aitunnel_api_key: str | None = Field(default=None, description="AiTunnel API key")
+    default_chat_model: str = Field(
+        default="openrouter/stepfun/step-3.5-flash:free",
+        description="Default model for direct chat responses",
+    )
 
     # =============================================================================
     # Telegram Bot

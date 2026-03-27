@@ -78,27 +78,48 @@ class OrchestratorAgent:
             logger.debug(f"[{task_id}] Retrieving context from Memory Service")
             agent_context = await self._get_context(user_id)
 
-            # Шаг 2: Поиск релевантных скиллов в Skills Registry
-            logger.debug(f"[{task_id}] Searching for relevant skills")
-            relevant_skills = await self._search_skills(description)
-
-            if not relevant_skills:
-                logger.warning(f"[{task_id}] No relevant skills found, using fallback response")
-                fallback_result = self._build_fallback_response(description=description)
+            # Шаг 2: По умолчанию отвечаем через LLM.
+            # Скиллы подключаем только для "инструментальных" задач.
+            if not self._should_use_skills(description):
+                logger.debug(f"[{task_id}] Using direct LLM response path")
+                llm_result = await self._generate_llm_response(description, agent_context)
 
                 await self._save_result(
                     user_id=user_id,
                     task_id=task_id,
-                    skill_name="fallback_chat",
-                    result=fallback_result,
+                    skill_name="direct_llm_chat",
+                    result=llm_result,
                     success=True,
                 )
 
                 return {
                     "task_id": task_id,
                     "status": "success",
-                    "result": fallback_result,
-                    "skill_used": "fallback_chat",
+                    "result": llm_result,
+                    "skill_used": "direct_llm_chat",
+                    "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
+                }
+
+            logger.debug(f"[{task_id}] Searching for relevant skills")
+            relevant_skills = await self._search_skills(description)
+
+            if not relevant_skills:
+                logger.warning(f"[{task_id}] No relevant skills found, falling back to LLM")
+                llm_result = await self._generate_llm_response(description, agent_context)
+
+                await self._save_result(
+                    user_id=user_id,
+                    task_id=task_id,
+                    skill_name="direct_llm_chat",
+                    result=llm_result,
+                    success=True,
+                )
+
+                return {
+                    "task_id": task_id,
+                    "status": "success",
+                    "result": llm_result,
+                    "skill_used": "direct_llm_chat",
                     "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
                 }
 
@@ -225,6 +246,104 @@ class OrchestratorAgent:
             "output": f"Executed {skill_name} successfully",
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
+
+    async def _generate_llm_response(
+        self,
+        description: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Generate direct chat response from OpenRouter-compatible API."""
+        if not self.http_client:
+            return self._build_fallback_response(description=description)
+
+        if not settings.openrouter_api_key:
+            logger.warning("OpenRouter API key is not configured, using fallback response")
+            return self._build_fallback_response(description=description)
+
+        model = settings.default_chat_model
+        provider_prefix = "openrouter/"
+        openrouter_model = (
+            model[len(provider_prefix) :] if model.startswith(provider_prefix) else model
+        )
+
+        system_prompt = (
+            "You are Balbes assistant. Reply in the user's language. "
+            "Be concise and practical. If task is ambiguous, ask one clarifying question."
+        )
+
+        try:
+            response = await self.http_client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": openrouter_model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Context: {context if context else '{}'}\n\n"
+                                f"User request: {description}"
+                            ),
+                        },
+                    ],
+                    "temperature": 0.4,
+                },
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    f"OpenRouter request failed: {response.status_code} {response.text[:300]}"
+                )
+                return self._build_fallback_response(description=description)
+
+            data = response.json()
+            output = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "Не удалось получить ответ от модели.")
+            )
+
+            return {
+                "skill": "direct_llm_chat",
+                "input": description,
+                "output": output,
+                "model": model,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+        except Exception as e:
+            logger.warning(f"Failed to generate LLM response: {e}")
+            return self._build_fallback_response(description=description)
+
+    def _should_use_skills(self, description: str) -> bool:
+        """
+        Decide if request should go through skill search/execution.
+        Simple chat goes direct to LLM.
+        """
+        text = description.lower()
+        skill_intent_keywords = (
+            "найди",
+            "поиск",
+            "search",
+            "extract",
+            "извлеки",
+            "проанализируй файл",
+            "run",
+            "запусти",
+            "api",
+            "скрипт",
+            "code",
+            "код",
+            "skill",
+            "скилл",
+            "database",
+            "база данных",
+        )
+        return any(keyword in text for keyword in skill_intent_keywords)
 
     def _build_fallback_response(self, description: str) -> dict[str, Any]:
         """Return a safe response when no skill matches query."""
