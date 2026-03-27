@@ -269,6 +269,7 @@ docker exec balbes-postgres pg_dump -U balbes balbes > backup.sql
 
 - **`QUICKSTART.md`** - Get started in 5 minutes
 - **`DEPLOYMENT.md`** - Production deployment guide
+- **`RELEASE_CHECKLIST.md`** - Go/No-Go release checklist
 - **`TODO.md`** - Development progress snapshot
 - **`STAGE7_SUMMARY.md`** - Latest completion report
 - **Service READMEs** - Each service has detailed docs

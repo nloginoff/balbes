@@ -167,6 +167,11 @@ ENV=test pytest tests/ -v    # Test
 
 # Status of all
 ./scripts/status_all_envs.sh
+
+# Explicit health check by environment
+./scripts/healthcheck.sh dev
+./scripts/healthcheck.sh test
+./scripts/healthcheck.sh prod
 ```
 
 Manual `prod` mode logs are written to:
@@ -183,8 +188,9 @@ Manual `prod` mode logs are written to:
 - **[MULTI_ENV_QUICKSTART.md](MULTI_ENV_QUICKSTART.md)** - Quick start per environment
 - **[ENVIRONMENTS.md](ENVIRONMENTS.md)** - Environment architecture
 - **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production deployment
+- **[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md)** - Go/No-Go release gate
 - **[PROJECT_GUIDE.md](PROJECT_GUIDE.md)** - Complete system guide
-- **[TODO.md](TODO.md)** - Development progress (80% complete)
+- **[TODO.md](TODO.md)** - Development progress (~93% complete)
 
 ---
 
@@ -202,7 +208,7 @@ Manual `prod` mode logs are written to:
 
 ---
 
-## 📊 MVP Progress: 80%
+## 📊 MVP Progress: ~93%
 
 ✅ Stage 1: Infrastructure
 ✅ Stage 2: Memory Service

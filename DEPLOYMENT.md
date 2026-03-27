@@ -307,6 +307,20 @@ ENV=prod ./scripts/start_prod.sh
 ./scripts/status_all_envs.sh
 ```
 
+### Step 5.1: Script-only smoke check (required)
+
+```bash
+./scripts/healthcheck.sh prod
+curl -fsS http://localhost:18100/health
+curl -fsS http://localhost:18101/health
+curl -fsS http://localhost:18102/health
+curl -fsS http://localhost:18103/health
+curl -fsS http://localhost:18200/health
+rg -n "ERROR|CRITICAL|Traceback|Exception" logs/prod/*.log
+```
+
+Release gate and rollback rules are documented in `RELEASE_CHECKLIST.md`.
+
 Manual mode in `start_prod.sh` writes logs to:
 
 ```bash

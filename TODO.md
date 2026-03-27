@@ -3,8 +3,8 @@
 Этот файл отражает текущее состояние проекта и ближайшие шаги.
 
 **Started**: 2026-03-26
-**Current phase**: Stage 9 (Production Deployment & hardening)
-**Overall MVP progress**: ~90%
+**Current phase**: Stage 9 (Production Deployment & hardening) -> Stage 10 prep
+**Overall MVP progress**: ~93%
 **Source of truth for run scripts/docs**: this file + `DEPLOYMENT.md` + `ENVIRONMENTS.md`
 
 ---
@@ -42,7 +42,7 @@
 - [x] Infrastructure контейнеры prod поднимаются стабильно
 - [ ] Финализировать единый runbook для штатного ежедневного запуска/остановки prod
 - [ ] Проверить и зафиксировать policy по Qdrant API key (local prod vs external prod)
-- [ ] Сделать финальный smoke-pass через скрипты без ручных команд
+- [x] Сделать финальный smoke-pass через скрипты без ручных команд
 
 ---
 
@@ -51,10 +51,19 @@
 ### Stage 10: Final Testing & Release Readiness
 
 - [ ] Финальный e2e прогон на актуальном dev
-- [ ] Финальный smoke на prod (через script-only flow)
+- [x] Финальный smoke на prod (через script-only flow)
 - [ ] Сверка документации с фактическими командами (последний проход)
 - [ ] Релизная фиксация: checklist “go/no-go”
 - [ ] Зафиксировать post-MVP backlog (что переносим в следующий этап)
+
+### Latest verification snapshot
+
+- [x] Script-only smoke on prod completed successfully:
+  - `./scripts/stop_prod.sh`
+  - `./scripts/start_prod.sh`
+  - `./scripts/healthcheck.sh prod`
+  - `./scripts/status_all_envs.sh`
+- [x] Health endpoints for `18100..18200` confirmed reachable
 
 ---
 
