@@ -6,6 +6,9 @@
 
 set -e
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
@@ -39,6 +42,19 @@ check_container() {
     else
         ALL_HEALTHY=false
         echo -e "${RED}❌${NC} $name (${container})"
+    fi
+}
+
+check_process() {
+    local name="$1"
+    local pattern="$2"
+    TOTAL=$((TOTAL + 1))
+    if pgrep -f "$pattern" > /dev/null 2>&1; then
+        PASSED=$((PASSED + 1))
+        echo -e "${GREEN}✅${NC} $name"
+    else
+        ALL_HEALTHY=false
+        echo -e "${RED}❌${NC} $name"
     fi
 }
 
@@ -90,6 +106,13 @@ else
     check_http "Orchestrator" "http://localhost:18102/health"
     check_http "Coder Agent" "http://localhost:18103/health"
     check_http "Web Backend" "http://localhost:18200/health"
+    if [ -f .env.prod ]; then
+        # shellcheck disable=SC2046
+        export $(cat .env.prod | grep -v '^#' | xargs)
+        if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+            check_process "Telegram Bot Polling" "python telegram_bot.py"
+        fi
+    fi
 fi
 
 echo ""

@@ -27,6 +27,15 @@ check_port() {
     fi
 }
 
+check_process() {
+    local pattern=$1
+    if pgrep -f "$pattern" > /dev/null 2>&1; then
+        echo "✅"
+    else
+        echo "❌"
+    fi
+}
+
 # Development Environment
 echo "┌─────────────────────────────────────────────────────────────┐"
 echo "│ 🟦 DEVELOPMENT (ports 8100-8200, DB: balbes_dev)           │"
@@ -72,6 +81,7 @@ else
     printf "│ Web Backend (18200)        : %s                            │\n" "$(check_service http://localhost:18200/health)"
 fi
 
+printf "│ Telegram Bot (polling)     : %s                            │\n" "$(check_process 'python telegram_bot.py')"
 printf "│ Nginx (80/443)             : %s                            │\n" "$(systemctl is-active nginx 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
 echo "└─────────────────────────────────────────────────────────────┘"
 echo ""

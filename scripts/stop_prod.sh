@@ -44,6 +44,15 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
+# Also stop Telegram bot polling process if running
+telegram_pids=$(pgrep -f "python telegram_bot.py" || true)
+if [ -n "$telegram_pids" ]; then
+    for pid in $telegram_pids; do
+        echo "   Stopping Telegram bot PID: $pid"
+        kill "$pid" 2>/dev/null || true
+    done
+fi
+
 # Fallback: kill anything still bound to prod ports
 echo "Checking for leftover prod processes on ports..."
 for port in 18100 18101 18102 18103 18200; do

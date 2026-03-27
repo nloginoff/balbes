@@ -102,6 +102,15 @@ else
     ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
 
+    if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+        cd "$PROJECT_ROOT/services/orchestrator"
+        ENV=prod python telegram_bot.py > "$LOG_DIR/telegram-bot.log" 2>&1 &
+        echo "$!" >> "$PID_FILE"
+        echo "Started Telegram bot polling"
+    else
+        echo "Skipping Telegram bot (TELEGRAM_BOT_TOKEN is empty)"
+    fi
+
     sleep 5
 fi
 
@@ -127,6 +136,13 @@ check_service "http://localhost:${SKILLS_REGISTRY_PORT:-18101}/health" "Skills R
 check_service "http://localhost:${ORCHESTRATOR_PORT:-18102}/health" "Orchestrator"
 check_service "http://localhost:${CODER_PORT:-18103}/health" "Coder Agent"
 check_service "http://localhost:${WEB_BACKEND_PORT:-18200}/health" "Web Backend"
+if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
+    if pgrep -f "python telegram_bot.py" > /dev/null 2>&1; then
+        echo "   ✅ Telegram Bot"
+    else
+        echo "   ❌ Telegram Bot FAILED"
+    fi
+fi
 
 echo ""
 echo "========================================"
