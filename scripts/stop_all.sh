@@ -41,12 +41,20 @@ fi
 sleep 2
 
 # Stop Docker infrastructure (optional)
-read -p "Stop Docker infrastructure (Redis, PostgreSQL, Qdrant)? [y/N] " -n 1 -r
+read -p "Stop Docker infrastructure for dev/test/prod (Redis, PostgreSQL, Qdrant, RabbitMQ)? [y/N] " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
-    echo "Stopping Docker containers..."
-    sg docker -c 'docker compose -f docker-compose.dev.yml down'
+    echo "Stopping Docker containers for all environments..."
+
+    echo "   - dev"
+    sg docker -c 'docker compose -f docker-compose.dev.yml down' || true
+
+    echo "   - test"
+    sg docker -c 'docker compose -f docker-compose.test.yml down -v' || true
+
+    echo "   - prod"
+    sg docker -c 'docker compose --env-file .env.prod -f docker-compose.prod.yml down' || true
 fi
 
 echo ""
