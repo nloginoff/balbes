@@ -5,6 +5,7 @@
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
+PID_FILE="$PROJECT_ROOT/.pids-prod.txt"
 
 echo "🛑 Stopping Balbes - PRODUCTION MODE"
 echo "========================================"
@@ -25,7 +26,6 @@ if systemctl list-unit-files | grep -q balbes-memory; then
     sudo systemctl stop balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
 else
     # Kill manual processes
-    PID_FILE="$PROJECT_ROOT/.pids-prod.txt"
     if [ -f "$PID_FILE" ]; then
         echo "Stopping manual processes..."
         while IFS= read -r pid; do
@@ -34,11 +34,46 @@ else
                 kill "$pid" 2>/dev/null || true
             fi
         done < "$PID_FILE"
-        rm "$PID_FILE"
     fi
 fi
 
 sleep 2
+
+# Force-stop any remaining prod services by PID file
+if [ -f "$PID_FILE" ]; then
+    while IFS= read -r pid; do
+        if ps -p "$pid" > /dev/null 2>&1; then
+            echo "   Force stopping PID: $pid"
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    done < "$PID_FILE"
+    rm -f "$PID_FILE"
+fi
+
+# Fallback: kill anything still bound to prod ports
+echo "Checking for leftover prod processes on ports..."
+for port in 18100 18101 18102 18103 18200; do
+    pids=$(lsof -ti:"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            echo "   Killing process on port $port (PID: $pid)"
+            kill "$pid" 2>/dev/null || true
+        done
+    fi
+done
+
+sleep 1
+
+# Last pass with SIGKILL for stubborn workers
+for port in 18100 18101 18102 18103 18200; do
+    pids=$(lsof -ti:"$port" 2>/dev/null || true)
+    if [ -n "$pids" ]; then
+        for pid in $pids; do
+            echo "   Force killing process on port $port (PID: $pid)"
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    fi
+done
 
 # Docker stays running for production (data persistence)
 echo ""
