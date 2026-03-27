@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Clock, CheckCircle, XCircle } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { tasksAPI } from '@/lib/api'
 import { formatDistanceToNow } from 'date-fns'
 

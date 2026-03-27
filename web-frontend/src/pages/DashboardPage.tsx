@@ -70,7 +70,7 @@ export default function DashboardPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            {status?.services && Object.entries(status.services).map(([name, serviceStatus]) => (
+            {status?.services && Object.entries(status.services as Record<string, string>).map(([name, serviceStatus]) => (
               <div key={name} className="flex items-center justify-between">
                 <span className="text-sm font-medium capitalize">
                   {name.replace('_', ' ')}
@@ -84,7 +84,7 @@ export default function DashboardPage() {
                       : 'bg-yellow-500/20 text-yellow-500'
                   }`}
                 >
-                  {serviceStatus}
+                  {String(serviceStatus)}
                 </span>
               </div>
             ))}

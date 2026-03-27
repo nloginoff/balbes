@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Star, TrendingUp } from 'lucide-react'
+import { Star } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { skillsAPI } from '@/lib/api'
 
