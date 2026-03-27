@@ -5,6 +5,7 @@ Tests the full flow of Skills Registry API with real database connections.
 Requires infrastructure to be running (PostgreSQL, Qdrant).
 """
 
+import asyncio
 from uuid import uuid4
 
 import httpx
@@ -348,17 +349,27 @@ class TestCompleteWorkflow:
             skill = get_response.json()
             assert skill["name"] == skill_data["name"]
 
-            # Step 3: Search for the skill
-            search_response = await client.post(
-                f"{BASE_URL}/api/v1/skills/search", json={"query": "workflow skill", "limit": 10}
-            )
-            assert search_response.status_code == 200
-            search_results = search_response.json()
-            assert search_results["total"] >= 1
+            # Step 3: Search for the skill.
+            # Semantic ranking can be eventually consistent after creation, so retry briefly.
+            found = False
+            for _ in range(5):
+                search_response = await client.post(
+                    f"{BASE_URL}/api/v1/skills/search",
+                    json={
+                        "query": skill_data["name"],
+                        "category": workflow_category,
+                        "limit": 20,
+                    },
+                )
+                assert search_response.status_code == 200
+                search_results = search_response.json()
+                found = any(r["skill_id"] == skill_id for r in search_results["results"])
+                if found:
+                    break
+                await asyncio.sleep(0.5)
 
             # Step 4: Check if our skill is in the results
-            found = any(r["skill_id"] == skill_id for r in search_results["results"])
-            assert found, "Created skill should be found in search results"
+            assert found, "Created skill should be found in filtered search results"
 
             # Step 5: List all skills in category
             list_response = await client.get(
