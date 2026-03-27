@@ -7,15 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for MVP
-- Orchestrator Agent with Telegram bot
-- Coder Agent for creating Python skills
-- Memory Service (Redis + Qdrant + PostgreSQL)
-- Skills Registry
-- Web UI (React + FastAPI backend)
-- Multi-provider LLM client with fallback
-- Token tracking and budget management
-- Basic logging and monitoring
+## [0.1.0-mvp] - 2026-03-27
+
+### Added
+- Multi-environment runtime model (`dev`/`test`/`prod`) with isolated ports and data paths on one server.
+- Dedicated run scripts for each environment and cross-environment status checks.
+- Release readiness documentation:
+  - `RELEASE_CHECKLIST.md`
+  - updated runbook guidance in `DEPLOYMENT.md`, `README.md`, `PROJECT_GUIDE.md`, `TODO.md`
+
+### Changed
+- Production app ports moved to `18100..18200` and infra ports to isolated `15xxx/16xxx` ranges.
+- Health checks updated to support explicit `dev|test|prod` modes and auto-detection.
+- Stop/start scripts hardened to use explicit compose files and path-safe project root resolution.
+- Python runtime baseline aligned to Python 3.13 in deployment docs and operational flow.
+
+### Fixed
+- Skills workflow integration test made deterministic against semantic-search indexing lag.
+- Production startup/stop scripts fixed for user-level logging and PID tracking.
+- Qdrant local production client mode fixed for HTTP operation (`https=False`) to avoid SSL mismatch.
+- Python compatibility issues around `datetime.UTC` usage corrected.
+
+### Security
+- Production environment requirements reinforced in docs (`WEB_AUTH_TOKEN`, JWT secrets, non-default secrets).
 
 ## [0.1.0] - 2026-03-26
 
