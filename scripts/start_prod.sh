@@ -8,6 +8,8 @@ set -e
 #PROJECT_ROOT="/home/balbes/projects/dev"
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
+LOG_DIR="$PROJECT_ROOT/logs/prod"
+PID_FILE="$PROJECT_ROOT/.pids-prod.txt"
 
 echo "🚢 Starting Balbes - PRODUCTION MODE"
 echo "========================================"
@@ -77,26 +79,28 @@ else
     echo "Starting services manually..."
 
     source .venv/bin/activate
+    mkdir -p "$LOG_DIR"
+    : > "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/memory-service"
-    uvicorn main:app --host 0.0.0.0 --port "${MEMORY_SERVICE_PORT:-18100}" --workers 2 > /var/log/balbes-memory.log 2>&1 &
-    echo "$!" >> /tmp/balbes-prod-pids.txt
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${MEMORY_SERVICE_PORT:-18100}" --workers 2 > "$LOG_DIR/memory.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/skills-registry"
-    uvicorn main:app --host 0.0.0.0 --port "${SKILLS_REGISTRY_PORT:-18101}" --workers 2 > /var/log/balbes-skills.log 2>&1 &
-    echo "$!" >> /tmp/balbes-prod-pids.txt
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${SKILLS_REGISTRY_PORT:-18101}" --workers 2 > "$LOG_DIR/skills.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/orchestrator"
-    uvicorn main:app --host 0.0.0.0 --port "${ORCHESTRATOR_PORT:-18102}" --workers 2 > /var/log/balbes-orchestrator.log 2>&1 &
-    echo "$!" >> /tmp/balbes-prod-pids.txt
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${ORCHESTRATOR_PORT:-18102}" --workers 2 > "$LOG_DIR/orchestrator.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/coder"
-    uvicorn main:app --host 0.0.0.0 --port "${CODER_PORT:-18103}" --workers 2 > /var/log/balbes-coder.log 2>&1 &
-    echo "$!" >> /tmp/balbes-prod-pids.txt
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${CODER_PORT:-18103}" --workers 2 > "$LOG_DIR/coder.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/web-backend"
-    uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > /var/log/balbes-web-backend.log 2>&1 &
-    echo "$!" >> /tmp/balbes-prod-pids.txt
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
 
     sleep 5
 fi
@@ -138,7 +142,7 @@ echo "   docker ps"
 echo "   ./scripts/status.sh prod"
 echo ""
 echo "📝 Logs:"
-echo "   tail -f /var/log/balbes-*.log"
+echo "   tail -f $LOG_DIR/*.log"
 echo "   journalctl -u balbes-* -f"
 echo ""
 echo "🛑 Stop:"

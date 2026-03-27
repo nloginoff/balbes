@@ -25,15 +25,16 @@ if systemctl list-unit-files | grep -q balbes-memory; then
     sudo systemctl stop balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
 else
     # Kill manual processes
-    if [ -f /tmp/balbes-prod-pids.txt ]; then
+    PID_FILE="$PROJECT_ROOT/.pids-prod.txt"
+    if [ -f "$PID_FILE" ]; then
         echo "Stopping manual processes..."
         while IFS= read -r pid; do
             if ps -p "$pid" > /dev/null 2>&1; then
                 echo "   Stopping PID: $pid"
                 kill "$pid" 2>/dev/null || true
             fi
-        done < /tmp/balbes-prod-pids.txt
-        rm /tmp/balbes-prod-pids.txt
+        done < "$PID_FILE"
+        rm "$PID_FILE"
     fi
 fi
 

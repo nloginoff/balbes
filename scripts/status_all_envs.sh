@@ -55,7 +55,7 @@ echo ""
 
 # Production Environment
 echo "┌─────────────────────────────────────────────────────────────┐"
-echo "│ 🟩 PRODUCTION (ports 8100-8200, DB: balbes)                │"
+echo "│ 🟩 PRODUCTION (ports 18100-18200, DB: balbes)              │"
 echo "├─────────────────────────────────────────────────────────────┤"
 
 if systemctl list-unit-files 2>/dev/null | grep -q balbes-memory; then
@@ -65,11 +65,11 @@ if systemctl list-unit-files 2>/dev/null | grep -q balbes-memory; then
     printf "│ Coder Agent (systemd)      : %s                            │\n" "$(systemctl is-active balbes-coder 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
     printf "│ Web Backend (systemd)      : %s                            │\n" "$(systemctl is-active balbes-web-backend 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
 else
-    printf "│ Memory Service (8100)      : %s                            │\n" "$(check_service http://localhost:8100/health)"
-    printf "│ Skills Registry (8101)     : %s                            │\n" "$(check_service http://localhost:8101/health)"
-    printf "│ Orchestrator (8102)        : %s                            │\n" "$(check_service http://localhost:8102/health)"
-    printf "│ Coder Agent (8103)         : %s                            │\n" "$(check_service http://localhost:8103/health)"
-    printf "│ Web Backend (8200)         : %s                            │\n" "$(check_service http://localhost:8200/health)"
+    printf "│ Memory Service (18100)     : %s                            │\n" "$(check_service http://localhost:18100/health)"
+    printf "│ Skills Registry (18101)    : %s                            │\n" "$(check_service http://localhost:18101/health)"
+    printf "│ Orchestrator (18102)       : %s                            │\n" "$(check_service http://localhost:18102/health)"
+    printf "│ Coder Agent (18103)        : %s                            │\n" "$(check_service http://localhost:18103/health)"
+    printf "│ Web Backend (18200)        : %s                            │\n" "$(check_service http://localhost:18200/health)"
 fi
 
 printf "│ Nginx (80/443)             : %s                            │\n" "$(systemctl is-active nginx 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
