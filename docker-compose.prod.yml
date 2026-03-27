@@ -58,6 +58,27 @@ services:
     networks:
       - balbes-prod-network
 
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: balbes-prod-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_prod_data:/var/lib/rabbitmq
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - balbes-prod-network
+
 volumes:
   postgres_prod_data:
     name: balbes_prod_postgres_data
@@ -67,6 +88,9 @@ volumes:
     driver: local
   qdrant_prod_data:
     name: balbes_prod_qdrant_data
+    driver: local
+  rabbitmq_prod_data:
+    name: balbes_prod_rabbitmq_data
     driver: local
 
 networks:
