@@ -12,13 +12,7 @@ echo "========================================"
 echo ""
 echo "⚠️  WARNING: This will stop production services!"
 echo ""
-read -p "Are you sure? [y/N] " -n 1 -r
-echo
-
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo "Cancelled."
-    exit 0
-fi
+echo "Proceeding without interactive confirmation (script mode)."
 
 # Stop systemd services if they exist
 if systemctl list-unit-files | grep -q balbes-memory; then
