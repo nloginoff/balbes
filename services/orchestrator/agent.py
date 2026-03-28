@@ -1,14 +1,16 @@
 """
-Orchestrator Agent - главный координирующий агент системы.
+Orchestrator Agent — главный координирующий агент системы.
 
-Управляет:
-- Анализом задач пользователя
-- Выбором и вызовом скиллов через Skills Registry
-- Управлением контекстом через Memory Service
-- Координацией с другими агентами через Message Bus
-- Отправкой результатов пользователю
+Возможности:
+- Мультичат: каждый чат имеет свою историю и модель (через Redis)
+- Workspace: системный промпт загружается из MD-файлов (OpenClaw-style)
+- Tool calls: web_search, fetch_url, execute_command, workspace_read/write,
+              rename_chat, save_to_memory
+- Адаптивная обрезка истории под контекстное окно выбранной модели
+- Fallback по цепочке моделей при 429/5xx
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -16,23 +18,112 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import tiktoken
+from tools import AVAILABLE_TOOLS, ToolDispatcher
+from workspace import AgentWorkspace
 
 from shared.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
 
+MAX_TOOL_CALL_ROUNDS = 5  # prevent infinite tool-call loops
+
+
+def _count_tokens(text: str) -> int:
+    """Approximate token count using cl100k_base encoding."""
+    try:
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:
+        return len(text) // 4
+
+
+def _load_providers_config() -> dict[str, Any]:
+    """Load providers.yaml once. Returns empty dict on failure."""
+    try:
+        from pathlib import Path
+
+        import yaml
+
+        cfg_path = Path(__file__).parent.parent.parent / "config" / "providers.yaml"
+        if cfg_path.exists():
+            with open(cfg_path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning(f"Failed to load providers.yaml: {e}")
+    return {}
+
+
+_providers_config: dict[str, Any] = {}
+
+
+def get_providers_config() -> dict[str, Any]:
+    global _providers_config
+    if not _providers_config:
+        _providers_config = _load_providers_config()
+    return _providers_config
+
+
+def get_context_window(model_id: str) -> int:
+    """Return context window size for a model from providers.yaml."""
+    cfg = get_providers_config()
+    for m in cfg.get("active_models", []):
+        if m.get("id") == model_id:
+            return m.get("context_window", 8192)
+    # Fallback defaults by name hints
+    if "claude" in model_id:
+        return 200000
+    if "gpt-4" in model_id:
+        return 128000
+    return 8192
+
+
+def build_messages_for_llm(
+    system_prompt: str,
+    history: list[dict[str, Any]],
+    user_input: str,
+    model_id: str,
+) -> list[dict[str, Any]]:
+    """
+    Build the messages array for LLM, adaptively trimming history to fit context window.
+    Preserves the most recent messages.
+    """
+    cfg = get_providers_config().get("memory", {})
+    trim_threshold = cfg.get("trim_threshold", 0.85)
+    max_msgs = cfg.get("max_messages_in_context", 50)
+    reserve = cfg.get("system_prompt_reserve", 500)
+
+    context_window = get_context_window(model_id)
+    used = _count_tokens(system_prompt) + _count_tokens(user_input) + reserve
+    available = int(context_window * trim_threshold) - used
+
+    # Take messages from the end, fitting into available tokens
+    trimmed: list[dict[str, Any]] = []
+    for msg in reversed(history[-max_msgs:]):
+        msg_tokens = _count_tokens(msg.get("content", ""))
+        if available - msg_tokens < 0:
+            break
+        trimmed.insert(0, msg)
+        available -= msg_tokens
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for m in trimmed:
+        messages.append({"role": m["role"], "content": m["content"]})
+    messages.append({"role": "user", "content": user_input})
+    return messages
+
 
 class OrchestratorAgent:
     """
-    Orchestrator Agent координирует работу всей системы.
+    Orchestrator Agent — coordinates the whole Balbes system.
 
-    Основные функции:
-    - Обработка запросов пользователя
-    - Поиск релевантных скиллов
-    - Выполнение скиллов
-    - Управление памятью и контекстом
-    - Возврат результатов
+    Key features:
+    - Per-chat history and model selection
+    - Workspace-based system prompt (MD files)
+    - LLM tool calls with multi-round execution loop
+    - Adaptive history trimming
+    - Model fallback chain
     """
 
     def __init__(self):
@@ -41,431 +132,367 @@ class OrchestratorAgent:
         self.skills_registry_url = f"http://localhost:{settings.skills_registry_port}"
         self.http_client: httpx.AsyncClient | None = None
 
+        # Workspace (system prompt from MD files)
+        self.workspace = AgentWorkspace(self.agent_id)
+
+        # Tool dispatcher
+        self.tool_dispatcher: ToolDispatcher | None = None
+
     async def connect(self) -> None:
-        """Initialize HTTP client"""
-        self.http_client = httpx.AsyncClient(timeout=30.0)
+        """Initialize HTTP client, load workspace, warm up tools."""
+        self.http_client = httpx.AsyncClient(timeout=60.0)
+
+        # Load workspace (system prompt from MD files)
+        try:
+            self.workspace.load()
+            logger.info(f"Workspace loaded for agent '{self.agent_id}'")
+        except Exception as e:
+            logger.warning(f"Workspace load failed (using defaults): {e}")
+
+        # Initialize tool dispatcher
+        self.tool_dispatcher = ToolDispatcher(
+            workspace=self.workspace,
+            http_client=self.http_client,
+            providers_config=get_providers_config(),
+        )
+
         logger.info("Orchestrator Agent initialized")
 
     async def close(self) -> None:
-        """Close HTTP client"""
         if self.http_client:
             await self.http_client.aclose()
         logger.info("Orchestrator Agent closed")
+
+    # -------------------------------------------------------------------------
+    # Main entry point
+    # -------------------------------------------------------------------------
 
     async def execute_task(
         self,
         description: str,
         user_id: str,
+        chat_id: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Выполнить задачу пользователя.
+        Execute a user task within a specific chat context.
 
         Args:
-            description: Описание задачи от пользователя
-            user_id: ID пользователя (обычно Telegram user_id)
-            context: Дополнительный контекст
-
-        Returns:
-            Результат выполнения задачи
+            description: User's message / task
+            user_id: Telegram user_id (string)
+            chat_id: Chat session ID. If None, uses/creates default chat.
+            context: Extra context dict (unused externally, kept for compat)
         """
         task_id = str(uuid4())
         start_time = datetime.now(timezone.utc)
 
         try:
-            logger.info(f"[{task_id}] Starting task: {description[:50]}...")
+            # Resolve chat_id
+            if chat_id is None:
+                chat_id = await self._get_or_create_chat(user_id)
 
-            # Шаг 1: Получить контекст из Memory Service
-            logger.debug(f"[{task_id}] Retrieving context from Memory Service")
-            agent_context = await self._get_context(user_id)
+            logger.info(f"[{task_id}] user={user_id} chat={chat_id}: {description[:60]}...")
 
-            # Шаг 2: По умолчанию отвечаем через LLM.
-            # Скиллы подключаем только для "инструментальных" задач.
-            if not self._should_use_skills(description):
-                logger.debug(f"[{task_id}] Using direct LLM response path")
-                llm_result = await self._generate_llm_response(description, agent_context)
+            # Load chat history
+            history = await self._get_chat_history(user_id, chat_id)
 
-                await self._save_result(
-                    user_id=user_id,
-                    task_id=task_id,
-                    skill_name="direct_llm_chat",
-                    result=llm_result,
-                    success=True,
-                )
+            # Get model for this chat
+            model_id = await self._get_model_for_chat(user_id, chat_id)
 
-                return {
-                    "task_id": task_id,
-                    "status": "success",
-                    "result": llm_result,
-                    "skill_used": "direct_llm_chat",
-                    "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
-                }
+            # Build system prompt from workspace
+            system_prompt = self.workspace.config.system_prompt
 
-            logger.debug(f"[{task_id}] Searching for relevant skills")
-            relevant_skills = await self._search_skills(description)
-
-            if not relevant_skills:
-                logger.warning(f"[{task_id}] No relevant skills found, falling back to LLM")
-                llm_result = await self._generate_llm_response(description, agent_context)
-
-                await self._save_result(
-                    user_id=user_id,
-                    task_id=task_id,
-                    skill_name="direct_llm_chat",
-                    result=llm_result,
-                    success=True,
-                )
-
-                return {
-                    "task_id": task_id,
-                    "status": "success",
-                    "result": llm_result,
-                    "skill_used": "direct_llm_chat",
-                    "duration_ms": (datetime.now(timezone.utc) - start_time).total_seconds() * 1000,
-                }
-
-            # Шаг 3: Выбрать лучший скилл
-            selected_skill = relevant_skills[0]
-            logger.info(
-                f"[{task_id}] Selected skill: {selected_skill['name']} (score: {selected_skill['score']:.2f})"
+            # Build messages array (with adaptive trim)
+            messages = build_messages_for_llm(
+                system_prompt=system_prompt,
+                history=history,
+                user_input=description,
+                model_id=model_id,
             )
 
-            # Шаг 4: Сохранить контекст задачи в Memory Service
-            await self._save_task_context(
+            # Save user message to history
+            await self._save_to_history(user_id, chat_id, "user", description)
+
+            # Run LLM with tool call loop
+            response_text, model_used = await self._run_llm_with_tools(
+                messages=messages,
+                model_id=model_id,
                 user_id=user_id,
+                chat_id=chat_id,
                 task_id=task_id,
-                description=description,
-                selected_skill=selected_skill,
             )
 
-            # Шаг 5: Выполнить скилл (в реальной системе это через Message Bus)
-            result = await self._execute_skill(
-                skill_name=selected_skill["name"],
-                description=description,
-                context=agent_context,
-            )
-
-            # Шаг 6: Сохранить результат в Memory Service
-            await self._save_result(
-                user_id=user_id,
-                task_id=task_id,
-                skill_name=selected_skill["name"],
-                result=result,
-                success=True,
-            )
+            # Save assistant response to history
+            await self._save_to_history(user_id, chat_id, "assistant", response_text)
 
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-            logger.info(f"[{task_id}] Task completed in {duration_ms:.0f}ms")
+            logger.info(f"[{task_id}] Done in {duration_ms:.0f}ms using {model_used}")
 
             return {
                 "task_id": task_id,
                 "status": "success",
-                "result": result,
-                "skill_used": selected_skill["name"],
+                "result": {"output": response_text},
+                "skill_used": "direct_llm_chat",
+                "model_used": model_used,
+                "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
 
         except Exception as e:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
-
-            # Сохранить ошибку в Memory Service
-            await self._save_result(
-                user_id=user_id,
-                task_id=task_id,
-                skill_name="error_handler",
-                result={"error": str(e)},
-                success=False,
-            )
-
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-
             return {
                 "task_id": task_id,
                 "status": "failed",
                 "error": str(e),
+                "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
 
-    async def _get_context(self, user_id: str) -> dict[str, Any]:
-        """Получить контекст пользователя из Memory Service"""
-        try:
-            if not self.http_client:
-                return {}
+    # -------------------------------------------------------------------------
+    # LLM call with tool call loop
+    # -------------------------------------------------------------------------
 
-            response = await self.http_client.get(
-                f"{self.memory_service_url}/api/v1/context/orchestrator/{user_id}"
-            )
-
-            if response.status_code == 200:
-                return response.json().get("value", {})
-            elif response.status_code == 404:
-                # No context found - not an error
-                return {}
-            return {}
-
-        except Exception as e:
-            logger.warning(f"Failed to get context: {e}")
-            return {}
-
-    async def _search_skills(self, query: str) -> list[dict[str, Any]]:
-        """Поиск релевантных скиллов в Skills Registry"""
-        try:
-            if not self.http_client:
-                return []
-
-            response = await self.http_client.post(
-                f"{self.skills_registry_url}/api/v1/skills/search",
-                json={
-                    "query": query,
-                    "limit": 5,
-                },
-            )
-
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("results", [])
-            return []
-
-        except Exception as e:
-            logger.warning(f"Failed to search skills: {e}")
-            return []
-
-    async def _execute_skill(
+    async def _run_llm_with_tools(
         self,
-        skill_name: str,
-        description: str,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Выполнить скилл"""
-        logger.debug(f"Executing skill: {skill_name}")
-
-        # В реальной системе это будет отправка в Message Bus
-        # Для сейчас возвращаем mock результат
-        return {
-            "skill": skill_name,
-            "input": description,
-            "output": f"Executed {skill_name} successfully",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+        messages: list[dict[str, Any]],
+        model_id: str,
+        user_id: str,
+        chat_id: str,
+        task_id: str,
+    ) -> tuple[str, str]:
+        """
+        Call LLM and handle tool calls in a loop until a final text response.
+        Returns (response_text, model_id_used).
+        """
+        model_used = model_id
+        tool_context = {
+            "user_id": user_id,
+            "chat_id": chat_id,
+            "memory_service_url": self.memory_service_url,
+            "openrouter_api_key": settings.openrouter_api_key,
         }
 
-    async def _generate_llm_response(
-        self,
-        description: str,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Generate direct chat response from OpenRouter-compatible API."""
-        if not self.http_client:
-            return self._build_fallback_response(description=description)
+        for round_num in range(MAX_TOOL_CALL_ROUNDS):
+            response_data, model_used = await self._call_llm(
+                messages=messages,
+                model_id=model_id,
+                with_tools=True,
+            )
 
-        if not settings.openrouter_api_key:
-            logger.warning("OpenRouter API key is not configured, using fallback response")
-            return self._build_fallback_response(description=description)
+            if response_data is None:
+                return self._fallback_text(), model_used
 
-        candidate_models = self._get_chat_model_candidates()
+            choice = response_data.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            tool_calls = message.get("tool_calls")
 
-        system_prompt = (
-            "You are Balbes assistant. Reply in the user's language. "
-            "Be concise and practical. If task is ambiguous, ask one clarifying question."
+            if not tool_calls:
+                # Final text response
+                return message.get("content", "").strip() or self._fallback_text(), model_used
+
+            # Process tool calls
+            messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+
+            for tc in tool_calls:
+                tool_name = tc.get("function", {}).get("name", "")
+                try:
+                    args_raw = tc.get("function", {}).get("arguments", "{}")
+                    args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
+                except json.JSONDecodeError:
+                    args = {}
+
+                logger.info(f"[{task_id}] Tool call: {tool_name}({list(args.keys())})")
+
+                result = await self.tool_dispatcher.dispatch(
+                    tool_name=tool_name,
+                    tool_args=args,
+                    context=tool_context,
+                )
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": str(result),
+                    }
+                )
+
+            logger.debug(f"[{task_id}] Tool round {round_num + 1} complete, continuing LLM")
+
+        # Exceeded rounds — get final response without tools
+        response_data, model_used = await self._call_llm(
+            messages=messages,
+            model_id=model_id,
+            with_tools=False,
         )
+        if response_data:
+            text = (
+                response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            )
+            return text or self._fallback_text(), model_used
+        return self._fallback_text(), model_used
 
-        for model in candidate_models:
-            openrouter_model = self._normalize_openrouter_model(model)
+    async def _call_llm(
+        self,
+        messages: list[dict[str, Any]],
+        model_id: str,
+        with_tools: bool = True,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """
+        Call LLM API with fallback chain.
+        Returns (response_json, model_id_used).
+        """
+        if not self.http_client or not settings.openrouter_api_key:
+            return None, model_id
+
+        candidates = self._get_model_candidates(model_id)
+
+        for candidate in candidates:
+            openrouter_model = self._to_openrouter_id(candidate)
             try:
+                payload: dict[str, Any] = {
+                    "model": openrouter_model,
+                    "messages": messages,
+                    "temperature": 0.4,
+                }
+                if with_tools and self.tool_dispatcher:
+                    payload["tools"] = AVAILABLE_TOOLS
+                    payload["tool_choice"] = "auto"
+
                 response = await self.http_client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={
                         "Authorization": f"Bearer {settings.openrouter_api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": openrouter_model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": (
-                                    f"Context: {context if context else '{}'}\n\n"
-                                    f"User request: {description}"
-                                ),
-                            },
-                        ],
-                        "temperature": 0.4,
-                    },
+                    json=payload,
                 )
 
                 if response.status_code == 200:
-                    data = response.json()
-                    output = (
-                        data.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "Не удалось получить ответ от модели.")
-                    )
-                    return {
-                        "skill": "direct_llm_chat",
-                        "input": description,
-                        "output": output,
-                        "model": model,
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
+                    return response.json(), candidate
 
-                # 429/5xx -> try next model
-                if response.status_code == 429 or response.status_code >= 500:
+                if response.status_code in (429, 500, 502, 503, 504):
                     logger.warning(
-                        "OpenRouter model unavailable, trying fallback model: "
-                        f"{model} -> {response.status_code}"
+                        f"Model {candidate} returned {response.status_code}, trying next"
                     )
                     continue
 
                 logger.warning(
-                    f"OpenRouter request failed on model {model}: "
-                    f"{response.status_code} {response.text[:300]}"
+                    f"LLM error on {candidate}: {response.status_code} {response.text[:200]}"
                 )
                 break
 
             except Exception as e:
-                logger.warning(f"Failed to generate LLM response on model {model}: {e}")
+                logger.warning(f"LLM call failed on {candidate}: {e}")
                 continue
 
-        return self._build_fallback_response(description=description)
+        return None, model_id
 
-    def _get_chat_model_candidates(self) -> list[str]:
-        """
-        Get ordered candidate list for chat completion.
-        Can be overridden via CHAT_FALLBACK_MODELS (comma-separated).
-        """
+    # -------------------------------------------------------------------------
+    # Model helpers
+    # -------------------------------------------------------------------------
+
+    async def _get_model_for_chat(self, user_id: str, chat_id: str) -> str:
+        """Get model assigned to this chat, falling back to default."""
+        try:
+            resp = await self.http_client.get(
+                f"{self.memory_service_url}/api/v1/chats/{user_id}/{chat_id}/model"
+            )
+            if resp.status_code == 200:
+                model_id = resp.json().get("model_id")
+                if model_id:
+                    return model_id
+        except Exception as e:
+            logger.debug(f"Failed to get chat model: {e}")
+
+        # Fallback: first in active_models or settings default
+        cfg = get_providers_config()
+        active = cfg.get("active_models", [])
+        if active:
+            return active[0]["id"]
+        return settings.default_chat_model
+
+    def _get_model_candidates(self, primary_model_id: str) -> list[str]:
+        """Return ordered fallback chain starting from primary."""
+        cfg = get_providers_config()
+        chain = [entry.get("model") for entry in cfg.get("default_fallback_chain", [])]
+        candidates: list[str] = []
+        for m in [primary_model_id] + chain:
+            if m and m not in candidates:
+                candidates.append(m)
+
+        # Also add env-defined fallbacks
         env_fallbacks = os.getenv("CHAT_FALLBACK_MODELS", "").strip()
         if env_fallbacks:
-            extra = [m.strip() for m in env_fallbacks.split(",") if m.strip()]
-        else:
-            extra = [
-                "openrouter/meta-llama/llama-3.1-8b-instruct:free",
-                "openrouter/openai/gpt-4o-mini",
-            ]
+            for m in env_fallbacks.split(","):
+                m = m.strip()
+                if m and m not in candidates:
+                    candidates.append(m)
 
-        # Keep order and uniqueness
-        candidates: list[str] = []
-        for model in [settings.default_chat_model, *extra]:
-            if model not in candidates:
-                candidates.append(model)
-        return candidates
+        return candidates or [settings.default_chat_model]
 
-    def _normalize_openrouter_model(self, model: str) -> str:
-        """Convert 'openrouter/<model>' to OpenRouter model id format."""
-        provider_prefix = "openrouter/"
-        return model[len(provider_prefix) :] if model.startswith(provider_prefix) else model
+    @staticmethod
+    def _to_openrouter_id(model_id: str) -> str:
+        """Strip 'openrouter/' prefix for OpenRouter API."""
+        prefix = "openrouter/"
+        return model_id[len(prefix) :] if model_id.startswith(prefix) else model_id
 
-    def _should_use_skills(self, description: str) -> bool:
-        """
-        Decide if request should go through skill search/execution.
-        Simple chat goes direct to LLM.
-        """
-        text = description.lower()
-        skill_intent_keywords = (
-            "найди",
-            "поиск",
-            "search",
-            "extract",
-            "извлеки",
-            "проанализируй файл",
-            "run",
-            "запусти",
-            "api",
-            "скрипт",
-            "code",
-            "код",
-            "skill",
-            "скилл",
-            "database",
-            "база данных",
-        )
-        return any(keyword in text for keyword in skill_intent_keywords)
+    # -------------------------------------------------------------------------
+    # Chat / history helpers
+    # -------------------------------------------------------------------------
 
-    def _build_fallback_response(self, description: str) -> dict[str, Any]:
-        """Return a safe response when no skill matches query."""
-        return {
-            "skill": "fallback_chat",
-            "input": description,
-            "output": (
-                "Пока не нашел точный скилл под эту задачу. "
-                "Уточни, что именно нужно сделать и какой результат ожидаешь."
-            ),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-
-    async def _save_task_context(
-        self,
-        user_id: str,
-        task_id: str,
-        description: str,
-        selected_skill: dict[str, Any],
-    ) -> None:
-        """Сохранить контекст задачи в Memory Service"""
+    async def _get_or_create_chat(self, user_id: str) -> str:
+        """Return active chat_id, creating one if needed."""
         try:
-            if not self.http_client:
-                return
-
-            context_data = {
-                "key": f"task_{task_id}",
-                "value": {
-                    "user_id": user_id,
-                    "description": description,
-                    "selected_skill": selected_skill["name"],
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                },
-                "ttl": 3600,  # 1 час
-            }
-
-            await self.http_client.post(
-                f"{self.memory_service_url}/api/v1/context/{user_id}",
-                json=context_data,
+            resp = await self.http_client.get(
+                f"{self.memory_service_url}/api/v1/chats/{user_id}/active"
             )
-
+            if resp.status_code == 200:
+                return resp.json().get("chat_id", "default")
         except Exception as e:
-            logger.warning(f"Failed to save task context: {e}")
+            logger.debug(f"Failed to get active chat: {e}")
+        return "default"
 
-    async def _save_result(
-        self,
-        user_id: str,
-        task_id: str,
-        skill_name: str,
-        result: dict[str, Any],
-        success: bool,
-    ) -> None:
-        """Сохранить результат в Memory Service"""
+    async def _get_chat_history(self, user_id: str, chat_id: str) -> list[dict[str, Any]]:
+        """Fetch chat history from Memory Service."""
         try:
-            if not self.http_client:
-                return
-
-            memory_data = {
-                "agent_id": self.agent_id,
-                "content": f"Task {task_id}: {skill_name} {'completed' if success else 'failed'}",
-                "memory_type": "task_result",
-                "importance": 0.8 if success else 0.9,
-                "metadata": {
-                    "task_id": task_id,
-                    "user_id": user_id,
-                    "skill": skill_name,
-                    "success": success,
-                    "result": result,
-                },
-            }
-
-            await self.http_client.post(
-                f"{self.memory_service_url}/api/v1/memory",
-                json=memory_data,
+            resp = await self.http_client.get(
+                f"{self.memory_service_url}/api/v1/history/{user_id}/{chat_id}",
+                params={"limit": 100},
             )
-
+            if resp.status_code == 200:
+                return resp.json().get("messages", [])
         except Exception as e:
-            logger.warning(f"Failed to save result: {e}")
+            logger.debug(f"Failed to get chat history: {e}")
+        return []
+
+    async def _save_to_history(self, user_id: str, chat_id: str, role: str, content: str) -> None:
+        """Save a message to chat history."""
+        try:
+            await self.http_client.post(
+                f"{self.memory_service_url}/api/v1/history/{user_id}/{chat_id}",
+                json={"role": role, "content": content},
+            )
+        except Exception as e:
+            logger.debug(f"Failed to save history: {e}")
+
+    @staticmethod
+    def _fallback_text() -> str:
+        return "Не смог обработать запрос. Попробуй переформулировать или уточни задачу."
+
+    # -------------------------------------------------------------------------
+    # Status
+    # -------------------------------------------------------------------------
 
     async def get_agent_status(self) -> dict[str, Any]:
-        """Получить статус агента"""
         return {
             "agent_id": self.agent_id,
             "status": "online",
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "workspace_files": self.workspace.list_files(),
             "services": {
-                "memory_service": f"http://localhost:{settings.memory_service_port}",
-                "skills_registry": f"http://localhost:{settings.skills_registry_port}",
+                "memory_service": self.memory_service_url,
+                "skills_registry": self.skills_registry_url,
             },
         }

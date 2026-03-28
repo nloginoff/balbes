@@ -188,6 +188,20 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",")]
 
     # =============================================================================
+    # Whisper voice transcription
+    # =============================================================================
+    whisper_model: str = Field(default="base", description="tiny/base/small/medium/large")
+    whisper_device: str = Field(default="cpu", description="cpu or cuda")
+    whisper_compute_type: str = Field(default="int8", description="int8/float16/float32")
+    whisper_language: str = Field(default="ru", description="Language code for transcription")
+
+    # =============================================================================
+    # Search skills
+    # =============================================================================
+    brave_search_key: str | None = Field(default=None, description="Brave Search API key")
+    tavily_api_key: str | None = Field(default=None, description="Tavily Search API key")
+
+    # =============================================================================
     # Optional
     # =============================================================================
     domain: str | None = Field(default=None, description="Production domain")
@@ -195,7 +209,14 @@ class Settings(BaseSettings):
     ssl_cert_path: str | None = Field(default=None)
     ssl_key_path: str | None = Field(default=None)
 
-    @field_validator("openrouter_api_key", "aitunnel_api_key", "telegram_bot_token", mode="before")
+    @field_validator(
+        "openrouter_api_key",
+        "aitunnel_api_key",
+        "telegram_bot_token",
+        "brave_search_key",
+        "tavily_api_key",
+        mode="before",
+    )
     @classmethod
     def empty_string_to_none(cls, v: Any) -> str | None:
         """Convert empty strings to None for optional string fields"""

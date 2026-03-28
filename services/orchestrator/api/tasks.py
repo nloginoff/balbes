@@ -15,16 +15,15 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 async def create_task(
     user_id: str,
     description: str,
+    chat_id: str | None = None,
 ) -> dict:
     """
-    Create and execute a task.
+    Create and execute a task within a chat session.
 
     Args:
-        user_id: User identifier
-        description: Task description
-
-    Returns:
-        Task execution result
+        user_id: User identifier (Telegram user_id)
+        description: Task / message text
+        chat_id: Chat session ID (optional, uses active chat if omitted)
     """
     import main as orchestrator_main
 
@@ -38,6 +37,7 @@ async def create_task(
         result = await orchestrator_main.orchestrator_agent.execute_task(
             description=description,
             user_id=user_id,
+            chat_id=chat_id,
         )
         return result
 
@@ -51,16 +51,7 @@ async def create_task(
 
 @router.get("/{task_id}")
 async def get_task(task_id: str) -> dict:
-    """
-    Get task status and results.
-
-    Args:
-        task_id: Task ID
-
-    Returns:
-        Task details
-    """
-    # In production, fetch from Memory Service
+    """Get task status and results."""
     return {
         "task_id": task_id,
         "status": "completed",

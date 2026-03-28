@@ -10,7 +10,6 @@ providers:
       X-Title: "Balbes Multi-Agent System"
 
     models:
-      # Premium models for code generation and complex reasoning
       - id: "anthropic/claude-3.5-sonnet"
         display_name: "Claude 3.5 Sonnet"
         cost_per_1k_tokens: 0.015
@@ -25,7 +24,6 @@ providers:
         capabilities: ["code", "reasoning", "analysis"]
         recommended_for: ["coder", "orchestrator"]
 
-      # Mid-tier models for general tasks
       - id: "openai/gpt-4o-mini"
         display_name: "GPT-4o Mini"
         cost_per_1k_tokens: 0.0005
@@ -33,7 +31,6 @@ providers:
         capabilities: ["basic", "fast", "cheap"]
         recommended_for: ["cheap_fallback"]
 
-      # Free models for fallback
       - id: "stepfun/step-3.5-flash:free"
         display_name: "StepFun Step 3.5 Flash (Free)"
         cost_per_1k_tokens: 0.0
@@ -60,56 +57,148 @@ providers:
         context_window: 128000
         capabilities: ["code", "reasoning"]
 
+
+# Models available for user selection (shown in /model menu)
+active_models:
+  - id: "openrouter/anthropic/claude-3.5-sonnet"
+    display_name: "Claude 3.5 Sonnet"
+    provider: openrouter
+    context_window: 200000
+  - id: "openrouter/openai/gpt-4-turbo"
+    display_name: "GPT-4 Turbo"
+    provider: openrouter
+    context_window: 128000
+  - id: "openrouter/openai/gpt-4o-mini"
+    display_name: "GPT-4o Mini"
+    provider: openrouter
+    context_window: 128000
+  - id: "openrouter/stepfun/step-3.5-flash:free"
+    display_name: "StepFun Flash (Free)"
+    provider: openrouter
+    context_window: 65536
+  - id: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+    display_name: "Llama 3.1 8B (Free)"
+    provider: openrouter
+    context_window: 8192
+
+
 # Fallback Strategy
 fallback_strategy:
-  # What to do when model is unavailable
-  on_error: "next_in_chain"  # Options: next_in_chain, fail
+  on_error: "next_in_chain"
   max_fallback_attempts: 3
-
-  # What to do when token limit exceeded
-  on_token_limit: "switch_to_cheap"  # Options: switch_to_cheap, pause, fail
-
-  # What to do when rate limited by provider
-  on_rate_limit: "wait_and_retry"  # Options: wait_and_retry, next_in_chain
+  on_token_limit: "switch_to_cheap"
+  on_rate_limit: "wait_and_retry"
   rate_limit_wait_seconds: 60
 
-# Default fallback chain (used if not specified in agent config)
+
+# Default fallback chain
 default_fallback_chain:
   - provider: openrouter
-    model: "anthropic/claude-3.5-sonnet"
+    model: "openrouter/anthropic/claude-3.5-sonnet"
 
   - provider: openrouter
-    model: "openai/gpt-4-turbo"
+    model: "openrouter/openai/gpt-4-turbo"
 
   - provider: aitunnel
     model: "gpt-4-turbo"
 
   - provider: openrouter
-    model: "openai/gpt-4o-mini"
+    model: "openrouter/openai/gpt-4o-mini"
 
   - provider: openrouter
-    model: "stepfun/step-3.5-flash:free"
+    model: "openrouter/stepfun/step-3.5-flash:free"
 
   - provider: openrouter
-    model: "meta-llama/llama-3.1-8b-instruct:free"
+    model: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
 
-# Cheap models for automatic switching when token limit exceeded
+
+# Cheap models for automatic fallback on token limit
 cheap_models:
   - provider: openrouter
-    model: "stepfun/step-3.5-flash:free"
+    model: "openrouter/stepfun/step-3.5-flash:free"
 
   - provider: openrouter
-    model: "openai/gpt-4o-mini"
+    model: "openrouter/openai/gpt-4o-mini"
 
   - provider: openrouter
-    model: "meta-llama/llama-3.1-8b-instruct:free"
+    model: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
 
-# Token limits (defaults, can be overridden per agent)
+
+# Token limits
 token_limits:
   daily_limit_per_agent: 100000
   hourly_limit_per_agent: 15000
-  alert_threshold: 0.8  # Alert at 80% usage
-  action_on_exceeded: "switch_to_cheap"  # Options: switch_to_cheap, pause
+  alert_threshold: 0.8
+  action_on_exceeded: "switch_to_cheap"
+
+
+# History / context window management
+memory:
+  history_strategy: "trim"      # trim | summarize
+  trim_threshold: 0.85          # start trimming at 85% context window fill
+  max_messages_in_context: 50   # hard cap regardless of tokens
+  system_prompt_reserve: 500    # tokens reserved for system prompt overhead
+
+
+# Whisper voice transcription
+whisper:
+  model: "base"         # tiny | base | small | medium | large
+  device: "cpu"
+  compute_type: "int8"  # int8 uses less RAM, near-identical accuracy
+  language: "ru"        # fixed language for faster + more accurate transcription
+
+
+# Skills configuration
+skills:
+  web_search:
+    enabled: true
+    default_provider: "duckduckgo"   # duckduckgo | brave | tavily
+    providers:
+      duckduckgo:
+        enabled: true
+        max_results: 5
+      brave:
+        enabled: false               # enable when BRAVE_SEARCH_KEY is set
+        api_key: ${BRAVE_SEARCH_KEY}
+        max_results: 5
+      tavily:
+        enabled: false               # enable when TAVILY_API_KEY is set
+        api_key: ${TAVILY_API_KEY}
+        max_results: 5
+
+  fetch_url:
+    enabled: true
+    max_content_chars: 5000
+    timeout_seconds: 15
+    allowed_domains: []              # empty = all domains allowed
+
+  server_commands:
+    enabled: true
+    mode: "whitelist"                # whitelist | any
+    timeout_seconds: 30
+    log_all_calls: true
+    allowed_commands:
+      - "df -h"
+      - "free -h"
+      - "uptime"
+      - "docker ps"
+      - "docker logs {container}"
+      - "docker restart {container}"
+      - "docker stats --no-stream"
+      - "systemctl status {service}"
+      - "ls {path}"
+      - "cat {file}"
+      - "ps aux"
+      - "ping -c 4 {host}"
+    blocked_patterns:
+      - "rm -rf"
+      - ">("
+      - "$("
+      - "curl | sh"
+      - "wget | sh"
+      - "; rm"
+      - "&& rm"
+
 
 # Embeddings configuration for Qdrant
 embeddings:
@@ -117,8 +206,9 @@ embeddings:
   model: "openai/text-embedding-3-small"
   dimensions: 1536
   cost_per_1k_tokens: 0.0001
-  batch_size: 100  # Batch embeddings for efficiency
-  cache_ttl: 86400  # Cache embeddings in Redis for 24h
+  batch_size: 100
+  cache_ttl: 86400
+
 
 # Notification settings
 notifications:
@@ -127,35 +217,38 @@ notifications:
   triggers:
     - type: token_limit_warning
       threshold: 0.8
-      message_template: "⚠️ Token Budget Alert\\n\\nAgent: @{agent_id}\\nUsage: {tokens_used:,} / {limit:,} ({percentage:.1f}%)\\nCost: ${cost:.2f}\\n\\nRemaining: {remaining:,} tokens"
+      message_template: "⚠️ Token Budget Alert\n\nAgent: @{agent_id}\nUsage: {tokens_used:,} / {limit:,} ({percentage:.1f}%)\nCost: ${cost:.2f}\n\nRemaining: {remaining:,} tokens"
 
     - type: token_limit_exceeded
-      message_template: "🚨 Token Limit Exceeded!\\n\\nAgent: @{agent_id}\\nUsage: {tokens_used:,} / {limit:,}\\n\\nAutomatically switched to: {cheap_model}\\n\\n⚠️ Quality may be lower."
+      message_template: "🚨 Token Limit Exceeded!\n\nAgent: @{agent_id}\nUsage: {tokens_used:,} / {limit:,}\n\nAutomatically switched to: {cheap_model}\n\n⚠️ Quality may be lower."
 
     - type: model_fallback
-      message_template: "⚠️ Model Fallback\\n\\nAgent: @{agent_id}\\nPrimary: {model} (unavailable)\\nFallback: {fallback_model}\\n\\nTask continues..."
+      message_template: "⚠️ Model Fallback\n\nAgent: @{agent_id}\nPrimary: {model} (unavailable)\nFallback: {fallback_model}\n\nTask continues..."
 
     - type: agent_error
-      message_template: "❌ Agent Error\\n\\nAgent: @{agent_id}\\nError: {error_message}\\nTask: #{task_id}"
+      message_template: "❌ Agent Error\n\nAgent: @{agent_id}\nError: {error_message}\nTask: #{task_id}"
 
     - type: task_completed
-      message_template: "✅ Task Completed\\n\\nAgent: @{agent_id}\\nTask: #{task_id}\\nDuration: {duration}s\\nTokens: {tokens:,}"
+      message_template: "✅ Task Completed\n\nAgent: @{agent_id}\nTask: #{task_id}\nDuration: {duration}s\nTokens: {tokens:,}"
 
     - type: task_failed
-      message_template: "❌ Task Failed\\n\\nAgent: @{agent_id}\\nTask: #{task_id}\\nError: {error}"
+      message_template: "❌ Task Failed\n\nAgent: @{agent_id}\nTask: #{task_id}\nError: {error}"
+
 
 # Retry configuration
 retry:
   max_attempts: 3
-  backoff_strategy: "exponential"  # Options: linear, exponential, constant
+  backoff_strategy: "exponential"
   initial_delay_seconds: 1
   max_delay_seconds: 30
+
 
 # Rate limiting
 rate_limiting:
   enabled: true
   window_seconds: 60
   max_requests_per_window: 10
+
 
 # Timeouts
 timeouts:
