@@ -142,8 +142,7 @@ def _load_heartbeat_config() -> dict:
     return {
         "enabled": cfg.get("enabled", False),
         "every_minutes": cfg.get("every_minutes", 30),
-        "model": cfg.get("model") or None,  # None = use chat's own model
-        "fallback_models": cfg.get("fallback_models") or [],
+        "model": cfg.get("model") or None,
         "active_hours_start": cfg.get("active_hours_start", "08:00"),
         "active_hours_end": cfg.get("active_hours_end", "23:00"),
         "target_user_id": resolved_uid,
@@ -280,55 +279,33 @@ class BalbesTelegramBot:
         user_id = str(cfg["target_user_id"])
         logger.info(f"Heartbeat: starting run for user {user_id}")
 
-        # Build model list: primary + fallbacks from config
-        primary = cfg.get("model")
-        fallbacks: list[str] = cfg.get("fallback_models") or []
-        models_to_try: list[str | None] = ([primary] if primary else [None]) + fallbacks
+        try:
+            params: dict = {
+                "user_id": user_id,
+                "description": HEARTBEAT_PROMPT,
+                "agent_id": "orchestrator",
+                "source": "heartbeat",
+            }
+            if cfg.get("model"):
+                params["model_id"] = cfg["model"]
 
-        result: dict | None = None
-        for model_id in models_to_try:
-            try:
-                params: dict = {
-                    "user_id": user_id,
-                    "description": HEARTBEAT_PROMPT,
-                    "agent_id": "orchestrator",
-                    "source": "heartbeat",
-                }
-                if model_id:
-                    params["model_id"] = model_id
+            response = await self._get_http().post(
+                f"{self.orchestrator_url}/api/v1/tasks",
+                params=params,
+                timeout=90.0,
+            )
+        except Exception as e:
+            logger.warning(f"Heartbeat: orchestrator call failed: {e}")
+            return
 
-                response = await self._get_http().post(
-                    f"{self.orchestrator_url}/api/v1/tasks",
-                    params=params,
-                    timeout=90.0,
-                )
-            except Exception as e:
-                logger.warning(f"Heartbeat: orchestrator call failed (model={model_id}): {e}")
-                continue
+        if response.status_code != 200:
+            logger.warning(f"Heartbeat: orchestrator returned {response.status_code}")
+            return
 
-            if response.status_code != 200:
-                logger.warning(
-                    f"Heartbeat: orchestrator HTTP {response.status_code} (model={model_id})"
-                )
-                continue
-
-            candidate = response.json()
-            if candidate.get("status") != "success":
-                err = candidate.get("error", "")
-                logger.warning(f"Heartbeat: task failed (model={model_id}) — {err}")
-                # 429 / model unavailable → retry with next model
-                if "429" in err or "unavailable" in err.lower() or "недоступна" in err.lower():
-                    continue
-                # Other failures (e.g. internal error) — stop
-                return
-
-            result = candidate
-            if model_id and model_id != primary:
-                logger.info(f"Heartbeat: succeeded with fallback model {model_id}")
-            break
-
-        if result is None:
-            logger.warning("Heartbeat: all models failed, skipping this run")
+        result = response.json()
+        if result.get("status") != "success":
+            err = result.get("error", "")
+            logger.warning(f"Heartbeat: task failed — {err}")
             return
 
         payload = result.get("result", {})

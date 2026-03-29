@@ -222,6 +222,13 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
+# Minimal tool set for heartbeat runs — workspace_read only.
+# Keeps token usage low so the free model doesn't hit rate limits.
+HEARTBEAT_TOOLS: list[dict[str, Any]] = [
+    t for t in AVAILABLE_TOOLS if t["function"]["name"] == "workspace_read"
+]
+
+
 def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
     """
     Return the list of available tool schemas for the given execution mode.

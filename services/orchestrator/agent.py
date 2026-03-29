@@ -20,7 +20,7 @@ from uuid import uuid4
 import httpx
 import tiktoken
 from agent_logger import AgentActivityLogger
-from tools import AVAILABLE_TOOLS, ToolDispatcher, get_tools_for_mode
+from tools import AVAILABLE_TOOLS, HEARTBEAT_TOOLS, ToolDispatcher, get_tools_for_mode
 from workspace import AgentWorkspace
 
 
@@ -235,17 +235,22 @@ class OrchestratorAgent:
         self._clear_cancel(user_id)
 
         try:
+            ctx = context or {}
+            source: str = ctx.get("source", "user")
+            is_heartbeat: bool = source == "heartbeat"
+
             # Resolve chat_id
             if chat_id is None:
                 chat_id = await self._get_or_create_chat(user_id)
 
             logger.info(
-                f"[{task_id}] user={user_id} chat={chat_id} agent={effective_agent_id}: "
-                f"{description[:60]}..."
+                f"[{task_id}] user={user_id} chat={chat_id} agent={effective_agent_id}"
+                f"{' [heartbeat]' if is_heartbeat else ''}: {description[:60]}..."
             )
 
-            # Load chat history
-            history = await self._get_chat_history(user_id, chat_id)
+            # Heartbeat: skip full chat history to keep token count minimal.
+            # It only needs its workspace files (HEARTBEAT.md, MEMORY.md).
+            history = [] if is_heartbeat else await self._get_chat_history(user_id, chat_id)
 
             # Model: use the explicit override if provided, otherwise the chat's configured model
             if model_id is None:
@@ -269,10 +274,10 @@ class OrchestratorAgent:
                 model_id=model_id,
             )
 
-            # Save user message to history
-            await self._save_to_history(user_id, chat_id, "user", description)
+            # Save user message to history (skip for heartbeat — don't pollute user history)
+            if not is_heartbeat:
+                await self._save_to_history(user_id, chat_id, "user", description)
 
-            ctx = context or {}
             debug: bool = ctx.get("debug", False)
             mode: str = ctx.get("mode", "agent")
 
@@ -288,18 +293,21 @@ class OrchestratorAgent:
                 user_id=user_id,
                 chat_id=chat_id,
                 task_id=task_id,
-                source=ctx.get("source", "user"),
+                source=source,
                 agent_id=effective_agent_id,
                 debug_events=debug_events if debug else None,
                 mode=mode,
+                # Heartbeat uses only workspace_read — all other tools add tokens with no benefit
+                override_tools=HEARTBEAT_TOOLS if is_heartbeat else None,
             )
 
             # Detach debug collector
             if self.tool_dispatcher:
                 self.tool_dispatcher.set_debug_collector(None)
 
-            # Save assistant response to history
-            await self._save_to_history(user_id, chat_id, "assistant", response_text)
+            # Save assistant response to history (skip for heartbeat)
+            if not is_heartbeat:
+                await self._save_to_history(user_id, chat_id, "assistant", response_text)
 
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             logger.info(f"[{task_id}] Done in {duration_ms:.0f}ms using {model_used}")
@@ -356,6 +364,7 @@ class OrchestratorAgent:
         agent_id: str | None = None,
         debug_events: list[dict] | None = None,
         mode: str = "agent",
+        override_tools: list[dict] | None = None,
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
@@ -363,6 +372,8 @@ class OrchestratorAgent:
 
         debug_events: if provided, LLM round events are appended here
         mode: "agent" = all tools; "ask" = execute_command + workspace_write blocked
+        override_tools: if set, use exactly these tools instead of mode-based selection
+                        (used for heartbeat to pass only workspace_read)
         """
         model_used = model_id
         tool_context = {
@@ -373,7 +384,7 @@ class OrchestratorAgent:
             "openrouter_api_key": settings.openrouter_api_key,
             "source": source,
         }
-        available_tools = get_tools_for_mode(mode)
+        available_tools = override_tools if override_tools is not None else get_tools_for_mode(mode)
 
         for round_num in range(MAX_TOOL_CALL_ROUNDS):
             # Check if user issued /stop between rounds
