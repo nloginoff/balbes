@@ -54,6 +54,14 @@ CALLBACK_MODEL_UNAVAIL_YES = "model_unavail:yes:"
 CALLBACK_MODEL_UNAVAIL_NO = "model_unavail:no"
 
 
+_MD2_ESCAPE_RE = str.maketrans({c: f"\\{c}" for c in r"\_*[]()~`>#+-=|{}.!"})
+
+
+def _escape_md2(text: str) -> str:
+    """Escape special characters for MarkdownV2."""
+    return str(text).translate(_MD2_ESCAPE_RE)
+
+
 def _load_providers_yaml() -> dict:
     """Load providers.yaml once. Returns empty dict on failure."""
     try:
@@ -117,6 +125,47 @@ def _make_agent_keyboard(current_id: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def _load_heartbeat_config() -> dict:
+    """Load heartbeat config from providers.yaml."""
+    cfg = _load_providers_yaml().get("heartbeat", {})
+    return {
+        "enabled": cfg.get("enabled", False),
+        "every_minutes": cfg.get("every_minutes", 30),
+        "active_hours_start": cfg.get("active_hours_start", "08:00"),
+        "active_hours_end": cfg.get("active_hours_end", "23:00"),
+        "target_user_id": cfg.get("target_user_id") or settings.telegram_user_id,
+    }
+
+
+def _is_within_active_hours(start: str, end: str) -> bool:
+    """Return True if current local time is within [start, end)."""
+    from datetime import datetime as _dt
+    from datetime import time
+
+    now = _dt.now().time()
+    try:
+        sh, sm = map(int, start.split(":"))
+        eh, em = map(int, end.split(":"))
+        t_start = time(sh, sm)
+        t_end = time(eh, em)
+        if t_start <= t_end:
+            return t_start <= now < t_end
+        # Crosses midnight
+        return now >= t_start or now < t_end
+    except Exception:
+        return True  # default: allow
+
+
+HEARTBEAT_OK = "HEARTBEAT_OK"
+HEARTBEAT_PROMPT = (
+    "SYSTEM HEARTBEAT RUN.\n"
+    "Read HEARTBEAT.md from your workspace if it exists and follow it strictly.\n"
+    "Do not repeat tasks from previous conversations unless they are still relevant.\n"
+    "If nothing needs user attention right now, reply exactly: HEARTBEAT_OK\n"
+    "If you have something important to tell the user, write the message (without HEARTBEAT_OK)."
+)
+
+
 class BalbesTelegramBot:
     """
     Telegram Bot for Balbes System with multi-chat and model management.
@@ -132,12 +181,16 @@ class BalbesTelegramBot:
         # Per-chat async locks to prevent concurrent message processing
         self._chat_locks: dict[str, asyncio.Lock] = {}
 
+        # Heartbeat background task
+        self._heartbeat_task: asyncio.Task | None = None
+
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
 
         async def _post_init(app: Application) -> None:
             await self._set_commands(app)
+            await self.start_heartbeat()
 
         self.app = (
             Application.builder()
@@ -155,6 +208,100 @@ class BalbesTelegramBot:
         logger.info("Starting bot polling...")
         self.app.run_polling(drop_pending_updates=True)
 
+    # -------------------------------------------------------------------------
+    # Heartbeat
+    # -------------------------------------------------------------------------
+
+    async def start_heartbeat(self) -> None:
+        """Start background heartbeat loop (call after bot is running)."""
+        cfg = _load_heartbeat_config()
+        if not cfg["enabled"]:
+            logger.info("Heartbeat disabled (set heartbeat.enabled: true in providers.yaml)")
+            return
+        if not cfg["target_user_id"]:
+            logger.warning("Heartbeat: no target_user_id configured, skipping")
+            return
+        interval_sec = cfg["every_minutes"] * 60
+        logger.info(
+            f"Heartbeat started: every {cfg['every_minutes']}m → user {cfg['target_user_id']}"
+        )
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop(interval_sec, cfg))
+
+    async def stop_heartbeat(self) -> None:
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+
+    async def _heartbeat_loop(self, interval_sec: int, cfg: dict) -> None:
+        """Background loop: sleep, then fire heartbeat check."""
+        # First run after one full interval (don't fire immediately on startup)
+        await asyncio.sleep(interval_sec)
+        while True:
+            try:
+                await self._run_heartbeat(cfg)
+            except Exception as e:
+                logger.warning(f"Heartbeat run failed: {e}")
+            await asyncio.sleep(interval_sec)
+
+    async def _run_heartbeat(self, cfg: dict) -> None:
+        """Execute one heartbeat turn and deliver result if non-OK."""
+        # Check active hours
+        if not _is_within_active_hours(cfg["active_hours_start"], cfg["active_hours_end"]):
+            logger.debug("Heartbeat: outside active hours, skipping")
+            return
+
+        user_id = str(cfg["target_user_id"])
+        logger.debug(f"Heartbeat: running for user {user_id}")
+
+        try:
+            response = await self._get_http().post(
+                f"{self.orchestrator_url}/api/v1/tasks",
+                params={
+                    "user_id": user_id,
+                    "description": HEARTBEAT_PROMPT,
+                    "agent_id": "orchestrator",
+                },
+                timeout=90.0,
+            )
+        except Exception as e:
+            logger.warning(f"Heartbeat: orchestrator call failed: {e}")
+            return
+
+        if response.status_code != 200:
+            logger.warning(f"Heartbeat: orchestrator returned {response.status_code}")
+            return
+
+        result = response.json()
+        if result.get("status") != "success":
+            return
+
+        payload = result.get("result", {})
+        text = str(payload.get("output") or payload.get("result") or "").strip()
+
+        # Suppress HEARTBEAT_OK responses
+        stripped = text.strip()
+        if stripped.startswith(HEARTBEAT_OK) or stripped.endswith(HEARTBEAT_OK):
+            remaining = stripped.replace(HEARTBEAT_OK, "").strip()
+            if len(remaining) <= 300:
+                logger.debug("Heartbeat: OK, nothing to send")
+                return
+            text = remaining
+
+        if not text:
+            return
+
+        # Deliver to user
+        if self.app:
+            try:
+                await self.app.bot.send_message(
+                    chat_id=int(user_id),
+                    text=f"💡 {text}",
+                )
+                logger.info(f"Heartbeat: delivered message to user {user_id}")
+            except Exception as e:
+                logger.warning(f"Heartbeat: failed to send message: {e}")
+
     def _setup_handlers(self) -> None:
         if not self.app:
             return
@@ -170,6 +317,7 @@ class BalbesTelegramBot:
         self.app.add_handler(CommandHandler("model", self.cmd_model))
         self.app.add_handler(CommandHandler("remember", self.cmd_remember))
         self.app.add_handler(CommandHandler("recall", self.cmd_recall))
+        self.app.add_handler(CommandHandler("heartbeat", self.cmd_heartbeat))
 
         # Inline keyboard callbacks
         self.app.add_handler(
@@ -204,6 +352,7 @@ class BalbesTelegramBot:
             BotCommand("clear", "Очистить историю чата"),
             BotCommand("remember", "Сохранить в долгосрочную память"),
             BotCommand("recall", "Найти в долгосрочной памяти"),
+            BotCommand("heartbeat", "Запустить проверку прямо сейчас"),
             BotCommand("status", "Статус системы"),
         ]
         await app.bot.set_my_commands(commands)
@@ -375,6 +524,7 @@ class BalbesTelegramBot:
             "/clear — очистить историю текущего чата\n"
             "/remember текст — сохранить в долгосрочную память\n"
             "/recall запрос — найти в долгосрочной памяти\n"
+            "/heartbeat — запустить проверку сейчас\n"
             "/status — статус системы\n"
             "/help — эта справка\n\n"
             "🎤 *Голосовые сообщения* принимаются автоматически\\.\n"
@@ -424,9 +574,10 @@ class BalbesTelegramBot:
             short_id = cid[:8]
             is_active = cid == active_id
 
-            mark = "✅ " if is_active else f"{i}\\. "
+            mark = "✅ " if is_active else f"{i}\\."
             lines.append(
-                f"{mark}*{name}*\n   `{short_id}` \\| {agent_emoji} {agent_name} \\| 🔧 {model}"
+                f"{mark} *{_escape_md2(name)}*\n"
+                f"   `{short_id}` \\| {agent_emoji} {_escape_md2(agent_name)} \\| 🔧 {_escape_md2(model)}"
             )
 
             btn_label = f"{'✅ ' if is_active else ''}{name} [{agent_emoji} {model}]"
@@ -636,6 +787,28 @@ class BalbesTelegramBot:
                 await update.message.reply_text(f"⚠️ Ошибка поиска: {r.status_code}")
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка: {e}")
+
+    async def cmd_heartbeat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Manually trigger a heartbeat check right now."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+
+        cfg = _load_heartbeat_config()
+        if not cfg["enabled"]:
+            await update.message.reply_text(
+                "⏸ Heartbeat отключён.\n"
+                "Включи в `config/providers.yaml` → `heartbeat.enabled: true`",
+                parse_mode="Markdown",
+            )
+            return
+
+        await update.message.reply_text("🔄 Запускаю heartbeat проверку...")
+        try:
+            await self._run_heartbeat(cfg)
+            await update.message.reply_text("✅ Heartbeat выполнен")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка heartbeat: {e}")
 
     # -------------------------------------------------------------------------
     # Callback handlers

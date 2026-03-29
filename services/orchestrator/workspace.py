@@ -31,10 +31,11 @@ BOOTSTRAP_FILES = [
     "USER.md",
     "TOOLS.md",
     "MEMORY.md",
+    "HEARTBEAT.md",
 ]
 
 # Files the agent is allowed to write to
-WRITEABLE_FILES = {"AGENTS.md", "SOUL.md", "USER.md", "MEMORY.md", "IDENTITY.md"}
+WRITEABLE_FILES = {"AGENTS.md", "SOUL.md", "USER.md", "MEMORY.md", "IDENTITY.md", "HEARTBEAT.md"}
 
 
 @dataclass
