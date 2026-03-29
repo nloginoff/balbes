@@ -20,7 +20,7 @@ from uuid import uuid4
 import httpx
 import tiktoken
 from agent_logger import AgentActivityLogger
-from tools import AVAILABLE_TOOLS, HEARTBEAT_TOOLS, ToolDispatcher, get_tools_for_mode
+from tools import AGENT_TOOLS, AVAILABLE_TOOLS, HEARTBEAT_TOOLS, ToolDispatcher, get_tools_for_mode
 from workspace import AgentWorkspace
 
 
@@ -193,6 +193,7 @@ class OrchestratorAgent:
             http_client=self.http_client,
             providers_config=get_providers_config(),
             activity_logger=activity_log,
+            delegate_callback=self._delegate_task,
         )
 
         logger.info("Orchestrator Agent initialized")
@@ -384,6 +385,7 @@ class OrchestratorAgent:
             "openrouter_api_key": settings.openrouter_api_key,
             "source": source,
             "mode": mode,
+            "model_id": model_id,  # used by delegate_to_agent to preserve model choice
         }
         available_tools = override_tools if override_tools is not None else get_tools_for_mode(mode)
 
@@ -470,6 +472,64 @@ class OrchestratorAgent:
             )
             return text or self._fallback_text(), model_used
         raise LLMUnavailableError(llm_error)
+
+    async def _delegate_task(
+        self,
+        agent_id: str,
+        task: str,
+        context: dict[str, Any],
+        mode: str = "agent",
+    ) -> str:
+        """
+        Run a task on behalf of a specialist sub-agent (e.g. 'coder').
+        Called by the delegate_to_agent tool.
+
+        The sub-agent gets its own workspace and activity logger but shares
+        the same HTTP client and model. To prevent infinite delegation loops
+        the sub-agent's dispatcher receives delegate_callback=None (AGENT_TOOLS
+        already excludes the delegate_to_agent schema too).
+        """
+        sub_workspace = self._get_workspace(agent_id)
+        sub_logger = self._get_activity_logger(agent_id)
+        model_id = context.get("model_id") or settings.default_chat_model
+
+        sub_dispatcher = ToolDispatcher(
+            workspace=sub_workspace,
+            http_client=self.http_client,
+            providers_config=get_providers_config(),
+            activity_logger=sub_logger,
+            delegate_callback=None,  # sub-agents cannot delegate further
+        )
+
+        # Propagate debug collector so sub-agent tool calls appear in the trace
+        if self.tool_dispatcher and self.tool_dispatcher._debug_collector is not None:
+            sub_dispatcher.set_debug_collector(self.tool_dispatcher._debug_collector)
+
+        # Build sub-agent messages with its own system prompt (no shared history)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": sub_workspace.config.system_prompt},
+            {"role": "user", "content": task},
+        ]
+
+        old_dispatcher = self.tool_dispatcher
+        self.tool_dispatcher = sub_dispatcher
+        try:
+            logger.info(f"Delegating to '{agent_id}' (mode={mode}, model={model_id}): {task[:60]}…")
+            response_text, _ = await self._run_llm_with_tools(
+                messages=messages,
+                model_id=model_id,
+                user_id=context.get("user_id", "unknown"),
+                chat_id=context.get("chat_id", "default"),
+                task_id=f"sub-{agent_id}-{uuid4().hex[:8]}",
+                source=context.get("source", "user"),
+                agent_id=agent_id,
+                debug_events=sub_dispatcher._debug_collector,
+                mode=mode,
+                override_tools=AGENT_TOOLS,  # no recursive delegation
+            )
+            return response_text
+        finally:
+            self.tool_dispatcher = old_dispatcher
 
     async def _call_llm(
         self,

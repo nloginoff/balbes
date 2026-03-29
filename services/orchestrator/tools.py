@@ -173,6 +173,49 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "delegate_to_agent",
+            "description": (
+                "Delegate a task to a specialist sub-agent and return their response. "
+                "Use the 'coder' agent for: writing / editing / debugging code, "
+                "creating project files, running scripts or tests, git operations "
+                "(add, commit, push, pull), and any development work. "
+                "Provide a complete, self-contained task description — the sub-agent "
+                "has NO access to the current conversation history, so include all "
+                "necessary context: file paths, tech stack, what to do and why."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Target agent. Currently available: 'coder'",
+                        "enum": ["coder"],
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": (
+                            "Complete, standalone task description. Include file paths, "
+                            "language / framework, expected output format, and any "
+                            "constraints (e.g. 'do not change the public API')."
+                        ),
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": (
+                            "'agent' = can run commands, write files, use git (default). "
+                            "'ask' = safe info commands only, no writes."
+                        ),
+                        "enum": ["agent", "ask"],
+                        "default": "agent",
+                    },
+                },
+                "required": ["agent_id", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_agent_logs",
             "description": (
                 "Read the agent's activity logs — all tool and skill calls with timestamps. "
@@ -228,6 +271,12 @@ HEARTBEAT_TOOLS: list[dict[str, Any]] = [
     t for t in AVAILABLE_TOOLS if t["function"]["name"] == "workspace_read"
 ]
 
+# Tool set for delegated (sub-agent) runs — everything except delegate_to_agent.
+# Prevents infinite delegation loops: a sub-agent cannot re-delegate.
+AGENT_TOOLS: list[dict[str, Any]] = [
+    t for t in AVAILABLE_TOOLS if t["function"]["name"] != "delegate_to_agent"
+]
+
 
 def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
     """
@@ -257,12 +306,16 @@ class ToolDispatcher:
         http_client=None,
         providers_config=None,
         activity_logger=None,
+        delegate_callback=None,
     ):
         self.workspace = workspace
         self.http_client = http_client
         self.providers_config = providers_config
         self._logger = activity_logger  # AgentActivityLogger | None
         self._debug_collector: list[dict] | None = None  # set per-task when debug=True
+        # async callable(agent_id, task, context, mode) -> str
+        # Set to None for sub-agents to prevent recursive delegation.
+        self._delegate_callback = delegate_callback
 
         # Lazy-loaded skill instances
         self._web_search = None
@@ -318,6 +371,9 @@ class ToolDispatcher:
 
             elif tool_name == "save_to_memory":
                 result = await self._do_save_to_memory(tool_args, context)
+
+            elif tool_name == "delegate_to_agent":
+                result = await self._do_delegate_to_agent(tool_args, context)
 
             elif tool_name == "read_agent_logs":
                 result = self._do_read_agent_logs(tool_args)
@@ -475,6 +531,29 @@ class ToolDispatcher:
         except Exception as e:
             return f"Failed to save to memory: {e}"
 
+    async def _do_delegate_to_agent(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        if not self._delegate_callback:
+            return "Delegation is not available (sub-agents cannot delegate further)."
+
+        agent_id = args.get("agent_id", "coder")
+        task = args.get("task", "").strip()
+        mode = args.get("mode", "agent")
+
+        if not task:
+            return "Delegation failed: no task description provided."
+
+        try:
+            result = await self._delegate_callback(
+                agent_id=agent_id,
+                task=task,
+                context=context,
+                mode=mode,
+            )
+            return f"[Agent {agent_id}]:\n{result}"
+        except Exception as e:
+            logger.error(f"Delegation to {agent_id} failed: {e}", exc_info=True)
+            return f"Delegation to '{agent_id}' failed: {type(e).__name__}: {e}"
+
     def _do_read_agent_logs(self, args: dict[str, Any]) -> str:
         if not self._logger:
             return "Activity logging is not configured."
@@ -527,6 +606,11 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         return f"name='{args.get('name', '')[:40]}'"
     if tool_name == "save_to_memory":
         return f"text='{args.get('text', '')[:60]}'"
+    if tool_name == "delegate_to_agent":
+        agent = args.get("agent_id", "?")
+        task_preview = args.get("task", "")[:60]
+        mode = args.get("mode", "agent")
+        return f"agent='{agent}' mode='{mode}' task='{task_preview}'"
     return str(args)[:80]
 
 
