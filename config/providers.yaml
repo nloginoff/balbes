@@ -346,7 +346,7 @@ heartbeat:
   model: "openrouter/stepfun/step-3.5-flash:free"
   active_hours_start: "09:00"    # local server time
   active_hours_end: "23:00"
-  target_user_id: ${TELEGRAM_USER_ID}
+  # target_user_id is taken from TELEGRAM_USER_ID env var (set in .env.prod)
 
 
 # Embeddings configuration for Qdrant

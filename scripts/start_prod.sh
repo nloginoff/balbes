@@ -104,7 +104,7 @@ else
 
     if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
         cd "$PROJECT_ROOT/services/orchestrator"
-        ENV=prod python telegram_bot.py > "$LOG_DIR/telegram-bot.log" 2>&1 &
+        ENV=prod PYTHONUNBUFFERED=1 python -u telegram_bot.py > "$LOG_DIR/telegram-bot.log" 2>&1 &
         echo "$!" >> "$PID_FILE"
         echo "Started Telegram bot polling"
     else

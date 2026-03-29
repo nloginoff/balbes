@@ -128,13 +128,22 @@ def _make_agent_keyboard(current_id: str | None = None) -> InlineKeyboardMarkup:
 def _load_heartbeat_config() -> dict:
     """Load heartbeat config from providers.yaml."""
     cfg = _load_providers_yaml().get("heartbeat", {})
+
+    # target_user_id: YAML may contain a literal "${TELEGRAM_USER_ID}" placeholder
+    # (YAML doesn't do env substitution). Always prefer settings.telegram_user_id
+    # which is loaded from the TELEGRAM_USER_ID env var.
+    raw_uid = cfg.get("target_user_id", "")
+    resolved_uid = (
+        settings.telegram_user_id if (not raw_uid or str(raw_uid).startswith("$")) else raw_uid
+    )
+
     return {
         "enabled": cfg.get("enabled", False),
         "every_minutes": cfg.get("every_minutes", 30),
         "model": cfg.get("model") or None,  # None = use chat's own model
         "active_hours_start": cfg.get("active_hours_start", "08:00"),
         "active_hours_end": cfg.get("active_hours_end", "23:00"),
-        "target_user_id": cfg.get("target_user_id") or settings.telegram_user_id,
+        "target_user_id": resolved_uid,
     }
 
 
@@ -223,7 +232,10 @@ class BalbesTelegramBot:
             logger.info("Heartbeat disabled (set heartbeat.enabled: true in providers.yaml)")
             return
         if not cfg["target_user_id"]:
-            logger.warning("Heartbeat: no target_user_id configured, skipping")
+            logger.warning(
+                "Heartbeat disabled: TELEGRAM_USER_ID not set in .env.prod — "
+                "add your numeric Telegram ID (get it from @userinfobot)"
+            )
             return
         interval_sec = cfg["every_minutes"] * 60
         logger.info(
@@ -1238,6 +1250,12 @@ class BalbesTelegramBot:
 
 def run_bot() -> None:
     """Entry point: run Telegram bot."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured, skipping")
         return
