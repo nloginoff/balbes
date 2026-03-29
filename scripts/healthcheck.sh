@@ -110,7 +110,7 @@ else
         # shellcheck disable=SC2046
         export $(cat .env.prod | grep -v '^#' | xargs)
         if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-            check_process "Telegram Bot Polling" "python telegram_bot.py"
+            check_process "Telegram Bot Polling" "telegram_bot.py"
         fi
     fi
 fi
