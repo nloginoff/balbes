@@ -14,6 +14,7 @@ The agent can read/write its own files via workspace_read / workspace_write tool
 """
 
 import logging
+import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -161,7 +162,7 @@ class AgentWorkspace:
         """
         Write content to a workspace file.
         Only WRITEABLE_FILES are permitted.
-        Reloads workspace after write.
+        Reloads workspace after write and auto-commits to memory repo.
         Used by workspace_write tool.
         """
         filename = Path(filename).name  # strip any path traversal
@@ -179,10 +180,60 @@ class AgentWorkspace:
             path.write_text(content, encoding="utf-8")
             logger.info(f"[{self.agent_id}] Updated {filename} ({len(content)} chars)")
             self.reload()
+            self._git_auto_push(filename)
             return True
         except Exception as e:
             logger.error(f"[{self.agent_id}] Failed to write {filename}: {e}")
             return False
+
+    def _git_auto_push(self, filename: str) -> None:
+        """
+        Auto-commit and push workspace change to the private memory repo.
+        Silently skips if data/agents/ is not a git repository (setup not done).
+        The git push runs in background (Popen) — doesn't block the agent.
+        """
+        repo_dir = self.workspace_dir.parent  # data/agents/
+
+        if not (repo_dir / ".git").exists():
+            logger.debug(
+                f"[{self.agent_id}] No memory repo at {repo_dir}, skipping auto-push. "
+                "Run scripts/setup_memory_repo.sh to enable."
+            )
+            return
+
+        try:
+            _run = lambda cmd: subprocess.run(  # noqa: E731
+                cmd, cwd=repo_dir, capture_output=True, timeout=15
+            )
+
+            _run(["git", "add", "-A"])
+
+            # Nothing to commit — all clean
+            diff = _run(["git", "diff", "--cached", "--quiet"])
+            if diff.returncode == 0:
+                return
+
+            msg = f"agent({self.agent_id}): update {filename}"
+            commit = _run(["git", "commit", "-m", msg])
+            if commit.returncode != 0:
+                logger.warning(
+                    f"[{self.agent_id}] git commit failed: {commit.stderr.decode()[:200]}"
+                )
+                return
+
+            # Push runs in background — agent doesn't wait for network
+            subprocess.Popen(
+                ["git", "push", "origin", "HEAD"],
+                cwd=repo_dir,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info(f"[{self.agent_id}] Auto-committed {filename}, push started in background")
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"[{self.agent_id}] Auto-push timed out (git operation took >15s)")
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] Auto-push failed: {e}")
 
     def list_files(self) -> list[str]:
         """Return list of existing workspace files."""

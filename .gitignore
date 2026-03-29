@@ -72,9 +72,8 @@ data/
 !data/redis/.gitkeep
 !data/rabbitmq/.gitkeep
 !data/qdrant/.gitkeep
-# Agent workspace MD files — tracked in git so they deploy with the code
-!data/agents/
-!data/agents/**
+# Agent workspace files live in the PRIVATE memory repo (balbes-memory).
+# See: bash scripts/setup_memory_repo.sh git@github.com:nloginoff/balbes-memory.git
 
 # Logs
 *.log
