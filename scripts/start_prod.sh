@@ -91,7 +91,7 @@ else
     echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/orchestrator"
-    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${ORCHESTRATOR_PORT:-18102}" --workers 2 > "$LOG_DIR/orchestrator.log" 2>&1 &
+    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${ORCHESTRATOR_PORT:-18102}" --workers 1 > "$LOG_DIR/orchestrator.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/coder"

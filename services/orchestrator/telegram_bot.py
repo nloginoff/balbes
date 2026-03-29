@@ -1146,6 +1146,7 @@ class BalbesTelegramBot:
         if not user:
             return
         user_id = str(user.id)
+        chat_id = await self._get_active_chat(user_id)
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -1188,8 +1189,52 @@ class BalbesTelegramBot:
                 f"   📝 {desc_safe}\n"
             )
 
+        # Start monitors for any running bg tasks visible in /tasks
+        chat_settings = await self._get_chat_settings(user_id, chat_id or "default")
+        debug_on = chat_settings.get("debug", False) if chat_id else False
+        for t in tasks:
+            if t.get("status") == "running" and t.get("background"):
+                agent_id = t.get("agent_id", "")
+                if agent_id:
+                    key = f"{user_id}:{agent_id}"
+                    mon = self._bg_monitors.get(key)
+                    if not mon or mon.done():
+                        self._start_bg_monitor(
+                            update.effective_chat.id, user_id, agent_id, debug_on
+                        )
+
         text = "\n".join(lines)
         await update.message.reply_text(text, parse_mode="HTML")
+
+    async def _ensure_bg_monitors(self, user_id: str, tg_chat_id: int, debug: bool) -> None:
+        """
+        Scan for any running background tasks that don't have an active monitor
+        and start one for each. Called after every orchestrator response as a
+        safety net in case background_tasks_started wasn't populated.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"{self.orchestrator_url}/api/v1/tasks",
+                    params={"user_id": user_id, "limit": 10},
+                )
+                if resp.status_code != 200:
+                    return
+                tasks = resp.json().get("tasks", [])
+        except Exception as e:
+            logger.debug(f"[ensure_bg_monitors] error: {e}")
+            return
+
+        for task in tasks:
+            if task.get("status") == "running" and task.get("background"):
+                agent_id = task.get("agent_id", "")
+                if not agent_id:
+                    continue
+                key = f"{user_id}:{agent_id}"
+                mon = self._bg_monitors.get(key)
+                if not mon or mon.done():
+                    logger.info(f"[ensure_bg_monitors] starting missed monitor for {key}")
+                    self._start_bg_monitor(tg_chat_id, user_id, agent_id, debug)
 
     def _start_bg_monitor(
         self,
@@ -1654,7 +1699,7 @@ class BalbesTelegramBot:
                                 except Exception:
                                     await message.reply_text(trace)
 
-                        # Start background monitors for any delegated agents
+                        # Start background monitors for newly delegated agents
                         bg_started = result.get("background_tasks_started", [])
                         debug_on = chat_settings.get("debug", False)
                         for bg in bg_started:
@@ -1664,6 +1709,16 @@ class BalbesTelegramBot:
                                 agent_id=bg["agent_id"],
                                 debug=debug_on,
                             )
+
+                        # Catch-all: also start monitors for any running bg tasks
+                        # that don't have a monitor yet (handles cases where
+                        # background_tasks_started was not populated, e.g. on restart
+                        # or when the LLM called the tool in a previous turn).
+                        await self._ensure_bg_monitors(
+                            user_id=str(user.id),
+                            tg_chat_id=chat_tg.id,
+                            debug=debug_on,
+                        )
                     else:
                         error = result.get("error", "")
                         # Check if it's a model unavailability error
