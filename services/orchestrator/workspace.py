@@ -21,6 +21,13 @@ from pathlib import Path
 
 logger = logging.getLogger("orchestrator.workspace")
 
+# Module-level debounce state: repo_dir → pending Timer
+# Shared across all AgentWorkspace instances so writes from different agents
+# to the same repo are batched into a single push.
+_push_timers: dict[str, threading.Timer] = {}
+_push_lock = threading.Lock()
+PUSH_DEBOUNCE_SECONDS = 30  # push fires 30s after the last write in a burst
+
 MAX_FILE_CHARS = 20_000
 MAX_TOTAL_CHARS = 150_000
 
@@ -188,52 +195,82 @@ class AgentWorkspace:
 
     def _git_auto_push(self, filename: str) -> None:
         """
-        Auto-commit and push workspace change to the private memory repo.
+        Auto-commit workspace change immediately (local, fast), then schedule
+        a debounced push. If several files are written within PUSH_DEBOUNCE_SECONDS,
+        they are grouped into a single push — no parallel-push conflicts.
+
         Silently skips if data/agents/ is not a git repository (setup not done).
-        The git push runs in background (Popen) — doesn't block the agent.
         """
         repo_dir = self.workspace_dir.parent  # data/agents/
 
         if not (repo_dir / ".git").exists():
             logger.debug(
-                f"[{self.agent_id}] No memory repo at {repo_dir}, skipping auto-push. "
+                f"[{self.agent_id}] No memory repo at {repo_dir}, skipping auto-commit. "
                 "Run scripts/setup_memory_repo.sh to enable."
             )
             return
 
-        try:
-            _run = lambda cmd: subprocess.run(  # noqa: E731
-                cmd, cwd=repo_dir, capture_output=True, timeout=15
-            )
+        def _run(cmd: list[str]) -> subprocess.CompletedProcess:
+            return subprocess.run(cmd, cwd=repo_dir, capture_output=True, timeout=15)
 
+        try:
             _run(["git", "add", "-A"])
 
-            # Nothing to commit — all clean
-            diff = _run(["git", "diff", "--cached", "--quiet"])
-            if diff.returncode == 0:
+            # Nothing staged — skip commit
+            if _run(["git", "diff", "--cached", "--quiet"]).returncode == 0:
                 return
 
             msg = f"agent({self.agent_id}): update {filename}"
-            commit = _run(["git", "commit", "-m", msg])
-            if commit.returncode != 0:
+            result = _run(["git", "commit", "-m", msg])
+            if result.returncode != 0:
                 logger.warning(
-                    f"[{self.agent_id}] git commit failed: {commit.stderr.decode()[:200]}"
+                    f"[{self.agent_id}] git commit failed: {result.stderr.decode()[:200]}"
                 )
                 return
 
-            # Push runs in background — agent doesn't wait for network
-            subprocess.Popen(
-                ["git", "push", "origin", "HEAD"],
-                cwd=repo_dir,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+            logger.info(
+                f"[{self.agent_id}] Committed {filename}; scheduling push in {PUSH_DEBOUNCE_SECONDS}s"
             )
-            logger.info(f"[{self.agent_id}] Auto-committed {filename}, push started in background")
+            self._schedule_debounced_push(repo_dir)
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"[{self.agent_id}] Auto-push timed out (git operation took >15s)")
+            logger.warning(f"[{self.agent_id}] git commit timed out")
         except Exception as e:
-            logger.warning(f"[{self.agent_id}] Auto-push failed: {e}")
+            logger.warning(f"[{self.agent_id}] auto-commit failed: {e}")
+
+    def _schedule_debounced_push(self, repo_dir: Path) -> None:
+        """
+        Cancel any pending push for this repo and schedule a new one.
+        This batches multiple rapid writes into a single network push.
+        """
+        key = str(repo_dir)
+
+        def _do_push() -> None:
+            try:
+                result = subprocess.run(
+                    ["git", "push", "origin", "HEAD"],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"Memory repo: pushed to remote ({repo_dir.name})")
+                else:
+                    logger.warning(f"Memory repo: push failed: {result.stderr.decode()[:200]}")
+            except Exception as e:
+                logger.warning(f"Memory repo: push error: {e}")
+            finally:
+                with _push_lock:
+                    _push_timers.pop(key, None)
+
+        with _push_lock:
+            existing = _push_timers.get(key)
+            if existing:
+                existing.cancel()
+            timer = threading.Timer(PUSH_DEBOUNCE_SECONDS, _do_push)
+            timer.daemon = True
+            timer.start()
+            _push_timers[key] = timer
 
     def list_files(self) -> list[str]:
         """Return list of existing workspace files."""
