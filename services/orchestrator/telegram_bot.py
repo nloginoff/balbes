@@ -34,10 +34,12 @@ from telegram import (
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -213,7 +215,14 @@ class BalbesTelegramBot:
             .build()
         )
         self._setup_handlers()
-        logger.info("Telegram bot initialized")
+        allowed = settings.telegram_allowed_users
+        if allowed:
+            logger.info(f"Telegram bot initialized — allowed users: {allowed}")
+        else:
+            logger.warning(
+                "Telegram bot initialized — TELEGRAM_ALLOWED_USERS is empty, "
+                "bot is open to everyone!"
+            )
 
     def start_polling(self) -> None:
         if not self.app:
@@ -324,9 +333,36 @@ class BalbesTelegramBot:
             except Exception as e:
                 logger.warning(f"Heartbeat: failed to send message: {e}")
 
+    async def _security_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """
+        Global authorization gate — runs before ALL other handlers (group=-1).
+
+        Rejects any update whose sender is not in settings.telegram_allowed_users.
+        If the whitelist is empty the bot is open (useful during local dev).
+        Raises ApplicationHandlerStop to prevent further processing for blocked users.
+        """
+        allowed: list[int] = settings.telegram_allowed_users
+        if not allowed:
+            return  # no restriction configured
+
+        user = update.effective_user
+        if user is None or user.id not in allowed:
+            uid = user.id if user else "unknown"
+            logger.warning(f"Blocked unauthorized access from user_id={uid}")
+            if update.callback_query:
+                await update.callback_query.answer("⛔ Доступ запрещён", show_alert=True)
+            elif update.effective_message:
+                await update.effective_message.reply_text(
+                    "⛔ Доступ запрещён. Этот бот не публичный."
+                )
+            raise ApplicationHandlerStop
+
     def _setup_handlers(self) -> None:
         if not self.app:
             return
+
+        # Security gate: runs before every other handler (group=-1)
+        self.app.add_handler(TypeHandler(Update, self._security_check), group=-1)
 
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("help", self.cmd_help))

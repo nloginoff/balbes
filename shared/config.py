@@ -76,6 +76,14 @@ class Settings(BaseSettings):
         default=None, description="Telegram bot token from @BotFather"
     )
     telegram_user_id: int | None = Field(default=None, description="Your Telegram user ID")
+    telegram_allowed_users: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Whitelist of Telegram user IDs allowed to use the bot. "
+            "Set via TELEGRAM_ALLOWED_USERS env var as comma-separated IDs. "
+            "Empty list = no restriction (not recommended for production)."
+        ),
+    )
 
     # =============================================================================
     # Web UI Authentication
@@ -231,6 +239,16 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return None
         return int(v)
+
+    @field_validator("telegram_allowed_users", mode="before")
+    @classmethod
+    def parse_allowed_users(cls, v: Any) -> list[int]:
+        """Parse TELEGRAM_ALLOWED_USERS='123,456' into [123, 456]."""
+        if not v or v == "":
+            return []
+        if isinstance(v, list):
+            return [int(x) for x in v if str(x).strip()]
+        return [int(x.strip()) for x in str(v).split(",") if x.strip()]
 
 
 # Singleton instance
