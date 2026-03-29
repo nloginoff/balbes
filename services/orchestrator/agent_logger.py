@@ -12,14 +12,26 @@ read_agent_logs tool and show them in chat.
 
 import json
 import logging
+import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger("orchestrator.agent_logger")
 
 _write_lock = threading.Lock()
+
+
+def _local_tz() -> ZoneInfo:
+    """Return configured local timezone (from TZ env var or Europe/Moscow default)."""
+    tz_name = os.getenv("TZ", "Europe/Moscow")
+    try:
+        return ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        logger.warning(f"Unknown timezone '{tz_name}', falling back to Europe/Moscow")
+        return ZoneInfo("Europe/Moscow")
 
 
 def _project_root() -> Path:
@@ -61,9 +73,9 @@ class AgentActivityLogger:
         chat_id: str = "",
         source: str = "user",  # "user" | "heartbeat"
     ) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(_local_tz())
         entry = {
-            "ts": now.isoformat(timespec="seconds"),
+            "ts": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
             "agent": self.agent_id,
             "tool": tool_name,
             "input": input_summary,
@@ -104,7 +116,7 @@ class AgentActivityLogger:
         tool_filter: only entries for this tool name
         limit:       max entries returned (most recent first)
         """
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(_local_tz()).date()
 
         # Resolve keyword dates
         def _parse(s: str):
@@ -183,7 +195,7 @@ class AgentActivityLogger:
             lines.append(f"📋 {title}\n")
 
         for e in entries:
-            ts = e.get("ts", "?")[:19].replace("T", " ")
+            ts = e.get("ts", "?")[:19]  # "YYYY-MM-DD HH:MM:SS"
             tool = e.get("tool", "?")
             inp = e.get("input", "")
             res = e.get("result", "")

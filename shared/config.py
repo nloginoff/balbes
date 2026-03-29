@@ -149,6 +149,13 @@ class Settings(BaseSettings):
     web_frontend_port: int = Field(default=5173)
 
     # =============================================================================
+    # Timezone
+    # =============================================================================
+    tz: str = Field(
+        default="Europe/Moscow", description="Local timezone (IANA name, e.g. Europe/Moscow)"
+    )
+
+    # =============================================================================
     # Logging
     # =============================================================================
     log_level: str = Field(default="INFO", description="DEBUG, INFO, WARNING, ERROR, CRITICAL")
