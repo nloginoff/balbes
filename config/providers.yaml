@@ -342,8 +342,13 @@ skills:
 # Always uses the free model regardless of the user's active chat model
 heartbeat:
   enabled: true
-  every_minutes: 5
+  every_minutes: 10
+  # Primary model for heartbeat — must be free.
+  # On 429/5xx the bot retries with fallback_models in order.
   model: "openrouter/stepfun/step-3.5-flash:free"
+  fallback_models:
+    - "openrouter/meta-llama/llama-3.3-70b-instruct"
+    - "openrouter/minimax/minimax-m2.5"
   active_hours_start: "09:00"    # local server time
   active_hours_end: "23:00"
   # target_user_id is taken from TELEGRAM_USER_ID env var (set in .env.prod)

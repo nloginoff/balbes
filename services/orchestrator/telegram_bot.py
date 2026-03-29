@@ -143,6 +143,7 @@ def _load_heartbeat_config() -> dict:
         "enabled": cfg.get("enabled", False),
         "every_minutes": cfg.get("every_minutes", 30),
         "model": cfg.get("model") or None,  # None = use chat's own model
+        "fallback_models": cfg.get("fallback_models") or [],
         "active_hours_start": cfg.get("active_hours_start", "08:00"),
         "active_hours_end": cfg.get("active_hours_end", "23:00"),
         "target_user_id": resolved_uid,
@@ -277,36 +278,57 @@ class BalbesTelegramBot:
             return
 
         user_id = str(cfg["target_user_id"])
-        logger.debug(f"Heartbeat: running for user {user_id}")
+        logger.info(f"Heartbeat: starting run for user {user_id}")
 
-        try:
-            params: dict = {
-                "user_id": user_id,
-                "description": HEARTBEAT_PROMPT,
-                "agent_id": "orchestrator",
-                "source": "heartbeat",
-            }
-            # Use the heartbeat-specific model if configured, otherwise the chat model
-            if cfg.get("model"):
-                params["model_id"] = cfg["model"]
+        # Build model list: primary + fallbacks from config
+        primary = cfg.get("model")
+        fallbacks: list[str] = cfg.get("fallback_models") or []
+        models_to_try: list[str | None] = ([primary] if primary else [None]) + fallbacks
 
-            response = await self._get_http().post(
-                f"{self.orchestrator_url}/api/v1/tasks",
-                params=params,
-                timeout=90.0,
-            )
-        except Exception as e:
-            logger.warning(f"Heartbeat: orchestrator call failed: {e}")
-            return
+        result: dict | None = None
+        for model_id in models_to_try:
+            try:
+                params: dict = {
+                    "user_id": user_id,
+                    "description": HEARTBEAT_PROMPT,
+                    "agent_id": "orchestrator",
+                    "source": "heartbeat",
+                }
+                if model_id:
+                    params["model_id"] = model_id
 
-        if response.status_code != 200:
-            logger.warning(f"Heartbeat: orchestrator returned {response.status_code}")
-            return
+                response = await self._get_http().post(
+                    f"{self.orchestrator_url}/api/v1/tasks",
+                    params=params,
+                    timeout=90.0,
+                )
+            except Exception as e:
+                logger.warning(f"Heartbeat: orchestrator call failed (model={model_id}): {e}")
+                continue
 
-        result = response.json()
-        if result.get("status") != "success":
-            err = result.get("error", "")
-            logger.warning(f"Heartbeat: task failed — {err}")
+            if response.status_code != 200:
+                logger.warning(
+                    f"Heartbeat: orchestrator HTTP {response.status_code} (model={model_id})"
+                )
+                continue
+
+            candidate = response.json()
+            if candidate.get("status") != "success":
+                err = candidate.get("error", "")
+                logger.warning(f"Heartbeat: task failed (model={model_id}) — {err}")
+                # 429 / model unavailable → retry with next model
+                if "429" in err or "unavailable" in err.lower() or "недоступна" in err.lower():
+                    continue
+                # Other failures (e.g. internal error) — stop
+                return
+
+            result = candidate
+            if model_id and model_id != primary:
+                logger.info(f"Heartbeat: succeeded with fallback model {model_id}")
+            break
+
+        if result is None:
+            logger.warning("Heartbeat: all models failed, skipping this run")
             return
 
         payload = result.get("result", {})
@@ -322,7 +344,7 @@ class BalbesTelegramBot:
         if stripped.startswith(HEARTBEAT_OK) or stripped.endswith(HEARTBEAT_OK):
             remaining = stripped.replace(HEARTBEAT_OK, "").strip()
             if len(remaining) <= 300:
-                logger.debug("Heartbeat: OK, nothing to send")
+                logger.info("Heartbeat: OK, nothing to send")
                 return
             text = remaining
 
@@ -336,7 +358,7 @@ class BalbesTelegramBot:
                     chat_id=int(user_id),
                     text=f"💡 {text}",
                 )
-                logger.info(f"Heartbeat: delivered message to user {user_id}")
+                logger.info(f"Heartbeat: ✅ delivered message to user {user_id}: {text[:80]}")
             except Exception as e:
                 logger.warning(f"Heartbeat: failed to send message: {e}")
 
