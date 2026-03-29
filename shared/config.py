@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     aitunnel_api_key: str | None = Field(default=None, description="AiTunnel API key")
     default_chat_model: str = Field(
         default="openrouter/stepfun/step-3.5-flash:free",
-        description="Default model for direct chat responses",
+        description="Default model — overridden by first entry in providers.yaml active_models",
     )
 
     # =============================================================================

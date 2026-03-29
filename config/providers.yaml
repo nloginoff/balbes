@@ -1,4 +1,9 @@
 # Multi-provider LLM Configuration
+# Model tiers:
+#   free    — default model, no cost, used for heartbeat and as first fallback
+#   cheap   — low-cost, used as automatic fallback chain
+#   medium  — mid-range, user selection only
+#   premium — expensive, user selection only
 
 providers:
   openrouter:
@@ -6,56 +11,77 @@ providers:
     base_url: "https://openrouter.ai/api/v1"
     timeout: 60
     headers:
-      HTTP-Referer: "https://your-domain.com"
+      HTTP-Referer: "https://github.com/nloginoff/balbes"
       X-Title: "Balbes Multi-Agent System"
 
     models:
-      - id: "anthropic/claude-3.5-sonnet"
-        display_name: "Claude 3.5 Sonnet"
-        cost_per_1k_tokens: 0.015
-        context_window: 200000
-        capabilities: ["code", "reasoning", "long_context", "analysis"]
-        recommended_for: ["coder", "orchestrator"]
-
-      - id: "openai/gpt-4-turbo"
-        display_name: "GPT-4 Turbo"
-        cost_per_1k_tokens: 0.01
-        context_window: 128000
-        capabilities: ["code", "reasoning", "analysis"]
-        recommended_for: ["coder", "orchestrator"]
-
-      - id: "openai/gpt-4o-mini"
-        display_name: "GPT-4o Mini"
-        cost_per_1k_tokens: 0.0005
-        context_window: 128000
-        capabilities: ["basic", "fast", "cheap"]
-        recommended_for: ["cheap_fallback"]
-
+      # ── Free ────────────────────────────────────────────────────────────────
       - id: "stepfun/step-3.5-flash:free"
-        display_name: "StepFun Step 3.5 Flash (Free)"
+        display_name: "StepFun Step 3.5 Flash"
+        tier: free
         cost_per_1k_tokens: 0.0
         context_window: 65536
-        capabilities: ["basic", "fast", "cheap"]
-        recommended_for: ["free_fallback", "cheap_fallback"]
+        capabilities: ["chat", "fast"]
 
-      - id: "meta-llama/llama-3.1-8b-instruct:free"
-        display_name: "Llama 3.1 8B (Free)"
-        cost_per_1k_tokens: 0.0
-        context_window: 8192
-        capabilities: ["basic"]
-        recommended_for: ["free_fallback"]
+      # ── Cheap ───────────────────────────────────────────────────────────────
+      - id: "meta-llama/llama-3.3-70b-instruct"
+        display_name: "Llama 3.3 70B"
+        tier: cheap
+        cost_per_1k_tokens: 0.00008
+        context_window: 131072
+        capabilities: ["chat", "reasoning", "code"]
 
+      - id: "minimax/minimax-m2.5"
+        display_name: "MiniMax M2.5"
+        tier: cheap
+        cost_per_1k_tokens: 0.001
+        context_window: 1000000
+        capabilities: ["chat", "long_context"]
+
+      # ── Medium ──────────────────────────────────────────────────────────────
+      - id: "moonshotai/kimi-k2.5"
+        display_name: "Kimi K2.5"
+        tier: medium
+        cost_per_1k_tokens: 0.15
+        context_window: 131072
+        capabilities: ["chat", "reasoning", "code"]
+
+      - id: "google/gemini-2.5-flash-preview"
+        display_name: "Gemini 2.5 Flash"
+        tier: medium
+        cost_per_1k_tokens: 0.15
+        context_window: 1048576
+        capabilities: ["chat", "reasoning", "long_context", "vision"]
+
+      # ── Premium ─────────────────────────────────────────────────────────────
+      - id: "z-ai/glm-5-turbo"
+        display_name: "GLM-5 Turbo"
+        tier: premium
+        cost_per_1k_tokens: 0.5
+        context_window: 128000
+        capabilities: ["chat", "reasoning", "code"]
+
+      - id: "anthropic/claude-sonnet-4-5"
+        display_name: "Claude Sonnet 4.5"
+        tier: premium
+        cost_per_1k_tokens: 3.0
+        context_window: 200000
+        capabilities: ["chat", "reasoning", "code", "long_context", "analysis"]
+
+      - id: "openai/gpt-4.5-preview"
+        display_name: "GPT-4.5 Preview"
+        tier: premium
+        cost_per_1k_tokens: 15.0
+        context_window: 128000
+        capabilities: ["chat", "reasoning", "code", "analysis"]
+
+  # AITunnel — disabled, no models configured
   aitunnel:
     api_key: ${AITUNNEL_API_KEY}
     base_url: "https://api.aitunnel.com/v1"
     timeout: 60
-
-    models:
-      - id: "gpt-4-turbo"
-        display_name: "GPT-4 Turbo"
-        cost_per_1k_tokens: 0.01
-        context_window: 128000
-        capabilities: ["code", "reasoning"]
+    enabled: false
+    models: []
 
 
 # Available agents (shown in /agents menu)
@@ -71,27 +97,59 @@ agents:
 
 
 # Models available for user selection (shown in /model menu)
+# Sorted by tier: free → cheap → medium → premium
 active_models:
-  - id: "openrouter/anthropic/claude-3.5-sonnet"
-    display_name: "Claude 3.5 Sonnet"
-    provider: openrouter
-    context_window: 200000
-  - id: "openrouter/openai/gpt-4-turbo"
-    display_name: "GPT-4 Turbo"
-    provider: openrouter
-    context_window: 128000
-  - id: "openrouter/openai/gpt-4o-mini"
-    display_name: "GPT-4o Mini"
-    provider: openrouter
-    context_window: 128000
+  # ── Free ──────────────────────────────────────────────────────────────────
   - id: "openrouter/stepfun/step-3.5-flash:free"
-    display_name: "StepFun Flash (Free)"
+    display_name: "🆓 StepFun Step 3.5 Flash"
+    tier: free
     provider: openrouter
     context_window: 65536
-  - id: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
-    display_name: "Llama 3.1 8B (Free)"
+
+  # ── Cheap ─────────────────────────────────────────────────────────────────
+  - id: "openrouter/meta-llama/llama-3.3-70b-instruct"
+    display_name: "💲 Llama 3.3 70B"
+    tier: cheap
     provider: openrouter
-    context_window: 8192
+    context_window: 131072
+
+  - id: "openrouter/minimax/minimax-m2.5"
+    display_name: "💲 MiniMax M2.5 (1M ctx)"
+    tier: cheap
+    provider: openrouter
+    context_window: 1000000
+
+  # ── Medium ────────────────────────────────────────────────────────────────
+  - id: "openrouter/moonshotai/kimi-k2.5"
+    display_name: "🌙 Kimi K2.5"
+    tier: medium
+    provider: openrouter
+    context_window: 131072
+
+  - id: "openrouter/google/gemini-2.5-flash-preview"
+    display_name: "✨ Gemini 2.5 Flash (1M ctx)"
+    tier: medium
+    provider: openrouter
+    context_window: 1048576
+
+  # ── Premium ───────────────────────────────────────────────────────────────
+  - id: "openrouter/z-ai/glm-5-turbo"
+    display_name: "⚡ GLM-5 Turbo"
+    tier: premium
+    provider: openrouter
+    context_window: 128000
+
+  - id: "openrouter/anthropic/claude-sonnet-4-5"
+    display_name: "🎯 Claude Sonnet 4.5"
+    tier: premium
+    provider: openrouter
+    context_window: 200000
+
+  - id: "openrouter/openai/gpt-4.5-preview"
+    display_name: "🏆 GPT-4.5 Preview"
+    tier: premium
+    provider: openrouter
+    context_window: 128000
 
 
 # Fallback Strategy
@@ -103,25 +161,17 @@ fallback_strategy:
   rate_limit_wait_seconds: 60
 
 
-# Default fallback chain
+# Default fallback chain: free → cheap only
+# Medium and premium are NEVER used as automatic fallback — only by explicit user choice
 default_fallback_chain:
-  - provider: openrouter
-    model: "openrouter/anthropic/claude-3.5-sonnet"
-
-  - provider: openrouter
-    model: "openrouter/openai/gpt-4-turbo"
-
-  - provider: aitunnel
-    model: "gpt-4-turbo"
-
-  - provider: openrouter
-    model: "openrouter/openai/gpt-4o-mini"
-
   - provider: openrouter
     model: "openrouter/stepfun/step-3.5-flash:free"
 
   - provider: openrouter
-    model: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+    model: "openrouter/meta-llama/llama-3.3-70b-instruct"
+
+  - provider: openrouter
+    model: "openrouter/minimax/minimax-m2.5"
 
 
 # Cheap models for automatic fallback on token limit
@@ -130,10 +180,10 @@ cheap_models:
     model: "openrouter/stepfun/step-3.5-flash:free"
 
   - provider: openrouter
-    model: "openrouter/openai/gpt-4o-mini"
+    model: "openrouter/meta-llama/llama-3.3-70b-instruct"
 
   - provider: openrouter
-    model: "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+    model: "openrouter/minimax/minimax-m2.5"
 
 
 # Token limits
@@ -213,14 +263,14 @@ skills:
 
 
 # Heartbeat — proactive agent messaging
-# The agent wakes up on schedule, reads HEARTBEAT.md, and messages the user if needed.
+# Always uses the free model regardless of the user's active chat model
 heartbeat:
-  enabled: true                  # proactive agent messages are active
-  every_minutes: 5               # how often to run (minimum 5)
-  model: "openrouter/stepfun/step-3.5-flash:free"   # always use this model (free, ignores chat model)
-  active_hours_start: "09:00"    # local time — don't run before this hour
-  active_hours_end: "23:00"      # local time — don't run after this hour
-  target_user_id: ${TELEGRAM_USER_ID}   # Telegram user_id to send proactive messages to
+  enabled: true
+  every_minutes: 5
+  model: "openrouter/stepfun/step-3.5-flash:free"
+  active_hours_start: "09:00"    # local server time
+  active_hours_end: "23:00"
+  target_user_id: ${TELEGRAM_USER_ID}
 
 
 # Embeddings configuration for Qdrant
