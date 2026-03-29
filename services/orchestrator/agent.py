@@ -124,10 +124,37 @@ def build_messages_for_llm(
     return messages
 
 
+# Matches any namespaced XML wrapper: <prefix:anytag>...</prefix:anytag>
+# Uses backreference so the closing tag must match the opening tag.
+# Handles both <model:tool_call> and <model:toolcall> variants.
 _XML_TOOL_CALL_RE = re.compile(
-    r"<[a-zA-Z0-9_-]+:tool_call>(.*?)</[a-zA-Z0-9_-]+:tool_call>",
+    r"<([a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)>(.*?)</\1>",
     re.DOTALL,
 )
+
+# Canonical tool name lookup by normalized (no-underscore lowercase) key.
+# Some models (minimax) strip underscores from tool names in XML.
+_TOOL_NAME_CANONICAL: dict[str, str] = {
+    "websearch": "web_search",
+    "fetchurl": "fetch_url",
+    "executecommand": "execute_command",
+    "workspaceread": "workspace_read",
+    "workspacewrite": "workspace_write",
+    "renamechat": "rename_chat",
+    "savetomemory": "save_to_memory",
+    "delegatetoagent": "delegate_to_agent",
+    "getagentresult": "get_agent_result",
+    "cancelagenttask": "cancel_agent_task",
+    "listagentasks": "list_agent_tasks",
+    "listagettasks": "list_agent_tasks",
+    "listmakenttasks": "list_agent_tasks",
+    "readagentlogs": "read_agent_logs",
+}
+
+
+def _normalize_tool_name(name: str) -> str:
+    """Return canonical tool name; corrects de-underscored variants from some LLMs."""
+    return _TOOL_NAME_CANONICAL.get(name.replace("_", "").lower(), name)
 
 
 def _parse_xml_tool_calls(content: str) -> list[dict] | None:
@@ -135,12 +162,11 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
     Parse XML-format tool calls that some models (e.g. minimax) embed in message text
     instead of using the standard tool_calls field.
 
-    Supported format:
-        <model:tool_call>
-          <invoke name="tool_name">
-            <parameter name="param1">value1</parameter>
-          </invoke>
-        </model:tool_call>
+    Handles multiple wrapper tag formats:
+      <model:tool_call>  — with underscore
+      <model:toolcall>   — without underscore (minimax variant)
+
+    Tool names are normalized: readagentlogs → read_agent_logs, etc.
 
     Returns a list of OpenAI-style tool call dicts, or None if nothing parseable found.
     """
@@ -149,20 +175,22 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
         return None
 
     tool_calls: list[dict] = []
-    for block in matches:
+    for _tag, block in matches:
         try:
             root = ET.fromstring(f"<root>{block}</root>")
         except ET.ParseError:
             continue
         for invoke in root.findall("invoke"):
-            name = invoke.get("name", "").strip()
-            if not name:
+            raw_name = invoke.get("name", "").strip()
+            if not raw_name:
                 continue
+            name = _normalize_tool_name(raw_name)
             params: dict[str, Any] = {}
             for param in invoke.findall("parameter"):
                 pname = param.get("name", "").strip()
                 if pname:
-                    params[pname] = (param.text or "").strip()
+                    # Also normalize parameter names
+                    params[_normalize_tool_name(pname)] = (param.text or "").strip()
             tool_calls.append(
                 {
                     "id": f"call_{uuid4().hex[:8]}",
@@ -560,7 +588,7 @@ class OrchestratorAgent:
             )
 
             for tc in tool_calls:
-                tool_name = tc.get("function", {}).get("name", "")
+                tool_name = _normalize_tool_name(tc.get("function", {}).get("name", ""))
                 try:
                     args_raw = tc.get("function", {}).get("arguments", "{}")
                     args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
@@ -838,7 +866,11 @@ class OrchestratorAgent:
         """
         Poll the current state of a background task.
         Returns: {status, events (drained), result (if finished), finished_at}
-        consume_result=True pops the result from _background_results (used by monitor on delivery).
+
+        The result is NEVER popped here — the monitor only reads it.
+        get_background_result() (used by the orchestrator tool) is responsible
+        for consuming it when the user explicitly asks via get_agent_result.
+        The consume_result parameter is kept for API compatibility but ignored.
         """
         key = f"{user_id}:{agent_id}"
 
@@ -867,10 +899,8 @@ class OrchestratorAgent:
         result_text: str | None = None
         finished_at: str | None = None
         if status != "running":
-            if consume_result:
-                bg_res = self._background_results.pop(key, None)
-            else:
-                bg_res = self._background_results.get(key)
+            # Always just peek — never pop here so get_agent_result still works
+            bg_res = self._background_results.get(key)
             if bg_res:
                 result_text = bg_res.get("result")
                 finished_at = bg_res.get("timestamp")

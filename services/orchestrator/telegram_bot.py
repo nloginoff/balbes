@@ -1349,6 +1349,11 @@ class BalbesTelegramBot:
                     status_label = final_data.get("status", current_status)
                     finished_at = (final_data.get("finished_at") or "")[:16].replace("T", " ")
 
+                    # Don't relay the internal fallback text — it's not a real result
+                    _fallback = "Не смог обработать запрос."
+                    if result_text.startswith(_fallback):
+                        result_text = ""
+
                     if status_label == "completed":
                         header = f"✅ <b>[{agent_id}]</b> завершил задачу"
                     elif status_label == "cancelled":
@@ -1358,6 +1363,8 @@ class BalbesTelegramBot:
 
                     if finished_at:
                         header += f" <i>({finished_at})</i>"
+                    if not result_text and status_label == "completed":
+                        header += " <i>(результат в логах)</i>"
 
                     try:
                         await self.app.bot.send_message(tg_chat_id, header, parse_mode="HTML")
