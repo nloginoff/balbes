@@ -377,6 +377,8 @@ class BalbesTelegramBot:
         self.app.add_handler(CommandHandler("remember", self.cmd_remember))
         self.app.add_handler(CommandHandler("recall", self.cmd_recall))
         self.app.add_handler(CommandHandler("heartbeat", self.cmd_heartbeat))
+        self.app.add_handler(CommandHandler("debug", self.cmd_debug))
+        self.app.add_handler(CommandHandler("mode", self.cmd_mode))
 
         # Inline keyboard callbacks
         self.app.add_handler(
@@ -392,6 +394,7 @@ class BalbesTelegramBot:
             CallbackQueryHandler(self.cb_new_chat, pattern=f"^{CALLBACK_NEW_CHAT}$")
         )
         self.app.add_handler(CallbackQueryHandler(self.cb_model_unavail, pattern="^model_unavail:"))
+        self.app.add_handler(CallbackQueryHandler(self.cb_mode_set, pattern="^mode_set:"))
 
         # Voice messages
         self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice))
@@ -413,6 +416,8 @@ class BalbesTelegramBot:
             BotCommand("remember", "Сохранить в долгосрочную память"),
             BotCommand("recall", "Найти в долгосрочной памяти"),
             BotCommand("heartbeat", "Запустить проверку прямо сейчас"),
+            BotCommand("debug", "🔍 Включить/выключить трейс действий"),
+            BotCommand("mode", "🤖 Режим: agent (exec) / 📝 ask (только чтение)"),
             BotCommand("status", "Статус системы"),
         ]
         await app.bot.set_my_commands(commands)
@@ -543,6 +548,56 @@ class BalbesTelegramBot:
             if a.get("id") == aid:
                 return a.get("emoji", "🤖"), a.get("display_name", aid)
         return "🤖", aid
+
+    async def _get_chat_settings(self, user_id: str, chat_id: str) -> dict:
+        """Return {debug: bool, mode: str} for a chat."""
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{user_id}/{chat_id}/settings"
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.debug(f"get_chat_settings error: {e}")
+        return {"debug": False, "mode": "agent"}
+
+    async def _set_chat_settings(self, user_id: str, chat_id: str, **kwargs) -> bool:
+        """Update per-chat settings (debug=, mode=)."""
+        try:
+            r = await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{user_id}/{chat_id}/settings",
+                json={k: v for k, v in kwargs.items() if v is not None},
+            )
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug(f"set_chat_settings error: {e}")
+        return False
+
+    @staticmethod
+    def _format_debug_trace(debug_events: list[dict], duration_ms: float) -> str:
+        """Format orchestrator debug events into a compact readable trace."""
+        if not debug_events:
+            return ""
+        lines = ["⚙️ *Трейс выполнения:*"]
+        for ev in debug_events:
+            t = ev.get("type")
+            if t == "llm":
+                model = ev.get("model", "?")
+                rnd = ev.get("round", "?")
+                lines.append(f"  🤔 LLM раунд {rnd} → `{model}`")
+            elif t == "tool_start":
+                name = ev.get("name", "?")
+                summary = ev.get("summary", "")
+                lines.append(f"  🔧 `{name}` ← {summary}")
+            elif t == "tool_done":
+                name = ev.get("name", "?")
+                ok = ev.get("ok", True)
+                summary = ev.get("summary", "")
+                ms = ev.get("ms", 0)
+                icon = "✅" if ok else "❌"
+                lines.append(f"     {icon} → {summary} _({ms}ms)_")
+        lines.append(f"  ⏱ Итого: _{duration_ms:.0f}ms_")
+        return "\n".join(lines)
 
     # -------------------------------------------------------------------------
     # Commands
@@ -878,6 +933,85 @@ class BalbesTelegramBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка heartbeat: {e}")
 
+    async def cmd_debug(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Toggle debug trace mode for the current chat."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        chat_id = await self._get_active_chat(user_id)
+        if not chat_id:
+            await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
+            return
+
+        current = await self._get_chat_settings(user_id, chat_id)
+        new_debug = not current.get("debug", False)
+        await self._set_chat_settings(user_id, chat_id, debug=new_debug)
+
+        if new_debug:
+            await update.message.reply_text(
+                "🔍 *Debug включён*\n"
+                "После каждого ответа я буду показывать что делал:\n"
+                "LLM-запросы, инструменты, время выполнения.\n\n"
+                "Отключить: /debug",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text("🔕 Debug выключен")
+
+    async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show current execution mode and offer to switch between agent/ask."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        chat_id = await self._get_active_chat(user_id)
+        if not chat_id:
+            await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
+            return
+
+        current = await self._get_chat_settings(user_id, chat_id)
+        mode = current.get("mode", "agent")
+
+        mode_text = {
+            "agent": "🤖 *Agent* — агент может выполнять команды на сервере",
+            "ask": "📝 *Ask* — агент только пишет и советует, без выполнения команд",
+        }.get(mode, mode)
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🤖 Agent", callback_data="mode_set:agent"),
+                    InlineKeyboardButton("📝 Ask", callback_data="mode_set:ask"),
+                ]
+            ]
+        )
+        await update.message.reply_text(
+            f"Текущий режим: {mode_text}\n\nВыбери режим:",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+    async def cb_mode_set(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle mode selection callback."""
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user:
+            return
+
+        new_mode = query.data.split(":", 1)[1]  # "mode_set:agent" → "agent"
+        user_id = str(user.id)
+        chat_id = await self._get_active_chat(user_id)
+        if not chat_id:
+            return
+
+        await self._set_chat_settings(user_id, chat_id, mode=new_mode)
+
+        labels = {"agent": "🤖 Agent — команды разрешены", "ask": "📝 Ask — только чтение"}
+        label = labels.get(new_mode, new_mode)
+        await query.edit_message_text(f"✅ Режим переключён: {label}")
+
     async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Cancel the currently running agent task for this user."""
         user: User | None = update.effective_user
@@ -1165,8 +1299,18 @@ class BalbesTelegramBot:
                 if chat_tg:
                     typing_task = asyncio.create_task(typing_loop())
 
+                # Load per-chat settings (debug, mode)
+                chat_settings = {"debug": False, "mode": "agent"}
+                if chat_id:
+                    chat_settings = await self._get_chat_settings(str(user.id), chat_id)
+
                 # Send to orchestrator
-                params = {"user_id": str(user.id), "description": text}
+                params = {
+                    "user_id": str(user.id),
+                    "description": text,
+                    "debug": chat_settings.get("debug", False),
+                    "mode": chat_settings.get("mode", "agent"),
+                }
                 if chat_id:
                     params["chat_id"] = chat_id
                     agent_id = await self._get_chat_agent(str(user.id), chat_id)
@@ -1192,6 +1336,17 @@ class BalbesTelegramBot:
                             result_text = str(payload).strip()
                         if not result_text:
                             result_text = "Готово."
+
+                        # Send debug trace before the main response
+                        debug_events = result.get("debug_events")
+                        if debug_events:
+                            duration_ms = result.get("duration_ms", 0)
+                            trace = self._format_debug_trace(debug_events, duration_ms)
+                            if trace:
+                                try:
+                                    await message.reply_text(trace, parse_mode="Markdown")
+                                except Exception:
+                                    await message.reply_text(trace)
                     else:
                         error = result.get("error", "")
                         # Check if it's a model unavailability error

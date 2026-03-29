@@ -20,7 +20,7 @@ from uuid import uuid4
 import httpx
 import tiktoken
 from agent_logger import AgentActivityLogger
-from tools import AVAILABLE_TOOLS, ToolDispatcher
+from tools import AVAILABLE_TOOLS, ToolDispatcher, get_tools_for_mode
 from workspace import AgentWorkspace
 
 from shared.config import get_settings
@@ -267,6 +267,15 @@ class OrchestratorAgent:
             # Save user message to history
             await self._save_to_history(user_id, chat_id, "user", description)
 
+            ctx = context or {}
+            debug: bool = ctx.get("debug", False)
+            mode: str = ctx.get("mode", "agent")
+
+            # Attach debug collector to tool dispatcher for this task
+            debug_events: list[dict] = []
+            if self.tool_dispatcher:
+                self.tool_dispatcher.set_debug_collector(debug_events if debug else None)
+
             # Run LLM with tool call loop
             response_text, model_used = await self._run_llm_with_tools(
                 messages=messages,
@@ -274,9 +283,15 @@ class OrchestratorAgent:
                 user_id=user_id,
                 chat_id=chat_id,
                 task_id=task_id,
-                source=context.get("source", "user") if context else "user",
+                source=ctx.get("source", "user"),
                 agent_id=effective_agent_id,
+                debug_events=debug_events if debug else None,
+                mode=mode,
             )
+
+            # Detach debug collector
+            if self.tool_dispatcher:
+                self.tool_dispatcher.set_debug_collector(None)
 
             # Save assistant response to history
             await self._save_to_history(user_id, chat_id, "assistant", response_text)
@@ -284,7 +299,7 @@ class OrchestratorAgent:
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             logger.info(f"[{task_id}] Done in {duration_ms:.0f}ms using {model_used}")
 
-            return {
+            result: dict[str, Any] = {
                 "task_id": task_id,
                 "status": "success",
                 "result": {"output": response_text},
@@ -293,6 +308,9 @@ class OrchestratorAgent:
                 "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
+            if debug and debug_events:
+                result["debug_events"] = debug_events
+            return result
 
         except Exception as e:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
@@ -319,10 +337,15 @@ class OrchestratorAgent:
         task_id: str,
         source: str = "user",
         agent_id: str | None = None,
+        debug_events: list[dict] | None = None,
+        mode: str = "agent",
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
         Returns (response_text, model_id_used).
+
+        debug_events: if provided, LLM round events are appended here
+        mode: "agent" = all tools; "ask" = execute_command + workspace_write blocked
         """
         model_used = model_id
         tool_context = {
@@ -333,17 +356,30 @@ class OrchestratorAgent:
             "openrouter_api_key": settings.openrouter_api_key,
             "source": source,
         }
+        available_tools = get_tools_for_mode(mode)
 
         for round_num in range(MAX_TOOL_CALL_ROUNDS):
             # Check if user issued /stop between rounds
             if self._is_cancelled(user_id):
                 logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
                 return "✋ Выполнение остановлено по команде /stop", model_used
+
+            # Debug: record LLM round
+            if debug_events is not None:
+                debug_events.append(
+                    {
+                        "type": "llm",
+                        "round": round_num + 1,
+                        "model": self._to_openrouter_id(model_id),
+                    }
+                )
+
             response_data, model_used, llm_error = await self._call_llm(
                 messages=messages,
                 model_id=model_id,
                 with_tools=True,
                 agent_id=agent_id,
+                available_tools=available_tools,
             )
 
             if response_data is None:
@@ -398,6 +434,7 @@ class OrchestratorAgent:
             model_id=model_id,
             with_tools=False,
             agent_id=agent_id,
+            available_tools=available_tools,
         )
         if response_data:
             text = (
@@ -412,6 +449,7 @@ class OrchestratorAgent:
         model_id: str,
         with_tools: bool = True,
         agent_id: str | None = None,
+        available_tools: list[dict] | None = None,
     ) -> tuple[dict[str, Any] | None, str, str]:
         """
         Call LLM API, optionally trying a fallback chain.
@@ -435,7 +473,8 @@ class OrchestratorAgent:
                     "temperature": 0.4,
                 }
                 if with_tools and self.tool_dispatcher:
-                    payload["tools"] = AVAILABLE_TOOLS
+                    tools_list = available_tools if available_tools is not None else AVAILABLE_TOOLS
+                    payload["tools"] = tools_list
                     payload["tool_choice"] = "auto"
 
                 response = await self.http_client.post(

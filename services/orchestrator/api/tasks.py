@@ -19,6 +19,8 @@ async def create_task(
     agent_id: str | None = None,
     model_id: str | None = None,
     source: str = "user",
+    debug: bool = False,
+    mode: str = "agent",
 ) -> dict:
     """
     Create and execute a task within a chat session.
@@ -30,6 +32,8 @@ async def create_task(
         agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
         model_id: Override model for this task (e.g. heartbeat uses a fixed free model).
         source: Origin of the task — "user" | "heartbeat" (used for activity log tagging).
+        debug: If true, collect execution trace events and return them in response.
+        mode: "agent" (all tools) | "ask" (no exec/write tools — read-only).
     """
     import main as orchestrator_main
 
@@ -46,7 +50,7 @@ async def create_task(
             chat_id=chat_id,
             agent_id=agent_id,
             model_id=model_id,
-            context={"source": source},
+            context={"source": source, "debug": debug, "mode": mode},
         )
         return result
 

@@ -207,6 +207,38 @@ async def set_chat_agent(
     return {"status": "ok", "agent_id": request.agent_id}
 
 
+@router.get("/chats/{user_id}/{chat_id}/settings")
+async def get_chat_settings(user_id: str, chat_id: str) -> dict[str, Any]:
+    """Get per-chat settings: debug mode and agent/ask mode."""
+    redis_client = _get_redis()
+    return await redis_client.get_chat_settings(user_id=user_id, chat_id=chat_id)
+
+
+class UpdateSettingsRequest(BaseModel):
+    debug: bool | None = Field(default=None, description="Enable debug trace in chat")
+    mode: str | None = Field(
+        default=None, description="Execution mode: 'agent' (exec enabled) or 'ask' (read-only)"
+    )
+
+
+@router.put("/chats/{user_id}/{chat_id}/settings")
+async def update_chat_settings(
+    user_id: str,
+    chat_id: str,
+    request: UpdateSettingsRequest,
+) -> dict[str, Any]:
+    """Update per-chat settings (debug and/or mode)."""
+    redis_client = _get_redis()
+    await redis_client.set_chat_settings(
+        user_id=user_id,
+        chat_id=chat_id,
+        debug=request.debug,
+        mode=request.mode,
+    )
+    settings = await redis_client.get_chat_settings(user_id=user_id, chat_id=chat_id)
+    return {"status": "ok", **settings}
+
+
 # ---------------------------------------------------------------------------
 # Legacy endpoints  /history/{agent_id}
 # ---------------------------------------------------------------------------

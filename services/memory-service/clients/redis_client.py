@@ -209,6 +209,8 @@ class RedisClient:
                         "name": meta.get("name", name),
                         "model_id": meta.get("model_id", ""),
                         "agent_id": meta.get("agent_id", "orchestrator"),
+                        "debug": meta.get("debug", "false") == "true",
+                        "mode": meta.get("mode", "agent"),
                         "created_at": meta.get("created_at", ""),
                         "last_used_at": meta.get("last_used_at", ""),
                     }
@@ -311,6 +313,39 @@ class RedisClient:
         pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
         await pipe.execute()
         logger.info(f"Set agent {agent_id} for chat {chat_id} / user {user_id}")
+
+    async def get_chat_settings(self, user_id: str, chat_id: str) -> dict[str, Any]:
+        """Return per-chat settings: debug mode and agent/ask mode."""
+        if not self.client:
+            raise MemoryRetrievalError("Redis client not connected")
+        meta = await self.client.hgetall(self._chat_meta_key(user_id, chat_id))
+        return {
+            "debug": meta.get("debug", "false") == "true",
+            "mode": meta.get("mode", "agent"),
+        }
+
+    async def set_chat_settings(
+        self,
+        user_id: str,
+        chat_id: str,
+        debug: bool | None = None,
+        mode: str | None = None,
+    ) -> None:
+        """Update per-chat settings (debug and/or mode)."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        updates: dict[str, str] = {}
+        if debug is not None:
+            updates["debug"] = "true" if debug else "false"
+        if mode is not None:
+            updates["mode"] = mode
+        if not updates:
+            return
+        pipe = self.client.pipeline()
+        pipe.hset(self._chat_meta_key(user_id, chat_id), mapping=updates)
+        pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
+        await pipe.execute()
+        logger.info(f"Updated settings {updates} for chat {chat_id} / user {user_id}")
 
     async def add_to_chat_history(
         self,

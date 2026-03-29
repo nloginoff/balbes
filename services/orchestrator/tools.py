@@ -222,6 +222,21 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
 # ---------------------------------------------------------------------------
 
 
+def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
+    """
+    Return the list of available tool schemas for the given execution mode.
+
+    - "agent" (default): all tools enabled
+    - "ask": read-only — execute_command and workspace_write are removed.
+      The agent can search, read files and workspace, but cannot run server
+      commands or modify files.
+    """
+    if mode == "ask":
+        blocked = {"execute_command", "workspace_write"}
+        return [t for t in AVAILABLE_TOOLS if t["function"]["name"] not in blocked]
+    return AVAILABLE_TOOLS
+
+
 class ToolDispatcher:
     """
     Dispatches tool call requests to the appropriate skill implementation.
@@ -240,10 +255,15 @@ class ToolDispatcher:
         self.http_client = http_client
         self.providers_config = providers_config
         self._logger = activity_logger  # AgentActivityLogger | None
+        self._debug_collector: list[dict] | None = None  # set per-task when debug=True
 
         # Lazy-loaded skill instances
         self._web_search = None
         self._server_commands = None
+
+    def set_debug_collector(self, collector: list[dict] | None) -> None:
+        """Attach (or detach) a debug event list for the current task."""
+        self._debug_collector = collector
 
     async def dispatch(
         self,
@@ -259,6 +279,16 @@ class ToolDispatcher:
         t0 = time.monotonic()
         success = True
         result = ""
+
+        # Emit "tool started" debug event
+        if self._debug_collector is not None:
+            self._debug_collector.append(
+                {
+                    "type": "tool_start",
+                    "name": tool_name,
+                    "summary": _summarize_input(tool_name, tool_args),
+                }
+            )
 
         try:
             if tool_name == "web_search":
@@ -297,6 +327,18 @@ class ToolDispatcher:
         finally:
             duration_ms = (time.monotonic() - t0) * 1000
             self._log(tool_name, tool_args, result, duration_ms, success, context)
+
+            # Emit "tool done" debug event
+            if self._debug_collector is not None:
+                self._debug_collector.append(
+                    {
+                        "type": "tool_done",
+                        "name": tool_name,
+                        "ok": success,
+                        "summary": _summarize_result(result),
+                        "ms": round(duration_ms),
+                    }
+                )
 
         return result
 
