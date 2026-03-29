@@ -305,10 +305,17 @@ class BalbesTelegramBot:
 
         result = response.json()
         if result.get("status") != "success":
+            err = result.get("error", "")
+            logger.warning(f"Heartbeat: task failed — {err}")
             return
 
         payload = result.get("result", {})
         text = str(payload.get("output") or payload.get("result") or "").strip()
+
+        # Suppress error messages — LLM unavailability should not reach the user
+        if text.startswith("❌"):
+            logger.warning(f"Heartbeat: suppressed error output — {text[:120]}")
+            return
 
         # Suppress HEARTBEAT_OK responses
         stripped = text.strip()

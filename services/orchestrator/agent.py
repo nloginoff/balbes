@@ -23,6 +23,11 @@ from agent_logger import AgentActivityLogger
 from tools import AVAILABLE_TOOLS, ToolDispatcher, get_tools_for_mode
 from workspace import AgentWorkspace
 
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when the LLM API is unreachable or returns a non-retryable error."""
+
+
 from shared.config import get_settings
 
 settings = get_settings()
@@ -312,6 +317,18 @@ class OrchestratorAgent:
                 result["debug_events"] = debug_events
             return result
 
+        except LLMUnavailableError as e:
+            # Model returned 4xx/5xx — not a code bug, log as warning only
+            logger.warning(f"[{task_id}] LLM unavailable: {e}")
+            duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            return {
+                "task_id": task_id,
+                "status": "failed",
+                "error": f"❌ Модель недоступна\n`{e}`",
+                "chat_id": chat_id,
+                "duration_ms": duration_ms,
+            }
+
         except Exception as e:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
@@ -383,8 +400,7 @@ class OrchestratorAgent:
             )
 
             if response_data is None:
-                err_msg = f"❌ Модель недоступна\n`{llm_error}`"
-                return err_msg, model_used
+                raise LLMUnavailableError(llm_error)
 
             choice = response_data.get("choices", [{}])[0]
             message = choice.get("message", {})
@@ -441,7 +457,7 @@ class OrchestratorAgent:
                 response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             )
             return text or self._fallback_text(), model_used
-        return f"❌ Модель недоступна\n`{llm_error}`", model_used
+        raise LLMUnavailableError(llm_error)
 
     async def _call_llm(
         self,
