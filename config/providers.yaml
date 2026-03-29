@@ -93,7 +93,11 @@ agents:
     description: "Основной интеллектуальный ассистент"
     emoji: "🤖"
 
-    # Fallback chain for this agent (free → cheap only)
+    # If false (default): use only the selected model; on error show the actual
+    # API error to the user. If true: silently try models in fallback_chain.
+    fallback_enabled: false
+
+    # Fallback chain (only used when fallback_enabled: true)
     fallback_chain:
       - "openrouter/stepfun/step-3.5-flash:free"
       - "openrouter/meta-llama/llama-3.3-70b-instruct"
@@ -124,7 +128,9 @@ agents:
     description: "Специалист по написанию и анализу кода"
     emoji: "💻"
 
-    # Coder gets medium models as fallback for better code quality
+    fallback_enabled: false
+
+    # Fallback chain (only used when fallback_enabled: true)
     fallback_chain:
       - "openrouter/stepfun/step-3.5-flash:free"
       - "openrouter/moonshotai/kimi-k2.5"

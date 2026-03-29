@@ -339,7 +339,7 @@ class OrchestratorAgent:
             if self._is_cancelled(user_id):
                 logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
                 return "✋ Выполнение остановлено по команде /stop", model_used
-            response_data, model_used = await self._call_llm(
+            response_data, model_used, llm_error = await self._call_llm(
                 messages=messages,
                 model_id=model_id,
                 with_tools=True,
@@ -347,7 +347,8 @@ class OrchestratorAgent:
             )
 
             if response_data is None:
-                return self._fallback_text(), model_used
+                err_msg = f"❌ Модель недоступна\n`{llm_error}`"
+                return err_msg, model_used
 
             choice = response_data.get("choices", [{}])[0]
             message = choice.get("message", {})
@@ -392,7 +393,7 @@ class OrchestratorAgent:
             logger.debug(f"[{task_id}] Tool round {round_num + 1} complete, continuing LLM")
 
         # Exceeded rounds — get final response without tools
-        response_data, model_used = await self._call_llm(
+        response_data, model_used, llm_error = await self._call_llm(
             messages=messages,
             model_id=model_id,
             with_tools=False,
@@ -403,7 +404,7 @@ class OrchestratorAgent:
                 response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             )
             return text or self._fallback_text(), model_used
-        return self._fallback_text(), model_used
+        return f"❌ Модель недоступна\n`{llm_error}`", model_used
 
     async def _call_llm(
         self,
@@ -411,15 +412,19 @@ class OrchestratorAgent:
         model_id: str,
         with_tools: bool = True,
         agent_id: str | None = None,
-    ) -> tuple[dict[str, Any] | None, str]:
+    ) -> tuple[dict[str, Any] | None, str, str]:
         """
-        Call LLM API with fallback chain.
-        Returns (response_json, model_id_used).
+        Call LLM API, optionally trying a fallback chain.
+
+        Returns (response_json, model_id_used, error_message).
+          - On success: (data, candidate, "")
+          - On failure: (None, model_id, human-readable error from API)
         """
         if not self.http_client or not settings.openrouter_api_key:
-            return None, model_id
+            return None, model_id, "API key not configured"
 
         candidates = self._get_model_candidates(model_id, agent_id=agent_id)
+        last_error = "No response from API"
 
         for candidate in candidates:
             openrouter_model = self._to_openrouter_id(candidate)
@@ -443,24 +448,37 @@ class OrchestratorAgent:
                 )
 
                 if response.status_code == 200:
-                    return response.json(), candidate
+                    return response.json(), candidate, ""
 
+                # Extract the actual error message from the API response
+                last_error = self._extract_api_error(response, candidate)
+                logger.warning(f"LLM error on {candidate}: {last_error}")
+
+                # Retriable errors — try next candidate if fallback enabled
                 if response.status_code in (429, 500, 502, 503, 504):
-                    logger.warning(
-                        f"Model {candidate} returned {response.status_code}, trying next"
-                    )
                     continue
 
-                logger.warning(
-                    f"LLM error on {candidate}: {response.status_code} {response.text[:200]}"
-                )
+                # Non-retriable error — stop immediately
                 break
 
             except Exception as e:
-                logger.warning(f"LLM call failed on {candidate}: {e}")
+                last_error = f"{type(e).__name__}: {e or '(no detail)'}"
+                logger.warning(f"LLM call failed on {candidate}: {last_error}")
                 continue
 
-        return None, model_id
+        return None, model_id, last_error
+
+    @staticmethod
+    def _extract_api_error(response, model_id: str) -> str:
+        """Parse a human-readable error from an OpenRouter error response."""
+        status = response.status_code
+        try:
+            body = response.json()
+            err = body.get("error", {})
+            msg = err.get("message") or err.get("msg") or body.get("message") or response.text[:300]
+        except Exception:
+            msg = response.text[:300] or "(empty response)"
+        return f"HTTP {status} ({model_id}): {msg}"
 
     # -------------------------------------------------------------------------
     # Model helpers
@@ -490,26 +508,32 @@ class OrchestratorAgent:
         self, primary_model_id: str, agent_id: str | None = None
     ) -> list[str]:
         """
-        Return ordered fallback chain starting from primary model.
+        Return ordered list of models to try.
 
-        Lookup order:
-          1. Per-agent fallback_chain from providers.yaml (if agent_id given)
-          2. Global default_fallback_chain
-          3. CHAT_FALLBACK_MODELS env var
+        If the agent has fallback_enabled: false (default) → returns only
+        [primary_model_id]. The caller will surface the error directly to the user.
+
+        If fallback_enabled: true → builds chain from per-agent fallback_chain
+        (or global default_fallback_chain), then appends CHAT_FALLBACK_MODELS env.
         """
         cfg = get_providers_config()
 
-        # Try per-agent chain first
-        agent_chain: list[str] = []
+        # Find agent config
+        agent_cfg: dict = {}
         if agent_id:
             for a in cfg.get("agents", []):
-                if a.get("id") == agent_id and "fallback_chain" in a:
-                    agent_chain = a["fallback_chain"]
+                if a.get("id") == agent_id:
+                    agent_cfg = a
                     break
 
-        global_chain = [entry.get("model") for entry in cfg.get("default_fallback_chain", [])]
-        chain = agent_chain if agent_chain else global_chain
+        # Fallback disabled by default — only try the primary model
+        if not agent_cfg.get("fallback_enabled", False):
+            return [primary_model_id]
 
+        # Fallback enabled: build chain
+        chain = agent_cfg.get("fallback_chain") or [
+            e.get("model") for e in cfg.get("default_fallback_chain", [])
+        ]
         candidates: list[str] = []
         for m in [primary_model_id] + chain:
             if m and m not in candidates:
