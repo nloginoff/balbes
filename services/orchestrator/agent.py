@@ -19,6 +19,7 @@ from uuid import uuid4
 
 import httpx
 import tiktoken
+from agent_logger import AgentActivityLogger
 from tools import AVAILABLE_TOOLS, ToolDispatcher
 from workspace import AgentWorkspace
 
@@ -135,6 +136,9 @@ class OrchestratorAgent:
         # Workspace cache: agent_id → AgentWorkspace (lazy-loaded per agent)
         self._workspaces: dict[str, AgentWorkspace] = {}
 
+        # Activity logger cache: agent_id → AgentActivityLogger
+        self._loggers: dict[str, AgentActivityLogger] = {}
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -150,18 +154,26 @@ class OrchestratorAgent:
             self._workspaces[agent_id] = ws
         return self._workspaces[agent_id]
 
+    def _get_activity_logger(self, agent_id: str) -> AgentActivityLogger:
+        """Return cached activity logger for agent, creating on first access."""
+        if agent_id not in self._loggers:
+            self._loggers[agent_id] = AgentActivityLogger(agent_id)
+        return self._loggers[agent_id]
+
     async def connect(self) -> None:
         """Initialize HTTP client, load default workspace, warm up tools."""
         self.http_client = httpx.AsyncClient(timeout=60.0)
 
         # Eagerly load the default orchestrator workspace
         ws = self._get_workspace(self.agent_id)
+        activity_log = self._get_activity_logger(self.agent_id)
 
-        # Initialize tool dispatcher with default workspace
+        # Initialize tool dispatcher with default workspace and logger
         self.tool_dispatcher = ToolDispatcher(
             workspace=ws,
             http_client=self.http_client,
             providers_config=get_providers_config(),
+            activity_logger=activity_log,
         )
 
         logger.info("Orchestrator Agent initialized")
@@ -217,9 +229,15 @@ class OrchestratorAgent:
             if model_id is None:
                 model_id = await self._get_model_for_chat(user_id, chat_id)
 
-            # Load workspace for the selected agent (cached after first use)
+            # Load workspace and activity logger for the selected agent (cached)
             workspace = self._get_workspace(effective_agent_id)
             system_prompt = workspace.config.system_prompt
+            activity_log = self._get_activity_logger(effective_agent_id)
+
+            # Swap dispatcher's workspace and logger to match the active agent
+            if self.tool_dispatcher:
+                self.tool_dispatcher.workspace = workspace
+                self.tool_dispatcher._logger = activity_log
 
             # Build messages array (with adaptive trim)
             messages = build_messages_for_llm(
@@ -239,6 +257,7 @@ class OrchestratorAgent:
                 user_id=user_id,
                 chat_id=chat_id,
                 task_id=task_id,
+                source=context.get("source", "user") if context else "user",
             )
 
             # Save assistant response to history
@@ -279,6 +298,7 @@ class OrchestratorAgent:
         user_id: str,
         chat_id: str,
         task_id: str,
+        source: str = "user",
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
@@ -290,6 +310,7 @@ class OrchestratorAgent:
             "chat_id": chat_id,
             "memory_service_url": self.memory_service_url,
             "openrouter_api_key": settings.openrouter_api_key,
+            "source": source,
         }
 
         for round_num in range(MAX_TOOL_CALL_ROUNDS):
@@ -506,15 +527,16 @@ class OrchestratorAgent:
 
     async def get_agent_status(self) -> dict[str, Any]:
         loaded_workspaces = {aid: ws.list_files() for aid, ws in self._workspaces.items()}
-        # Ensure default agent is always shown
         if self.agent_id not in loaded_workspaces:
             loaded_workspaces[self.agent_id] = []
+        log_dates = {aid: al.list_log_dates()[:7] for aid, al in self._loggers.items()}
         return {
             "agent_id": self.agent_id,
             "status": "online",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "workspace_files": loaded_workspaces.get(self.agent_id, []),
             "workspaces": loaded_workspaces,
+            "activity_logs": log_dates,
             "services": {
                 "memory_service": self.memory_service_url,
                 "skills_registry": self.skills_registry_url,

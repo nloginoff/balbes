@@ -260,6 +260,7 @@ class BalbesTelegramBot:
                 "user_id": user_id,
                 "description": HEARTBEAT_PROMPT,
                 "agent_id": "orchestrator",
+                "source": "heartbeat",
             }
             # Use the heartbeat-specific model if configured, otherwise the chat model
             if cfg.get("model"):

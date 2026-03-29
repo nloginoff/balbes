@@ -3,9 +3,11 @@ Tool registry for the Orchestrator Agent.
 
 Defines OpenAI function-calling compatible tool schemas and
 dispatches tool calls to the appropriate skill implementations.
+Every tool call is automatically logged via AgentActivityLogger.
 """
 
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger("orchestrator.tools")
@@ -168,6 +170,50 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_agent_logs",
+            "description": (
+                "Read the agent's activity logs — all tool and skill calls with timestamps. "
+                "Use when the user asks to show logs, activity, history of commands for a day or period."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": (
+                            "Specific day: 'today', 'yesterday', or 'YYYY-MM-DD'. "
+                            "Omit to use today."
+                        ),
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Start of date range 'YYYY-MM-DD' (use with end_date).",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "End of date range 'YYYY-MM-DD' (inclusive).",
+                    },
+                    "tool_filter": {
+                        "type": "string",
+                        "description": (
+                            "Show only calls to this tool: web_search | fetch_url | "
+                            "execute_command | workspace_read | workspace_write | "
+                            "rename_chat | save_to_memory"
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max entries to return (default 50, max 200).",
+                        "default": 50,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
 ]
 
 
@@ -180,6 +226,7 @@ class ToolDispatcher:
     """
     Dispatches tool call requests to the appropriate skill implementation.
     Instantiated once per agent instance.
+    Every call is automatically logged via AgentActivityLogger.
     """
 
     def __init__(
@@ -187,10 +234,12 @@ class ToolDispatcher:
         workspace=None,
         http_client=None,
         providers_config=None,
+        activity_logger=None,
     ):
         self.workspace = workspace
         self.http_client = http_client
         self.providers_config = providers_config
+        self._logger = activity_logger  # AgentActivityLogger | None
 
         # Lazy-loaded skill instances
         self._web_search = None
@@ -204,37 +253,82 @@ class ToolDispatcher:
     ) -> str:
         """
         Execute a tool and return its result as a string.
-        context may contain: user_id, chat_id, memory_service_url, openrouter_api_key
+        context may contain: user_id, chat_id, memory_service_url, openrouter_api_key, source
         """
         context = context or {}
+        t0 = time.monotonic()
+        success = True
+        result = ""
 
         try:
             if tool_name == "web_search":
-                return await self._do_web_search(tool_args)
+                result = await self._do_web_search(tool_args)
 
-            if tool_name == "fetch_url":
-                return await self._do_fetch_url(tool_args)
+            elif tool_name == "fetch_url":
+                result = await self._do_fetch_url(tool_args)
 
-            if tool_name == "execute_command":
-                return await self._do_execute_command(tool_args, context)
+            elif tool_name == "execute_command":
+                result = await self._do_execute_command(tool_args, context)
 
-            if tool_name == "workspace_read":
-                return self._do_workspace_read(tool_args)
+            elif tool_name == "workspace_read":
+                result = self._do_workspace_read(tool_args)
 
-            if tool_name == "workspace_write":
-                return self._do_workspace_write(tool_args)
+            elif tool_name == "workspace_write":
+                result = self._do_workspace_write(tool_args)
 
-            if tool_name == "rename_chat":
-                return await self._do_rename_chat(tool_args, context)
+            elif tool_name == "rename_chat":
+                result = await self._do_rename_chat(tool_args, context)
 
-            if tool_name == "save_to_memory":
-                return await self._do_save_to_memory(tool_args, context)
+            elif tool_name == "save_to_memory":
+                result = await self._do_save_to_memory(tool_args, context)
 
-            return f"Unknown tool: {tool_name}"
+            elif tool_name == "read_agent_logs":
+                result = self._do_read_agent_logs(tool_args)
+
+            else:
+                result = f"Unknown tool: {tool_name}"
+                success = False
 
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}", exc_info=True)
-            return f"Error executing {tool_name}: {str(e)}"
+            result = f"Error executing {tool_name}: {str(e)}"
+            success = False
+
+        finally:
+            duration_ms = (time.monotonic() - t0) * 1000
+            self._log(tool_name, tool_args, result, duration_ms, success, context)
+
+        return result
+
+    def _log(
+        self,
+        tool_name: str,
+        tool_args: dict,
+        result: str,
+        duration_ms: float,
+        success: bool,
+        context: dict,
+    ) -> None:
+        """Write one entry to the daily activity log."""
+        if not self._logger:
+            return
+        # Don't log read_agent_logs calls (would be recursive noise)
+        if tool_name == "read_agent_logs":
+            return
+
+        input_summary = _summarize_input(tool_name, tool_args)
+        result_summary = _summarize_result(result)
+
+        self._logger.log_tool_call(
+            tool_name=tool_name,
+            input_summary=input_summary,
+            result_summary=result_summary,
+            duration_ms=duration_ms,
+            success=success,
+            user_id=context.get("user_id", ""),
+            chat_id=context.get("chat_id", ""),
+            source=context.get("source", "user"),
+        )
 
     async def _do_web_search(self, args: dict[str, Any]) -> str:
         from skills.web_search import WebSearchSkill
@@ -329,3 +423,68 @@ class ToolDispatcher:
             return f"Saved to long-term memory: {args['text'][:80]}..."
         except Exception as e:
             return f"Failed to save to memory: {e}"
+
+    def _do_read_agent_logs(self, args: dict[str, Any]) -> str:
+        if not self._logger:
+            return "Activity logging is not configured."
+        entries = self._logger.read_logs(
+            date=args.get("date"),
+            start_date=args.get("start_date"),
+            end_date=args.get("end_date"),
+            tool_filter=args.get("tool_filter"),
+            limit=min(int(args.get("limit", 50)), 200),
+        )
+        # Build title
+        if args.get("date"):
+            title = f"Логи за {args['date']}"
+        elif args.get("start_date") or args.get("end_date"):
+            sd = args.get("start_date", "начало")
+            ed = args.get("end_date", "сегодня")
+            title = f"Логи {sd} — {ed}"
+        else:
+            title = "Логи за сегодня"
+        if args.get("tool_filter"):
+            title += f" (фильтр: {args['tool_filter']})"
+
+        available = self._logger.list_log_dates()
+        result = self._logger.format_for_chat(entries, title=title)
+        if available:
+            result += f"\n\n_Доступные даты: {', '.join(available[:10])}_"
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Input / result summary helpers (for compact log lines)
+# ---------------------------------------------------------------------------
+
+
+def _summarize_input(tool_name: str, args: dict) -> str:
+    if tool_name == "web_search":
+        q = args.get("query", "")
+        n = args.get("max_results", 5)
+        return f"query='{q[:60]}' max={n}"
+    if tool_name == "fetch_url":
+        return f"url='{args.get('url', '')[:80]}'"
+    if tool_name == "execute_command":
+        return f"cmd='{args.get('command', '')[:80]}'"
+    if tool_name == "workspace_read":
+        return f"file='{args.get('filename', '')}'"
+    if tool_name == "workspace_write":
+        content_len = len(args.get("content", ""))
+        return f"file='{args.get('filename', '')}' len={content_len}"
+    if tool_name == "rename_chat":
+        return f"name='{args.get('name', '')[:40]}'"
+    if tool_name == "save_to_memory":
+        return f"text='{args.get('text', '')[:60]}'"
+    return str(args)[:80]
+
+
+def _summarize_result(result: str) -> str:
+    result = result.strip()
+    if not result:
+        return "(empty)"
+    # First line only, truncated
+    first_line = result.split("\n")[0]
+    if len(first_line) > 80:
+        return first_line[:77] + "..."
+    return first_line
