@@ -58,6 +58,23 @@ async def create_task(
         )
 
 
+@router.post("/cancel")
+async def cancel_task(user_id: str) -> dict:
+    """
+    Cancel any in-progress task for the given user.
+    The cancellation flag is checked between LLM tool-call rounds.
+    """
+    import main as orchestrator_main
+
+    if not orchestrator_main.orchestrator_agent:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized",
+        )
+    orchestrator_main.orchestrator_agent.cancel_task(user_id)
+    return {"status": "cancel_requested", "user_id": user_id}
+
+
 @router.get("/{task_id}")
 async def get_task(task_id: str) -> dict:
     """Get task status and results."""

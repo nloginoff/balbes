@@ -139,6 +139,9 @@ class OrchestratorAgent:
         # Activity logger cache: agent_id → AgentActivityLogger
         self._loggers: dict[str, AgentActivityLogger] = {}
 
+        # Per-user cancellation flags (set by /stop, cleared at task start)
+        self._cancel_flags: dict[str, bool] = {}
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -159,6 +162,17 @@ class OrchestratorAgent:
         if agent_id not in self._loggers:
             self._loggers[agent_id] = AgentActivityLogger(agent_id)
         return self._loggers[agent_id]
+
+    def cancel_task(self, user_id: str) -> None:
+        """Signal that the current task for user_id should be cancelled."""
+        self._cancel_flags[user_id] = True
+        logger.info(f"Cancel flag set for user {user_id}")
+
+    def _is_cancelled(self, user_id: str) -> bool:
+        return self._cancel_flags.get(user_id, False)
+
+    def _clear_cancel(self, user_id: str) -> None:
+        self._cancel_flags.pop(user_id, None)
 
     async def connect(self) -> None:
         """Initialize HTTP client, load default workspace, warm up tools."""
@@ -211,6 +225,9 @@ class OrchestratorAgent:
         task_id = str(uuid4())
         start_time = datetime.now(timezone.utc)
         effective_agent_id = agent_id or self.agent_id
+
+        # Clear any previous cancel flag for this user at the start of each new task
+        self._clear_cancel(user_id)
 
         try:
             # Resolve chat_id
@@ -314,6 +331,10 @@ class OrchestratorAgent:
         }
 
         for round_num in range(MAX_TOOL_CALL_ROUNDS):
+            # Check if user issued /stop between rounds
+            if self._is_cancelled(user_id):
+                logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
+                return "✋ Выполнение остановлено по команде /stop", model_used
             response_data, model_used = await self._call_llm(
                 messages=messages,
                 model_id=model_id,
@@ -341,6 +362,11 @@ class OrchestratorAgent:
                     args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
                 except json.JSONDecodeError:
                     args = {}
+
+                # Check cancel before each tool call
+                if self._is_cancelled(user_id):
+                    logger.info(f"[{task_id}] Task cancelled before tool {tool_name}")
+                    return "✋ Выполнение остановлено по команде /stop", model_used
 
                 logger.info(f"[{task_id}] Tool call: {tool_name}({list(args.keys())})")
 

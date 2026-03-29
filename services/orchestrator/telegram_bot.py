@@ -182,6 +182,9 @@ class BalbesTelegramBot:
         # Per-chat async locks to prevent concurrent message processing
         self._chat_locks: dict[str, asyncio.Lock] = {}
 
+        # Active processing tasks: user_id → asyncio.Task (for /stop)
+        self._active_tasks: dict[str, asyncio.Task] = {}
+
         # Heartbeat background task
         self._heartbeat_task: asyncio.Task | None = None
 
@@ -196,7 +199,7 @@ class BalbesTelegramBot:
         self.app = (
             Application.builder()
             .token(self.token)
-            .concurrent_updates(False)  # sequential — required for correct state handling
+            .concurrent_updates(True)  # parallel — required for /stop to interrupt processing
             .post_init(_post_init)
             .build()
         )
@@ -315,6 +318,7 @@ class BalbesTelegramBot:
 
         self.app.add_handler(CommandHandler("start", self.cmd_start))
         self.app.add_handler(CommandHandler("help", self.cmd_help))
+        self.app.add_handler(CommandHandler("stop", self.cmd_stop))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("clear", self.cmd_clear))
         self.app.add_handler(CommandHandler("agents", self.cmd_agents))
@@ -351,6 +355,7 @@ class BalbesTelegramBot:
         commands = [
             BotCommand("start", "Начать работу"),
             BotCommand("help", "Справка по командам"),
+            BotCommand("stop", "⛔ Остановить текущее действие агента"),
             BotCommand("agents", "Список агентов / переключить агента"),
             BotCommand("chats", "Список чатов / переключить чат"),
             BotCommand("newchat", "Создать новый чат"),
@@ -817,6 +822,38 @@ class BalbesTelegramBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка heartbeat: {e}")
 
+    async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Cancel the currently running agent task for this user."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+
+        user_id = str(user.id)
+        task = self._active_tasks.get(user_id)
+
+        if not task or task.done():
+            await update.message.reply_text("✅ Нет активных задач для остановки")
+            return
+
+        # Cancel the bot-side asyncio task (interrupts the HTTP wait immediately)
+        task.cancel()
+
+        # Also signal the orchestrator to stop processing between tool rounds
+        await self._cancel_orchestrator_task(user_id)
+
+        await update.message.reply_text("✋ Остановлено")
+
+    async def _cancel_orchestrator_task(self, user_id: str) -> None:
+        """Send a cancel signal to the orchestrator for this user."""
+        try:
+            await self._get_http().post(
+                f"{self.orchestrator_url}/api/v1/tasks/cancel",
+                params={"user_id": user_id},
+                timeout=5.0,
+            )
+        except Exception as e:
+            logger.debug(f"Orchestrator cancel signal failed (non-critical): {e}")
+
     # -------------------------------------------------------------------------
     # Callback handlers
     # -------------------------------------------------------------------------
@@ -949,12 +986,20 @@ class BalbesTelegramBot:
         if not user or not message or not message.text:
             return
 
-        await self._process_user_input(
-            update=update,
-            context=context,
-            user=user,
-            text=message.text,
-        )
+        user_id = str(user.id)
+        self._active_tasks[user_id] = asyncio.current_task()  # type: ignore[assignment]
+        try:
+            await self._process_user_input(
+                update=update,
+                context=context,
+                user=user,
+                text=message.text,
+            )
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await message.reply_text("✋ Выполнение остановлено")
+        finally:
+            self._active_tasks.pop(user_id, None)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle voice / audio messages — transcribe then process as text."""
@@ -962,6 +1007,9 @@ class BalbesTelegramBot:
         message = update.message
         if not user or not message:
             return
+
+        user_id = str(user.id)
+        self._active_tasks[user_id] = asyncio.current_task()  # type: ignore[assignment]
 
         await context.bot.send_chat_action(
             chat_id=update.effective_chat.id, action=ChatAction.TYPING
@@ -1001,6 +1049,9 @@ class BalbesTelegramBot:
                 text=corrected,
             )
 
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await message.reply_text("✋ Выполнение остановлено")
         except RuntimeError as e:
             if "ffmpeg" in str(e).lower():
                 await message.reply_text(
@@ -1017,6 +1068,8 @@ class BalbesTelegramBot:
         except Exception as e:
             logger.error(f"Voice handling failed: {e}", exc_info=True)
             await message.reply_text(f"❌ Ошибка обработки голоса: {e}")
+        finally:
+            self._active_tasks.pop(user_id, None)
 
     async def _process_user_input(
         self,
