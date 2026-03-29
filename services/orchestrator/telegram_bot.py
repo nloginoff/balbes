@@ -434,6 +434,7 @@ class BalbesTelegramBot:
         self.app.add_handler(CommandHandler("heartbeat", self.cmd_heartbeat))
         self.app.add_handler(CommandHandler("debug", self.cmd_debug))
         self.app.add_handler(CommandHandler("mode", self.cmd_mode))
+        self.app.add_handler(CommandHandler("tasks", self.cmd_tasks))
 
         # Inline keyboard callbacks
         self.app.add_handler(
@@ -473,6 +474,7 @@ class BalbesTelegramBot:
             BotCommand("heartbeat", "Запустить проверку прямо сейчас"),
             BotCommand("debug", "🔍 Включить/выключить трейс действий"),
             BotCommand("mode", "🤖 Режим: agent (exec) / 📝 ask (только чтение)"),
+            BotCommand("tasks", "📋 Список задач агентов (реестр)"),
             BotCommand("status", "Статус системы"),
         ]
         await app.bot.set_my_commands(commands)
@@ -1103,6 +1105,57 @@ class BalbesTelegramBot:
         await self._cancel_orchestrator_task(user_id)
 
         await update.message.reply_text("✋ Остановлено")
+
+    async def cmd_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show recent tasks from all agents."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.orchestrator_url}/api/v1/tasks",
+                    params={"user_id": user_id, "limit": 20},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as e:
+            await update.message.reply_text(f"❌ Не удалось получить список задач: {e}")
+            return
+
+        tasks = data.get("tasks", [])
+        if not tasks:
+            await update.message.reply_text("📋 Нет задач в реестре.")
+            return
+
+        STATUS_ICON = {
+            "running": "⏳",
+            "completed": "✅",
+            "cancelled": "🚫",
+            "error": "❌",
+        }
+
+        lines = [f"<b>📋 Задачи проекта</b> ({len(tasks)}):\n"]
+        for t in tasks:
+            icon = STATUS_ICON.get(t.get("status", ""), "❓")
+            agent = t.get("agent_id", "?")
+            status_label = t.get("status", "?")
+            bg_label = " <i>[bg]</i>" if t.get("background") else ""
+            dur = t.get("duration_ms")
+            dur_str = f" <code>{dur}ms</code>" if dur else ""
+            started = (t.get("started_at") or "")[:16].replace("T", " ")
+            desc = (t.get("description") or "")[:90]
+            desc_safe = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(
+                f"{icon} <b>[{agent}]</b>{bg_label} — {status_label}{dur_str}\n"
+                f"   🕐 {started}\n"
+                f"   📝 {desc_safe}\n"
+            )
+
+        text = "\n".join(lines)
+        await update.message.reply_text(text, parse_mode="HTML")
 
     async def _cancel_orchestrator_task(self, user_id: str) -> None:
         """Send a cancel signal to the orchestrator for this user."""

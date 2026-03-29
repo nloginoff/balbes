@@ -79,11 +79,35 @@ async def cancel_task(user_id: str) -> dict:
     return {"status": "cancel_requested", "user_id": user_id}
 
 
+@router.get("")
+async def list_tasks(user_id: str | None = None, limit: int = 20) -> dict:
+    """
+    List recent tasks from the registry.
+    If user_id given, filter to that user. Running tasks appear first.
+    """
+    import main as orchestrator_main
+
+    if not orchestrator_main.orchestrator_agent:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized",
+        )
+    tasks = orchestrator_main.orchestrator_agent.list_tasks(user_id=user_id, limit=limit)
+    return {"tasks": tasks, "count": len(tasks)}
+
+
 @router.get("/{task_id}")
 async def get_task(task_id: str) -> dict:
     """Get task status and results."""
-    return {
-        "task_id": task_id,
-        "status": "completed",
-        "result": "Task result placeholder",
-    }
+    import main as orchestrator_main
+
+    if not orchestrator_main.orchestrator_agent:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized",
+        )
+    agent = orchestrator_main.orchestrator_agent
+    entry = agent._task_registry.get(task_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
+    return entry

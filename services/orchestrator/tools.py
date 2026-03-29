@@ -226,6 +226,29 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "list_agent_tasks",
+            "description": (
+                "Show the list of all recent tasks across all agents — "
+                "running, completed, cancelled, or failed. "
+                "Use when the user asks what is currently happening, "
+                "what agents are doing, or wants a project status overview."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max tasks to return (default 10, max 30)",
+                        "default": 10,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_agent_result",
             "description": (
                 "Retrieve the result of a background agent task. "
@@ -364,6 +387,7 @@ class ToolDispatcher:
         background_runner=None,
         get_result_callback=None,
         cancel_callback=None,
+        list_tasks_callback=None,
     ):
         self.workspace = workspace
         self.http_client = http_client
@@ -378,6 +402,8 @@ class ToolDispatcher:
         self._get_result_callback = get_result_callback
         # (agent_id, user_id) -> str  — cancel background task
         self._cancel_callback = cancel_callback
+        # (user_id, limit) -> list[dict]  — task registry listing
+        self._list_tasks_callback = list_tasks_callback
 
         # Lazy-loaded skill instances
         self._web_search = None
@@ -443,6 +469,9 @@ class ToolDispatcher:
 
             elif tool_name == "cancel_agent_task":
                 result = self._do_cancel_agent_task(tool_args, context)
+
+            elif tool_name == "list_agent_tasks":
+                result = self._do_list_agent_tasks(tool_args, context)
 
             elif tool_name == "read_agent_logs":
                 result = self._do_read_agent_logs(tool_args)
@@ -668,6 +697,30 @@ class ToolDispatcher:
         user_id = context.get("user_id", "unknown")
         return self._cancel_callback(agent_id, user_id)
 
+    def _do_list_agent_tasks(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        if not self._list_tasks_callback:
+            return "list_agent_tasks not available."
+        user_id = context.get("user_id")
+        limit = min(int(args.get("limit", 10)), 30)
+        tasks = self._list_tasks_callback(user_id=user_id, limit=limit)
+        if not tasks:
+            return "Нет задач в реестре."
+        STATUS_ICON = {
+            "running": "⏳",
+            "completed": "✅",
+            "cancelled": "🚫",
+            "error": "❌",
+        }
+        lines = [f"📋 Задачи ({len(tasks)}):"]
+        for t in tasks:
+            icon = STATUS_ICON.get(t.get("status", ""), "❓")
+            bg = " [bg]" if t.get("background") else ""
+            dur = f" ({t['duration_ms']}ms)" if t.get("duration_ms") else ""
+            started = t.get("started_at", "")[:16].replace("T", " ")
+            desc = t.get("description", "")[:80]
+            lines.append(f"{icon} [{t.get('agent_id', '?')}]{bg} {started}{dur}\n   {desc}")
+        return "\n".join(lines)
+
     def _do_read_agent_logs(self, args: dict[str, Any]) -> str:
         if not self._logger:
             return "Activity logging is not configured."
@@ -730,6 +783,8 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         return f"agent='{args.get('agent_id', '?')}'"
     if tool_name == "cancel_agent_task":
         return f"agent='{args.get('agent_id', '?')}'"
+    if tool_name == "list_agent_tasks":
+        return f"limit={args.get('limit', 10)}"
     return str(args)[:80]
 
 

@@ -154,6 +154,11 @@ class OrchestratorAgent:
         # Completed background task results waiting to be read
         self._background_results: dict[str, dict[str, Any]] = {}
 
+        # Global task registry — metadata for all tasks (foreground + background)
+        # key = task_id; capped at _TASK_REGISTRY_MAX per user to avoid memory growth
+        self._task_registry: dict[str, dict[str, Any]] = {}
+        self._TASK_REGISTRY_MAX = 50  # total entries kept
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -204,6 +209,7 @@ class OrchestratorAgent:
             background_runner=self.run_agent_background,
             get_result_callback=self.get_background_result,
             cancel_callback=self.cancel_agent_background_tasks,
+            list_tasks_callback=self.list_tasks,
         )
 
         logger.info("Orchestrator Agent initialized")
@@ -244,6 +250,18 @@ class OrchestratorAgent:
 
         # Clear any previous cancel flag for this user at the start of each new task
         self._clear_cancel(user_id)
+
+        ctx = context or {}
+        source_early: str = ctx.get("source", "user")
+        if source_early != "heartbeat":
+            self._register_task(
+                task_id=task_id,
+                agent_id=effective_agent_id,
+                user_id=user_id,
+                description=description,
+                source=source_early,
+                is_background=False,
+            )
 
         try:
             ctx = context or {}
@@ -322,6 +340,7 @@ class OrchestratorAgent:
 
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             logger.info(f"[{task_id}] Done in {duration_ms:.0f}ms using {model_used}")
+            self._finish_task(task_id, "completed")
 
             result: dict[str, Any] = {
                 "task_id": task_id,
@@ -337,9 +356,9 @@ class OrchestratorAgent:
             return result
 
         except LLMUnavailableError as e:
-            # Model returned 4xx/5xx — not a code bug, log as warning only
             logger.warning(f"[{task_id}] LLM unavailable: {e}")
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            self._finish_task(task_id, "error")
             return {
                 "task_id": task_id,
                 "status": "failed",
@@ -352,6 +371,7 @@ class OrchestratorAgent:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             err_detail = str(e) or "(нет описания)"
+            self._finish_task(task_id, "error")
             return {
                 "task_id": task_id,
                 "status": "failed",
@@ -615,6 +635,7 @@ class OrchestratorAgent:
                 result_text = f"❌ Ошибка: {type(e).__name__}: {e}"
                 logger.error(f"Background task {task_id} failed: {e}", exc_info=True)
 
+            self._finish_task(task_id, status)
             self._background_results[key] = {
                 "agent_id": agent_id,
                 "status": status,
@@ -628,10 +649,80 @@ class OrchestratorAgent:
                 except Exception as e:
                     logger.warning(f"Background notify callback failed: {e}")
 
+        self._register_task(
+            task_id=task_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            description=task,
+            source=context.get("source", "user"),
+            is_background=True,
+        )
         bg = asyncio.create_task(_run_bg(), name=task_id)
         self._background_tasks[key] = bg
         logger.info(f"Started background task {task_id} for '{agent_id}', user={user_id}")
         return key
+
+    def _register_task(
+        self,
+        task_id: str,
+        agent_id: str,
+        user_id: str,
+        description: str,
+        source: str = "user",
+        is_background: bool = False,
+    ) -> None:
+        """Record a task in the global registry."""
+        # Evict oldest entries if we exceed the cap
+        if len(self._task_registry) >= self._TASK_REGISTRY_MAX:
+            oldest_key = next(iter(self._task_registry))
+            del self._task_registry[oldest_key]
+
+        self._task_registry[task_id] = {
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "description": description[:120],
+            "status": "running",
+            "source": source,
+            "background": is_background,
+            "started_at": datetime.now().astimezone().isoformat(),
+            "finished_at": None,
+            "duration_ms": None,
+        }
+
+    def _finish_task(self, task_id: str, status: str = "completed") -> None:
+        """Mark a task as finished in the registry."""
+        if task_id not in self._task_registry:
+            return
+        entry = self._task_registry[task_id]
+        entry["status"] = status
+        entry["finished_at"] = datetime.now().astimezone().isoformat()
+        try:
+            started = datetime.fromisoformat(entry["started_at"])
+            entry["duration_ms"] = int(
+                (datetime.now().astimezone() - started).total_seconds() * 1000
+            )
+        except Exception:
+            pass
+
+    def list_tasks(self, user_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """
+        Return recent tasks, newest first.
+        If user_id given, filter to that user; otherwise return all.
+        Running background tasks always appear first.
+        """
+        entries = list(self._task_registry.values())
+        if user_id:
+            entries = [e for e in entries if e.get("user_id") == user_id]
+
+        # Sort: running first, then by started_at desc
+        def _sort_key(e: dict) -> tuple:
+            running = 0 if e["status"] == "running" else 1
+            return (running, e.get("started_at", ""))
+
+        entries.sort(key=_sort_key, reverse=False)
+        entries.sort(key=lambda e: (0 if e["status"] == "running" else 1))
+        return entries[-limit:][::-1]
 
     def cancel_agent_background_tasks(self, agent_id: str, user_id: str) -> str:
         """Cancel any running background task for agent_id + user_id."""
