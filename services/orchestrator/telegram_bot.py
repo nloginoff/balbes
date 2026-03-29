@@ -630,28 +630,44 @@ class BalbesTelegramBot:
 
     @staticmethod
     def _format_debug_trace(debug_events: list[dict], duration_ms: float) -> str:
-        """Format orchestrator debug events into a compact readable trace."""
+        """
+        Format orchestrator debug events into a compact HTML trace.
+
+        Uses HTML parse mode so arbitrary tool output / model names / paths
+        never break Telegram entity parsing (as they would in Markdown mode).
+        Shows the active agent name in brackets so delegation is visible:
+          [orchestrator] LLM round 1 → model
+          [orchestrator] 🔧 delegate_to_agent ← agent='coder'…
+          [coder] LLM round 1 → model
+          [coder] 🔧 execute_command ← cmd='git status'
+        """
+        import html as _html
+
         if not debug_events:
             return ""
-        lines = ["⚙️ *Трейс выполнения:*"]
+
+        lines = ["⚙️ <b>Трейс выполнения:</b>"]
         for ev in debug_events:
             t = ev.get("type")
+            raw_agent = ev.get("agent", "")
+            agent_tag = f"<b>[{_html.escape(raw_agent)}]</b> " if raw_agent else ""
+
             if t == "llm":
-                model = ev.get("model", "?")
+                model = _html.escape(str(ev.get("model", "?")))
                 rnd = ev.get("round", "?")
-                lines.append(f"  🤔 LLM раунд {rnd} → `{model}`")
+                lines.append(f"  🤔 {agent_tag}LLM раунд {rnd} → <code>{model}</code>")
             elif t == "tool_start":
-                name = ev.get("name", "?")
-                summary = ev.get("summary", "")
-                lines.append(f"  🔧 `{name}` ← {summary}")
+                name = _html.escape(str(ev.get("name", "?")))
+                summary = _html.escape(str(ev.get("summary", "")))
+                lines.append(f"  🔧 {agent_tag}<code>{name}</code> ← {summary}")
             elif t == "tool_done":
-                name = ev.get("name", "?")
                 ok = ev.get("ok", True)
-                summary = ev.get("summary", "")
+                summary = _html.escape(str(ev.get("summary", "")))
                 ms = ev.get("ms", 0)
                 icon = "✅" if ok else "❌"
-                lines.append(f"     {icon} → {summary} _({ms}ms)_")
-        lines.append(f"  ⏱ Итого: _{duration_ms:.0f}ms_")
+                lines.append(f"     {icon} → {summary} <i>({ms}ms)</i>")
+
+        lines.append(f"  ⏱ Итого: <i>{duration_ms:.0f}ms</i>")
         return "\n".join(lines)
 
     # -------------------------------------------------------------------------
@@ -1392,14 +1408,14 @@ class BalbesTelegramBot:
                         if not result_text:
                             result_text = "Готово."
 
-                        # Send debug trace before the main response
+                        # Send debug trace before the main response (HTML mode — safe for any content)
                         debug_events = result.get("debug_events")
                         if debug_events:
                             duration_ms = result.get("duration_ms", 0)
                             trace = self._format_debug_trace(debug_events, duration_ms)
                             if trace:
                                 try:
-                                    await message.reply_text(trace, parse_mode="Markdown")
+                                    await message.reply_text(trace, parse_mode="HTML")
                                 except Exception:
                                     await message.reply_text(trace)
                     else:
@@ -1417,7 +1433,11 @@ class BalbesTelegramBot:
                         err_msg = error or "Неизвестная ошибка оркестратора"
                         result_text = f"❌ Ошибка агента:\n`{err_msg}`"
 
-                    await message.reply_text(result_text, parse_mode="Markdown")
+                    # LLM responses may contain arbitrary Markdown — try V1, fall back to plain
+                    try:
+                        await message.reply_text(result_text, parse_mode="Markdown")
+                    except Exception:
+                        await message.reply_text(result_text)
 
                 else:
                     # Non-200: try to read the body for details
@@ -1435,10 +1455,13 @@ class BalbesTelegramBot:
                 logger.error(f"Message processing failed: {e}", exc_info=True)
                 err_type = type(e).__name__
                 err_msg = str(e) or "(нет описания)"
-                await message.reply_text(
-                    f"❌ Ошибка: `{err_type}: {err_msg}`",
-                    parse_mode="Markdown",
-                )
+                try:
+                    await message.reply_text(
+                        f"❌ Ошибка: `{err_type}: {err_msg}`",
+                        parse_mode="Markdown",
+                    )
+                except Exception:
+                    await message.reply_text(f"❌ Ошибка: {err_type}: {err_msg}")
             finally:
                 if typing_task:
                     typing_task.cancel()

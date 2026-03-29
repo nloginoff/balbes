@@ -127,6 +127,8 @@ agents:
     display_name: "Balbes"
     description: "Основной интеллектуальный ассистент"
     emoji: "🤖"
+    # Default model when no chat model is configured (inherits active_models[0] if absent)
+    # default_model: "openrouter/stepfun/step-3.5-flash:free"
 
     # If false (default): use only the selected model; on error show the actual
     # API error to the user. If true: silently try models in fallback_chain.
@@ -229,6 +231,8 @@ agents:
     display_name: "Coder"
     description: "Специалист по написанию и анализу кода"
     emoji: "💻"
+    # Coder uses a capable model by default (good at code); overrides chat model for delegations
+    default_model: "openrouter/moonshotai/kimi-k2.5"
 
     fallback_enabled: false
 
@@ -275,6 +279,13 @@ agents:
         - "git diff"
         - "git diff {file}"
         - "git branch"
+        # git with explicit repo path (-C flag)
+        - "git -C {path} status"
+        - "git -C {path} log --oneline -{n}"
+        - "git -C {path} log --oneline -20"
+        - "git -C {path} diff"
+        - "git -C {path} diff {file}"
+        - "git -C {path} branch"
 
     # Coder: full development whitelist in "agent" mode
     server_commands:
@@ -336,6 +347,20 @@ agents:
         - "git stash pop"
         - "git checkout {branch}"
         - "git checkout -b {branch}"
+        # git with explicit repo path (-C flag) — use instead of cd /path && git …
+        - "git -C {path} status"
+        - "git -C {path} log --oneline -{n}"
+        - "git -C {path} log --oneline -20"
+        - "git -C {path} diff"
+        - "git -C {path} diff {file}"
+        - "git -C {path} branch"
+        - "git -C {path} add {file}"
+        - "git -C {path} add ."
+        - "git -C {path} commit -m {message}"
+        - "git -C {path} push"
+        - "git -C {path} push origin {branch}"
+        - "git -C {path} pull"
+        - "git -C {path} pull origin {branch}"
 
 
 # Models available for user selection (shown in /model menu)

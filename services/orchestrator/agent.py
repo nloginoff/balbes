@@ -395,13 +395,14 @@ class OrchestratorAgent:
                 logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
                 return "✋ Выполнение остановлено по команде /stop", model_used
 
-            # Debug: record LLM round
+            # Debug: record LLM round (include agent so delegated calls are distinguishable)
             if debug_events is not None:
                 debug_events.append(
                     {
                         "type": "llm",
                         "round": round_num + 1,
                         "model": self._to_openrouter_id(model_id),
+                        "agent": agent_id or self.agent_id,
                     }
                 )
 
@@ -491,7 +492,16 @@ class OrchestratorAgent:
         """
         sub_workspace = self._get_workspace(agent_id)
         sub_logger = self._get_activity_logger(agent_id)
-        model_id = context.get("model_id") or settings.default_chat_model
+
+        # Prefer agent-specific default_model from providers.yaml over the
+        # orchestrator's active chat model — coder may need a more capable model.
+        cfg = get_providers_config()
+        agent_default_model: str | None = None
+        for a in cfg.get("agents", []):
+            if a.get("id") == agent_id:
+                agent_default_model = a.get("default_model")
+                break
+        model_id = agent_default_model or context.get("model_id") or settings.default_chat_model
 
         sub_dispatcher = ToolDispatcher(
             workspace=sub_workspace,

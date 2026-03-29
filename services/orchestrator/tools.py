@@ -340,13 +340,14 @@ class ToolDispatcher:
         success = True
         result = ""
 
-        # Emit "tool started" debug event
+        # Emit "tool started" debug event (include agent_id for delegation visibility)
         if self._debug_collector is not None:
             self._debug_collector.append(
                 {
                     "type": "tool_start",
                     "name": tool_name,
                     "summary": _summarize_input(tool_name, tool_args),
+                    "agent": context.get("agent_id", ""),
                 }
             )
 
@@ -400,6 +401,7 @@ class ToolDispatcher:
                         "ok": success,
                         "summary": _summarize_result(result),
                         "ms": round(duration_ms),
+                        "agent": context.get("agent_id", ""),
                     }
                 )
 
