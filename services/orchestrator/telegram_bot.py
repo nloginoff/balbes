@@ -562,7 +562,9 @@ class BalbesTelegramBot:
             else:
                 await update.message.reply_text(f"⚠️ Status: {response.status_code}")
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
 
     async def cmd_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user: User | None = update.effective_user
@@ -728,7 +730,9 @@ class BalbesTelegramBot:
             else:
                 await update.message.reply_text(f"⚠️ Ошибка: {r.status_code}")
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
 
     async def cmd_remember(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user: User | None = update.effective_user
@@ -762,7 +766,9 @@ class BalbesTelegramBot:
             else:
                 await update.message.reply_text(f"⚠️ Не удалось сохранить: {r.status_code}")
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
 
     async def cmd_recall(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user: User | None = update.effective_user
@@ -798,7 +804,9 @@ class BalbesTelegramBot:
             else:
                 await update.message.reply_text(f"⚠️ Ошибка поиска: {r.status_code}")
         except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
 
     async def cmd_heartbeat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Manually trigger a heartbeat check right now."""
@@ -1067,7 +1075,10 @@ class BalbesTelegramBot:
             )
         except Exception as e:
             logger.error(f"Voice handling failed: {e}", exc_info=True)
-            await message.reply_text(f"❌ Ошибка обработки голоса: {e}")
+            await message.reply_text(
+                f"❌ Ошибка обработки голоса: `{type(e).__name__}: {e or '(нет описания)'}`",
+                parse_mode="Markdown",
+            )
         finally:
             self._active_tasks.pop(user_id, None)
 
@@ -1144,16 +1155,32 @@ class BalbesTelegramBot:
                                 error=error,
                             )
                             return
-                        result_text = "Не удалось выполнить запрос. Попробуй уточнить."
+                        # Show the actual error from the orchestrator
+                        err_msg = error or "Неизвестная ошибка оркестратора"
+                        result_text = f"❌ Ошибка агента:\n`{err_msg}`"
 
-                    await message.reply_text(result_text)
+                    await message.reply_text(result_text, parse_mode="Markdown")
 
                 else:
-                    await message.reply_text(f"❌ Ошибка запроса: {response.status_code}")
+                    # Non-200: try to read the body for details
+                    try:
+                        body = response.json()
+                        detail = body.get("detail") or body.get("error") or str(body)
+                    except Exception:
+                        detail = response.text[:200] or "(нет тела ответа)"
+                    await message.reply_text(
+                        f"❌ Ошибка запроса: HTTP {response.status_code}\n`{detail}`",
+                        parse_mode="Markdown",
+                    )
 
             except Exception as e:
                 logger.error(f"Message processing failed: {e}", exc_info=True)
-                await message.reply_text(f"❌ Ошибка: {e}")
+                err_type = type(e).__name__
+                err_msg = str(e) or "(нет описания)"
+                await message.reply_text(
+                    f"❌ Ошибка: `{err_type}: {err_msg}`",
+                    parse_mode="Markdown",
+                )
             finally:
                 if typing_task:
                     typing_task.cancel()

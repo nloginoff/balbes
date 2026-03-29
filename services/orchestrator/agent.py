@@ -296,10 +296,11 @@ class OrchestratorAgent:
         except Exception as e:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            err_detail = str(e) or "(нет описания)"
             return {
                 "task_id": task_id,
                 "status": "failed",
-                "error": str(e),
+                "error": f"{type(e).__name__}: {err_detail}",
                 "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
