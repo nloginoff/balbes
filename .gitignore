@@ -72,6 +72,9 @@ data/
 !data/redis/.gitkeep
 !data/rabbitmq/.gitkeep
 !data/qdrant/.gitkeep
+# Agent workspace MD files — tracked in git so they deploy with the code
+!data/agents/
+!data/agents/**
 
 # Logs
 *.log
