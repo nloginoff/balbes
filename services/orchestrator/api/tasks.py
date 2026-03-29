@@ -16,6 +16,7 @@ async def create_task(
     user_id: str,
     description: str,
     chat_id: str | None = None,
+    agent_id: str | None = None,
 ) -> dict:
     """
     Create and execute a task within a chat session.
@@ -24,6 +25,7 @@ async def create_task(
         user_id: User identifier (Telegram user_id)
         description: Task / message text
         chat_id: Chat session ID (optional, uses active chat if omitted)
+        agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
     """
     import main as orchestrator_main
 
@@ -38,6 +40,7 @@ async def create_task(
             description=description,
             user_id=user_id,
             chat_id=chat_id,
+            agent_id=agent_id,
         )
         return result
 

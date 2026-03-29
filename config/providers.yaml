@@ -58,6 +58,18 @@ providers:
         capabilities: ["code", "reasoning"]
 
 
+# Available agents (shown in /agents menu)
+agents:
+  - id: "orchestrator"
+    display_name: "Balbes"
+    description: "Основной интеллектуальный ассистент"
+    emoji: "🤖"
+  - id: "coder"
+    display_name: "Coder"
+    description: "Специалист по написанию и анализу кода"
+    emoji: "💻"
+
+
 # Models available for user selection (shown in /model menu)
 active_models:
   - id: "openrouter/anthropic/claude-3.5-sonnet"

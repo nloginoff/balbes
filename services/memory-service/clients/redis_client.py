@@ -135,7 +135,7 @@ class RedisClient:
     # Keys:
     #   chats:{user_id}                  Hash  { chat_id → name }
     #   active_chat:{user_id}            String  chat_id
-    #   chat_meta:{user_id}:{chat_id}    Hash  { name, model_id, created_at, last_used_at }  TTL=7d
+    #   chat_meta:{user_id}:{chat_id}    Hash  { name, model_id, agent_id, created_at, last_used_at }  TTL=7d
     #   history:{user_id}:{chat_id}      Sorted Set  score=unix_ts, value=json  TTL=7d
     # =========================================================================
 
@@ -156,6 +156,7 @@ class RedisClient:
         user_id: str,
         chat_name: str,
         model_id: str | None = None,
+        agent_id: str | None = None,
     ) -> str:
         """Create a new chat and return its chat_id."""
         if not self.client:
@@ -171,6 +172,7 @@ class RedisClient:
         meta = {
             "name": chat_name,
             "model_id": model_id or "",
+            "agent_id": agent_id or "orchestrator",
             "created_at": now,
             "last_used_at": now,
         }
@@ -178,7 +180,9 @@ class RedisClient:
         pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
         await pipe.execute()
 
-        logger.info(f"Created chat {chat_id} for user {user_id}: '{chat_name}'")
+        logger.info(
+            f"Created chat {chat_id} for user {user_id}: '{chat_name}' agent={agent_id or 'orchestrator'}"
+        )
         return chat_id
 
     async def get_chats(self, user_id: str) -> list[dict[str, Any]]:
@@ -204,6 +208,7 @@ class RedisClient:
                         "chat_id": chat_id,
                         "name": meta.get("name", name),
                         "model_id": meta.get("model_id", ""),
+                        "agent_id": meta.get("agent_id", "orchestrator"),
                         "created_at": meta.get("created_at", ""),
                         "last_used_at": meta.get("last_used_at", ""),
                     }
@@ -289,6 +294,23 @@ class RedisClient:
         pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
         await pipe.execute()
         logger.info(f"Set model {model_id} for chat {chat_id} / user {user_id}")
+
+    async def get_chat_agent(self, user_id: str, chat_id: str) -> str:
+        """Return agent_id assigned to the chat (defaults to 'orchestrator')."""
+        if not self.client:
+            raise MemoryRetrievalError("Redis client not connected")
+        agent_id = await self.client.hget(self._chat_meta_key(user_id, chat_id), "agent_id")
+        return agent_id if agent_id else "orchestrator"
+
+    async def set_chat_agent(self, user_id: str, chat_id: str, agent_id: str) -> None:
+        """Assign an agent to a specific chat."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        pipe = self.client.pipeline()
+        pipe.hset(self._chat_meta_key(user_id, chat_id), "agent_id", agent_id)
+        pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
+        await pipe.execute()
+        logger.info(f"Set agent {agent_id} for chat {chat_id} / user {user_id}")
 
     async def add_to_chat_history(
         self,

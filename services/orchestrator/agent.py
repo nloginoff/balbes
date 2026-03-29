@@ -132,26 +132,34 @@ class OrchestratorAgent:
         self.skills_registry_url = f"http://localhost:{settings.skills_registry_port}"
         self.http_client: httpx.AsyncClient | None = None
 
-        # Workspace (system prompt from MD files)
-        self.workspace = AgentWorkspace(self.agent_id)
+        # Workspace cache: agent_id → AgentWorkspace (lazy-loaded per agent)
+        self._workspaces: dict[str, AgentWorkspace] = {}
 
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
+    def _get_workspace(self, agent_id: str) -> AgentWorkspace:
+        """Return cached workspace for agent, loading on first access."""
+        if agent_id not in self._workspaces:
+            ws = AgentWorkspace(agent_id)
+            try:
+                ws.load()
+                logger.info(f"Workspace loaded for agent '{agent_id}'")
+            except Exception as e:
+                logger.warning(f"Workspace load failed for '{agent_id}' (using defaults): {e}")
+            self._workspaces[agent_id] = ws
+        return self._workspaces[agent_id]
+
     async def connect(self) -> None:
-        """Initialize HTTP client, load workspace, warm up tools."""
+        """Initialize HTTP client, load default workspace, warm up tools."""
         self.http_client = httpx.AsyncClient(timeout=60.0)
 
-        # Load workspace (system prompt from MD files)
-        try:
-            self.workspace.load()
-            logger.info(f"Workspace loaded for agent '{self.agent_id}'")
-        except Exception as e:
-            logger.warning(f"Workspace load failed (using defaults): {e}")
+        # Eagerly load the default orchestrator workspace
+        ws = self._get_workspace(self.agent_id)
 
-        # Initialize tool dispatcher
+        # Initialize tool dispatcher with default workspace
         self.tool_dispatcher = ToolDispatcher(
-            workspace=self.workspace,
+            workspace=ws,
             http_client=self.http_client,
             providers_config=get_providers_config(),
         )
@@ -172,6 +180,7 @@ class OrchestratorAgent:
         description: str,
         user_id: str,
         chat_id: str | None = None,
+        agent_id: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -181,17 +190,22 @@ class OrchestratorAgent:
             description: User's message / task
             user_id: Telegram user_id (string)
             chat_id: Chat session ID. If None, uses/creates default chat.
+            agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
             context: Extra context dict (unused externally, kept for compat)
         """
         task_id = str(uuid4())
         start_time = datetime.now(timezone.utc)
+        effective_agent_id = agent_id or self.agent_id
 
         try:
             # Resolve chat_id
             if chat_id is None:
                 chat_id = await self._get_or_create_chat(user_id)
 
-            logger.info(f"[{task_id}] user={user_id} chat={chat_id}: {description[:60]}...")
+            logger.info(
+                f"[{task_id}] user={user_id} chat={chat_id} agent={effective_agent_id}: "
+                f"{description[:60]}..."
+            )
 
             # Load chat history
             history = await self._get_chat_history(user_id, chat_id)
@@ -199,8 +213,9 @@ class OrchestratorAgent:
             # Get model for this chat
             model_id = await self._get_model_for_chat(user_id, chat_id)
 
-            # Build system prompt from workspace
-            system_prompt = self.workspace.config.system_prompt
+            # Load workspace for the selected agent (cached after first use)
+            workspace = self._get_workspace(effective_agent_id)
+            system_prompt = workspace.config.system_prompt
 
             # Build messages array (with adaptive trim)
             messages = build_messages_for_llm(
@@ -486,11 +501,16 @@ class OrchestratorAgent:
     # -------------------------------------------------------------------------
 
     async def get_agent_status(self) -> dict[str, Any]:
+        loaded_workspaces = {aid: ws.list_files() for aid, ws in self._workspaces.items()}
+        # Ensure default agent is always shown
+        if self.agent_id not in loaded_workspaces:
+            loaded_workspaces[self.agent_id] = []
         return {
             "agent_id": self.agent_id,
             "status": "online",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "workspace_files": self.workspace.list_files(),
+            "workspace_files": loaded_workspaces.get(self.agent_id, []),
+            "workspaces": loaded_workspaces,
             "services": {
                 "memory_service": self.memory_service_url,
                 "skills_registry": self.skills_registry_url,

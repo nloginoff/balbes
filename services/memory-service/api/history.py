@@ -87,6 +87,7 @@ async def chat_clear_history(user_id: str, chat_id: str) -> dict[str, str]:
 class CreateChatRequest(BaseModel):
     name: str = Field(default="Новый чат")
     model_id: str | None = Field(default=None)
+    agent_id: str | None = Field(default=None)
 
 
 @router.post("/chats/{user_id}")
@@ -97,6 +98,7 @@ async def create_chat(user_id: str, request: CreateChatRequest) -> dict[str, Any
         user_id=user_id,
         chat_name=request.name,
         model_id=request.model_id,
+        agent_id=request.agent_id,
     )
     return {"chat_id": chat_id, "name": request.name}
 
@@ -175,6 +177,34 @@ async def set_chat_model(
         model_id=request.model_id,
     )
     return {"status": "ok", "model_id": request.model_id}
+
+
+@router.get("/chats/{user_id}/{chat_id}/agent")
+async def get_chat_agent(user_id: str, chat_id: str) -> dict[str, Any]:
+    """Get the agent assigned to a specific chat."""
+    redis_client = _get_redis()
+    agent_id = await redis_client.get_chat_agent(user_id=user_id, chat_id=chat_id)
+    return {"agent_id": agent_id}
+
+
+class SetAgentRequest(BaseModel):
+    agent_id: str
+
+
+@router.put("/chats/{user_id}/{chat_id}/agent")
+async def set_chat_agent(
+    user_id: str,
+    chat_id: str,
+    request: SetAgentRequest,
+) -> dict[str, str]:
+    """Assign an agent to a specific chat."""
+    redis_client = _get_redis()
+    await redis_client.set_chat_agent(
+        user_id=user_id,
+        chat_id=chat_id,
+        agent_id=request.agent_id,
+    )
+    return {"status": "ok", "agent_id": request.agent_id}
 
 
 # ---------------------------------------------------------------------------

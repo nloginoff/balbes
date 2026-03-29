@@ -5,7 +5,8 @@ Commands:
   /start          — welcome message
   /help           — command reference
   /status         — orchestrator health check
-  /chats          — list chats (inline keyboard), switch active chat
+  /agents         — list agents, switch active agent for current chat
+  /chats          — list chats (with ID, agent, model), switch active chat
   /newchat [name] — create a new chat and switch to it
   /rename <name>  — rename current chat
   /model          — show model selection keyboard for current chat
@@ -47,24 +48,34 @@ logger = logging.getLogger("orchestrator.telegram")
 
 CALLBACK_CHAT_PREFIX = "chat:"
 CALLBACK_MODEL_PREFIX = "model:"
+CALLBACK_AGENT_PREFIX = "agent:"
 CALLBACK_NEW_CHAT = "new_chat"
 CALLBACK_MODEL_UNAVAIL_YES = "model_unavail:yes:"
 CALLBACK_MODEL_UNAVAIL_NO = "model_unavail:no"
 
 
-def _load_active_models() -> list[dict]:
-    """Load active_models list from providers.yaml."""
+def _load_providers_yaml() -> dict:
+    """Load providers.yaml once. Returns empty dict on failure."""
     try:
         import yaml
 
         cfg_path = Path(__file__).parent.parent.parent / "config" / "providers.yaml"
         if cfg_path.exists():
             with open(cfg_path, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            return data.get("active_models", [])
+                return yaml.safe_load(f) or {}
     except Exception as e:
-        logger.warning(f"Failed to load active_models: {e}")
-    return []
+        logger.warning(f"Failed to load providers.yaml: {e}")
+    return {}
+
+
+def _load_active_models() -> list[dict]:
+    """Load active_models list from providers.yaml."""
+    return _load_providers_yaml().get("active_models", [])
+
+
+def _load_agents() -> list[dict]:
+    """Load agents list from providers.yaml."""
+    return _load_providers_yaml().get("agents", [])
 
 
 def _make_model_keyboard(exclude_id: str | None = None) -> InlineKeyboardMarkup:
@@ -86,6 +97,26 @@ def _make_model_keyboard(exclude_id: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(buttons)
 
 
+def _make_agent_keyboard(current_id: str | None = None) -> InlineKeyboardMarkup:
+    agents = _load_agents()
+    buttons = []
+    for a in agents:
+        emoji = a.get("emoji", "🤖")
+        name = a.get("display_name", a["id"])
+        mark = "✅ " if a.get("id") == current_id else ""
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    f"{mark}{emoji} {name}",
+                    callback_data=f"{CALLBACK_AGENT_PREFIX}{a['id']}",
+                )
+            ]
+        )
+    if not buttons:
+        buttons = [[InlineKeyboardButton("No agents configured", callback_data="noop")]]
+    return InlineKeyboardMarkup(buttons)
+
+
 class BalbesTelegramBot:
     """
     Telegram Bot for Balbes System with multi-chat and model management.
@@ -104,10 +135,15 @@ class BalbesTelegramBot:
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
+
+        async def _post_init(app: Application) -> None:
+            await self._set_commands(app)
+
         self.app = (
             Application.builder()
             .token(self.token)
             .concurrent_updates(False)  # sequential — required for correct state handling
+            .post_init(_post_init)
             .build()
         )
         self._setup_handlers()
@@ -127,6 +163,7 @@ class BalbesTelegramBot:
         self.app.add_handler(CommandHandler("help", self.cmd_help))
         self.app.add_handler(CommandHandler("status", self.cmd_status))
         self.app.add_handler(CommandHandler("clear", self.cmd_clear))
+        self.app.add_handler(CommandHandler("agents", self.cmd_agents))
         self.app.add_handler(CommandHandler("chats", self.cmd_chats))
         self.app.add_handler(CommandHandler("newchat", self.cmd_newchat))
         self.app.add_handler(CommandHandler("rename", self.cmd_rename))
@@ -142,6 +179,9 @@ class BalbesTelegramBot:
             CallbackQueryHandler(self.cb_model_selected, pattern=f"^{CALLBACK_MODEL_PREFIX}")
         )
         self.app.add_handler(
+            CallbackQueryHandler(self.cb_agent_selected, pattern=f"^{CALLBACK_AGENT_PREFIX}")
+        )
+        self.app.add_handler(
             CallbackQueryHandler(self.cb_new_chat, pattern=f"^{CALLBACK_NEW_CHAT}$")
         )
         self.app.add_handler(CallbackQueryHandler(self.cb_model_unavail, pattern="^model_unavail:"))
@@ -152,22 +192,21 @@ class BalbesTelegramBot:
         # Regular text messages
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
-    async def _set_commands(self) -> None:
-        if not self.app:
-            return
+    async def _set_commands(self, app: Application) -> None:
         commands = [
             BotCommand("start", "Начать работу"),
             BotCommand("help", "Справка по командам"),
-            BotCommand("status", "Статус системы"),
-            BotCommand("chats", "Список чатов / переключить"),
+            BotCommand("agents", "Список агентов / переключить агента"),
+            BotCommand("chats", "Список чатов / переключить чат"),
             BotCommand("newchat", "Создать новый чат"),
             BotCommand("rename", "Переименовать текущий чат"),
             BotCommand("model", "Выбрать модель для чата"),
             BotCommand("clear", "Очистить историю чата"),
             BotCommand("remember", "Сохранить в долгосрочную память"),
             BotCommand("recall", "Найти в долгосрочной памяти"),
+            BotCommand("status", "Статус системы"),
         ]
-        await self.app.bot.set_my_commands(commands)
+        await app.bot.set_my_commands(commands)
 
     def _get_http(self) -> httpx.AsyncClient:
         if self.http_client is None:
@@ -266,6 +305,36 @@ class BalbesTelegramBot:
                 return m.get("display_name", model_id)
         return model_id.split("/")[-1] if "/" in model_id else model_id
 
+    async def _get_chat_agent(self, user_id: str, chat_id: str) -> str:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{user_id}/{chat_id}/agent"
+            )
+            if r.status_code == 200:
+                return r.json().get("agent_id", "orchestrator")
+        except Exception as e:
+            logger.debug(f"get_chat_agent error: {e}")
+        return "orchestrator"
+
+    async def _set_chat_agent(self, user_id: str, chat_id: str, agent_id: str) -> bool:
+        try:
+            r = await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{user_id}/{chat_id}/agent",
+                json={"agent_id": agent_id},
+            )
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug(f"set_chat_agent error: {e}")
+        return False
+
+    def _agent_display_info(self, agent_id: str | None) -> tuple[str, str]:
+        """Return (emoji, display_name) for an agent_id."""
+        aid = agent_id or "orchestrator"
+        for a in _load_agents():
+            if a.get("id") == aid:
+                return a.get("emoji", "🤖"), a.get("display_name", aid)
+        return "🤖", aid
+
     # -------------------------------------------------------------------------
     # Commands
     # -------------------------------------------------------------------------
@@ -298,7 +367,8 @@ class BalbesTelegramBot:
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
             "📋 *Команды:*\n\n"
-            "/chats — список чатов, переключиться\n"
+            "/agents — список агентов, переключить агента\n"
+            "/chats — список чатов \\(ID, агент, модель\\), переключиться\n"
             "/newchat \\[название\\] — создать новый чат\n"
             "/rename название — переименовать текущий чат\n"
             "/model — выбрать модель для текущего чата\n"
@@ -307,8 +377,8 @@ class BalbesTelegramBot:
             "/recall запрос — найти в долгосрочной памяти\n"
             "/status — статус системы\n"
             "/help — эта справка\n\n"
-            "🎤 *Голосовые сообщения* принимаются автоматически.\n"
-            "📎 Отправь ссылку — прочту страницу.\n"
+            "🎤 *Голосовые сообщения* принимаются автоматически\\.\n"
+            "📎 Отправь ссылку — прочту страницу\\.\n"
         )
         await update.message.reply_text(text, parse_mode="MarkdownV2")
 
@@ -344,24 +414,34 @@ class BalbesTelegramBot:
             await update.message.reply_text("У тебя пока нет чатов. Создай первый с /newchat")
             return
 
+        lines = ["📋 *Твои чаты:*\n"]
         buttons = []
-        for chat in chats:
+        for i, chat in enumerate(chats, 1):
             cid = chat["chat_id"]
             name = chat.get("name", "Без названия")
             model = self._model_display_name(chat.get("model_id"))
-            mark = "✅ " if cid == active_id else ""
-            label = f"{mark}{name}  [{model}]"
+            agent_emoji, agent_name = self._agent_display_info(chat.get("agent_id"))
+            short_id = cid[:8]
+            is_active = cid == active_id
+
+            mark = "✅ " if is_active else f"{i}\\. "
+            lines.append(
+                f"{mark}*{name}*\n   `{short_id}` \\| {agent_emoji} {agent_name} \\| 🔧 {model}"
+            )
+
+            btn_label = f"{'✅ ' if is_active else ''}{name} [{agent_emoji} {model}]"
             buttons.append(
-                [InlineKeyboardButton(label, callback_data=f"{CALLBACK_CHAT_PREFIX}{cid}")]
+                [InlineKeyboardButton(btn_label, callback_data=f"{CALLBACK_CHAT_PREFIX}{cid}")]
             )
 
         buttons.append([InlineKeyboardButton("➕ Новый чат", callback_data=CALLBACK_NEW_CHAT)])
         keyboard = InlineKeyboardMarkup(buttons)
 
+        info_text = "\n\n".join(lines) + "\n\nНажми, чтобы переключиться:"
         await update.message.reply_text(
-            "📋 *Твои чаты:*\nНажми, чтобы переключиться",
+            info_text,
             reply_markup=keyboard,
-            parse_mode="Markdown",
+            parse_mode="MarkdownV2",
         )
 
     async def cmd_newchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -437,6 +517,34 @@ class BalbesTelegramBot:
             reply_markup=keyboard,
             parse_mode="Markdown",
         )
+
+    async def cmd_agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+
+        chat_id = await self._get_active_chat(str(user.id))
+        current_agent_id = "orchestrator"
+        if chat_id:
+            current_agent_id = await self._get_chat_agent(str(user.id), chat_id)
+
+        agent_emoji, agent_name = self._agent_display_info(current_agent_id)
+        keyboard = _make_agent_keyboard(current_id=current_agent_id)
+
+        agents = _load_agents()
+        agent_lines = []
+        for a in agents:
+            mark = "✅ " if a.get("id") == current_agent_id else "   "
+            e = a.get("emoji", "🤖")
+            desc = a.get("description", "")
+            agent_lines.append(f"{mark}{e} *{a.get('display_name', a['id'])}* — {desc}")
+
+        text = (
+            "🤖 *Агенты:*\n\n"
+            + "\n".join(agent_lines)
+            + f"\n\nТекущий: {agent_emoji} _{agent_name}_\nВыбери агента для этого чата:"
+        )
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
 
     async def cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user: User | None = update.effective_user
@@ -546,9 +654,12 @@ class BalbesTelegramBot:
 
         model = await self._get_chat_model(str(user.id), chat_id)
         model_name = self._model_display_name(model)
+        agent_id = await self._get_chat_agent(str(user.id), chat_id)
+        agent_emoji, agent_name = self._agent_display_info(agent_id)
+        short_id = chat_id[:8]
 
         await query.edit_message_text(
-            f"✅ Переключён на чат\nМодель: *{model_name}*",
+            f"✅ Чат активирован\nID: `{short_id}` | {agent_emoji} {agent_name} | 🔧 {model_name}",
             parse_mode="Markdown",
         )
 
@@ -595,6 +706,32 @@ class BalbesTelegramBot:
             )
         else:
             await query.edit_message_text("❌ Не удалось создать чат")
+
+    async def cb_agent_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+
+        user = update.effective_user
+        if not user:
+            return
+
+        agent_id = query.data[len(CALLBACK_AGENT_PREFIX) :]
+        chat_id = await self._get_active_chat(str(user.id))
+        if not chat_id:
+            await query.edit_message_text("❌ Нет активного чата. Создай его через /newchat")
+            return
+
+        ok = await self._set_chat_agent(str(user.id), chat_id, agent_id)
+        agent_emoji, agent_name = self._agent_display_info(agent_id)
+
+        if ok:
+            await query.edit_message_text(
+                f"✅ Агент переключён: {agent_emoji} *{agent_name}*\n"
+                "Следующее сообщение пойдёт этому агенту.",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text("❌ Не удалось переключить агента")
 
     async def cb_model_unavail(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle 'Model unavailable — switch?' inline response."""
@@ -740,6 +877,9 @@ class BalbesTelegramBot:
                 params = {"user_id": str(user.id), "description": text}
                 if chat_id:
                     params["chat_id"] = chat_id
+                    agent_id = await self._get_chat_agent(str(user.id), chat_id)
+                    if agent_id:
+                        params["agent_id"] = agent_id
 
                 response = await self._get_http().post(
                     f"{self.orchestrator_url}/api/v1/tasks",
