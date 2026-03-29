@@ -23,7 +23,42 @@ providers:
         context_window: 65536
         capabilities: ["chat", "fast"]
 
+      - id: "minimax/minimax-m2.5:free"
+        display_name: "MiniMax M2.5 (Free)"
+        tier: free
+        cost_per_1k_tokens: 0.0
+        context_window: 1000000
+        capabilities: ["chat", "long_context"]
+
+      - id: "z-ai/glm-4.5-air:free"
+        display_name: "GLM-4.5 Air (Free)"
+        tier: free
+        cost_per_1k_tokens: 0.0
+        context_window: 32768
+        capabilities: ["chat", "fast"]
+
+      - id: "arcee-ai/trinity-mini:free"
+        display_name: "Trinity Mini (Free)"
+        tier: free
+        cost_per_1k_tokens: 0.0
+        context_window: 32768
+        capabilities: ["chat", "fast"]
+
+      - id: "openai/gpt-oss-20b:free"
+        display_name: "GPT OSS 20B (Free)"
+        tier: free
+        cost_per_1k_tokens: 0.0
+        context_window: 128000
+        capabilities: ["chat", "code"]
+
       # ── Cheap ───────────────────────────────────────────────────────────────
+      - id: "meta-llama/llama-3.1-8b-instruct"
+        display_name: "Llama 3.1 8B"
+        tier: cheap
+        cost_per_1k_tokens: 0.000018
+        context_window: 131072
+        capabilities: ["chat", "fast", "code"]
+
       - id: "meta-llama/llama-3.3-70b-instruct"
         display_name: "Llama 3.3 70B"
         tier: cheap
@@ -182,7 +217,37 @@ active_models:
     provider: openrouter
     context_window: 65536
 
+  - id: "openrouter/minimax/minimax-m2.5:free"
+    display_name: "🆓 MiniMax M2.5 (Free)"
+    tier: free
+    provider: openrouter
+    context_window: 1000000
+
+  - id: "openrouter/z-ai/glm-4.5-air:free"
+    display_name: "🆓 GLM-4.5 Air (Free)"
+    tier: free
+    provider: openrouter
+    context_window: 32768
+
+  - id: "openrouter/arcee-ai/trinity-mini:free"
+    display_name: "🆓 Trinity Mini (Free)"
+    tier: free
+    provider: openrouter
+    context_window: 32768
+
+  - id: "openrouter/openai/gpt-oss-20b:free"
+    display_name: "🆓 GPT OSS 20B (Free)"
+    tier: free
+    provider: openrouter
+    context_window: 128000
+
   # ── Cheap ─────────────────────────────────────────────────────────────────
+  - id: "openrouter/meta-llama/llama-3.1-8b-instruct"
+    display_name: "💲 Llama 3.1 8B (cheapest)"
+    tier: cheap
+    provider: openrouter
+    context_window: 131072
+
   - id: "openrouter/meta-llama/llama-3.3-70b-instruct"
     display_name: "💲 Llama 3.3 70B"
     tier: cheap
@@ -343,8 +408,15 @@ skills:
 heartbeat:
   enabled: true
   every_minutes: 5
-  # Free model — token usage is now minimal (no history, only workspace_read tool)
+  # Primary model (free). On 429/error, tries fallback_models in order.
+  # Last fallback is the cheapest paid model. If all fail → error sent to user.
   model: "openrouter/stepfun/step-3.5-flash:free"
+  fallback_models:
+    - "openrouter/minimax/minimax-m2.5:free"
+    - "openrouter/z-ai/glm-4.5-air:free"
+    - "openrouter/arcee-ai/trinity-mini:free"
+    - "openrouter/openai/gpt-oss-20b:free"
+    - "openrouter/meta-llama/llama-3.1-8b-instruct"   # cheapest paid, last resort
   active_hours_start: "09:00"    # local server time
   active_hours_end: "23:00"
   # target_user_id is taken from TELEGRAM_USER_ID env var (set in .env.prod)

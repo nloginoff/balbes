@@ -143,6 +143,7 @@ def _load_heartbeat_config() -> dict:
         "enabled": cfg.get("enabled", False),
         "every_minutes": cfg.get("every_minutes", 30),
         "model": cfg.get("model") or None,
+        "fallback_models": cfg.get("fallback_models") or [],
         "active_hours_start": cfg.get("active_hours_start", "08:00"),
         "active_hours_end": cfg.get("active_hours_end", "23:00"),
         "target_user_id": resolved_uid,
@@ -279,33 +280,81 @@ class BalbesTelegramBot:
         user_id = str(cfg["target_user_id"])
         logger.info(f"Heartbeat: starting run for user {user_id}")
 
-        try:
-            params: dict = {
-                "user_id": user_id,
-                "description": HEARTBEAT_PROMPT,
-                "agent_id": "orchestrator",
-                "source": "heartbeat",
-            }
-            if cfg.get("model"):
-                params["model_id"] = cfg["model"]
+        # Build ordered list of models to try: primary + fallbacks from config
+        primary = cfg.get("model")
+        fallbacks: list[str] = cfg.get("fallback_models") or []
+        models_to_try: list[str | None] = ([primary] if primary else [None]) + fallbacks
 
-            response = await self._get_http().post(
-                f"{self.orchestrator_url}/api/v1/tasks",
-                params=params,
-                timeout=90.0,
+        result: dict | None = None
+        last_error: str = "unknown error"
+
+        for attempt, model_id in enumerate(models_to_try):
+            try:
+                params: dict = {
+                    "user_id": user_id,
+                    "description": HEARTBEAT_PROMPT,
+                    "agent_id": "orchestrator",
+                    "source": "heartbeat",
+                }
+                if model_id:
+                    params["model_id"] = model_id
+
+                response = await self._get_http().post(
+                    f"{self.orchestrator_url}/api/v1/tasks",
+                    params=params,
+                    timeout=90.0,
+                )
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"Heartbeat: request failed (model={model_id}): {last_error}")
+                continue
+
+            if response.status_code != 200:
+                last_error = f"HTTP {response.status_code}"
+                logger.warning(f"Heartbeat: {last_error} (model={model_id})")
+                continue
+
+            candidate = response.json()
+            if candidate.get("status") != "success":
+                err = candidate.get("error", "")
+                last_error = err or "task failed"
+                logger.warning(f"Heartbeat: task failed (model={model_id}) — {last_error}")
+                # Retry only on model unavailability / rate limit
+                retriable = any(
+                    kw in last_error.lower()
+                    for kw in ("429", "unavailable", "недоступна", "rate limit")
+                )
+                if retriable:
+                    continue
+                # Non-retriable failure (e.g. internal error) → stop without error message
+                return
+
+            # Success
+            result = candidate
+            if attempt > 0:
+                logger.info(
+                    f"Heartbeat: succeeded with {'fallback ' if attempt > 0 else ''}model {model_id} (attempt {attempt + 1})"
+                )
+            break
+
+        if result is None:
+            # All models exhausted — notify user
+            logger.warning(
+                f"Heartbeat: all {len(models_to_try)} models failed. Last error: {last_error}"
             )
-        except Exception as e:
-            logger.warning(f"Heartbeat: orchestrator call failed: {e}")
-            return
-
-        if response.status_code != 200:
-            logger.warning(f"Heartbeat: orchestrator returned {response.status_code}")
-            return
-
-        result = response.json()
-        if result.get("status") != "success":
-            err = result.get("error", "")
-            logger.warning(f"Heartbeat: task failed — {err}")
+            if self.app:
+                try:
+                    await self.app.bot.send_message(
+                        chat_id=int(user_id),
+                        text=(
+                            "⚠️ *Heartbeat не смог выполниться*\n"
+                            f"Все доступные модели ({len(models_to_try)}) вернули ошибку.\n"
+                            f"Последняя ошибка: `{last_error[:200]}`"
+                        ),
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.warning(f"Heartbeat: failed to send error notification: {e}")
             return
 
         payload = result.get("result", {})
