@@ -20,7 +20,7 @@ async def create_task(
     model_id: str | None = None,
     source: str = "user",
     debug: bool = False,
-    mode: str = "agent",
+    mode: str = "ask",
 ) -> dict:
     """
     Create and execute a task within a chat session.

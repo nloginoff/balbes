@@ -210,7 +210,7 @@ class RedisClient:
                         "model_id": meta.get("model_id", ""),
                         "agent_id": meta.get("agent_id", "orchestrator"),
                         "debug": meta.get("debug", "false") == "true",
-                        "mode": meta.get("mode", "agent"),
+                        "mode": meta.get("mode", "ask"),
                         "created_at": meta.get("created_at", ""),
                         "last_used_at": meta.get("last_used_at", ""),
                     }
@@ -321,7 +321,7 @@ class RedisClient:
         meta = await self.client.hgetall(self._chat_meta_key(user_id, chat_id))
         return {
             "debug": meta.get("debug", "false") == "true",
-            "mode": meta.get("mode", "agent"),
+            "mode": meta.get("mode", "ask"),
         }
 
     async def set_chat_settings(

@@ -559,7 +559,7 @@ class BalbesTelegramBot:
                 return r.json()
         except Exception as e:
             logger.debug(f"get_chat_settings error: {e}")
-        return {"debug": False, "mode": "agent"}
+        return {"debug": False, "mode": "ask"}
 
     async def _set_chat_settings(self, user_id: str, chat_id: str, **kwargs) -> bool:
         """Update per-chat settings (debug=, mode=)."""
@@ -971,7 +971,7 @@ class BalbesTelegramBot:
             return
 
         current = await self._get_chat_settings(user_id, chat_id)
-        mode = current.get("mode", "agent")
+        mode = current.get("mode", "ask")
 
         mode_text = {
             "agent": "🤖 *Agent* — агент может выполнять команды на сервере",
@@ -1300,7 +1300,7 @@ class BalbesTelegramBot:
                     typing_task = asyncio.create_task(typing_loop())
 
                 # Load per-chat settings (debug, mode)
-                chat_settings = {"debug": False, "mode": "agent"}
+                chat_settings = {"debug": False, "mode": "ask"}
                 if chat_id:
                     chat_settings = await self._get_chat_settings(str(user.id), chat_id)
 
@@ -1309,7 +1309,7 @@ class BalbesTelegramBot:
                     "user_id": str(user.id),
                     "description": text,
                     "debug": chat_settings.get("debug", False),
-                    "mode": chat_settings.get("mode", "agent"),
+                    "mode": chat_settings.get("mode", "ask"),
                 }
                 if chat_id:
                     params["chat_id"] = chat_id
