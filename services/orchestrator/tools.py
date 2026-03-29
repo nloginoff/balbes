@@ -233,14 +233,14 @@ def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
     """
     Return the list of available tool schemas for the given execution mode.
 
-    - "agent" (default): all tools enabled
-    - "ask": read-only — execute_command and workspace_write are removed.
-      The agent can search, read files and workspace, but cannot run server
-      commands or modify files.
+    Both modes expose the same set of tools. The difference is enforced at the
+    command-whitelist level inside ServerCommandSkill:
+
+    - "agent": full development whitelist (git, python, pytest, make, …)
+    - "ask":   restricted whitelist — safe info commands only (date, find, df,
+               docker ps, ls, cat, …).  workspace_write is still available so
+               the agent can update its own MEMORY.md / AGENTS.md files.
     """
-    if mode == "ask":
-        blocked = {"execute_command", "workspace_write"}
-        return [t for t in AVAILABLE_TOOLS if t["function"]["name"] not in blocked]
     return AVAILABLE_TOOLS
 
 
@@ -410,6 +410,7 @@ class ToolDispatcher:
             user_id=context.get("user_id", "unknown"),
             chat_id=context.get("chat_id", "unknown"),
             agent_id=context.get("agent_id"),
+            mode=context.get("mode", "agent"),
         )
         output = result.get("stdout", "").strip()
         stderr = result.get("stderr", "").strip()

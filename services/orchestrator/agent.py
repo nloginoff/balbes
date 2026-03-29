@@ -383,6 +383,7 @@ class OrchestratorAgent:
             "memory_service_url": self.memory_service_url,
             "openrouter_api_key": settings.openrouter_api_key,
             "source": source,
+            "mode": mode,
         }
         available_tools = override_tools if override_tools is not None else get_tools_for_mode(mode)
 

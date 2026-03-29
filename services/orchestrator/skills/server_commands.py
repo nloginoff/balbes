@@ -63,13 +63,16 @@ def _load_full_config() -> dict[str, Any]:
     return {}
 
 
-def _resolve_config(agent_id: str | None = None) -> dict[str, Any]:
+def _resolve_config(agent_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
     """
-    Return the effective server_commands config for the given agent.
+    Return the effective server_commands config for the given agent and mode.
+
+    In "ask" mode the per-agent "server_commands_ask" key (if present) is used
+    instead of "server_commands", giving a restricted whitelist of safe commands.
 
     Merge order (later overrides earlier):
       1. Global  skills.server_commands
-      2. Per-agent agents[id].server_commands  (if agent_id given)
+      2. Per-agent agents[id].server_commands[_ask]  (if agent_id given)
     """
     full = _load_full_config()
     global_cfg: dict[str, Any] = full.get("skills", {}).get("server_commands", {})
@@ -77,11 +80,14 @@ def _resolve_config(agent_id: str | None = None) -> dict[str, Any]:
     if not agent_id:
         return global_cfg
 
+    ask_key = "server_commands_ask" if mode == "ask" else "server_commands"
     for agent in full.get("agents", []):
-        if agent.get("id") == agent_id and "server_commands" in agent:
-            per_agent = dict(agent["server_commands"])
-            # Merge: per-agent overrides global, but keep global keys not present in per-agent
-            merged = {**global_cfg, **per_agent}
+        if agent.get("id") != agent_id:
+            continue
+        # Try mode-specific key first, fall back to generic server_commands
+        per_agent_raw = agent.get(ask_key) or agent.get("server_commands")
+        if per_agent_raw:
+            merged = {**global_cfg, **dict(per_agent_raw)}
             return merged
 
     return global_cfg
@@ -89,13 +95,14 @@ def _resolve_config(agent_id: str | None = None) -> dict[str, Any]:
 
 class ServerCommandSkill:
     def __init__(self):
-        # Cache is keyed by agent_id (None = global)
-        self._cfg_cache: dict[str | None, dict[str, Any]] = {}
+        # Cache is keyed by (agent_id, mode)
+        self._cfg_cache: dict[tuple[str | None, str], dict[str, Any]] = {}
 
-    def _get_config(self, agent_id: str | None = None) -> dict[str, Any]:
-        if agent_id not in self._cfg_cache:
-            self._cfg_cache[agent_id] = _resolve_config(agent_id)
-        return self._cfg_cache[agent_id]
+    def _get_config(self, agent_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
+        key = (agent_id, mode)
+        if key not in self._cfg_cache:
+            self._cfg_cache[key] = _resolve_config(agent_id, mode)
+        return self._cfg_cache[key]
 
     def _is_always_blocked(self, command: str) -> str | None:
         """Return block reason if command matches an always-blocked pattern."""
@@ -124,8 +131,9 @@ class ServerCommandSkill:
         user_id: str = "unknown",
         chat_id: str = "unknown",
         agent_id: str | None = None,
+        mode: str = "agent",
     ) -> dict[str, Any]:
-        cfg = self._get_config(agent_id)
+        cfg = self._get_config(agent_id, mode)
 
         if not cfg.get("enabled", True):
             return {
