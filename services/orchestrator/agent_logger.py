@@ -12,26 +12,19 @@ read_agent_logs tool and show them in chat.
 
 import json
 import logging
-import os
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 logger = logging.getLogger("orchestrator.agent_logger")
 
 _write_lock = threading.Lock()
 
 
-def _local_tz() -> ZoneInfo:
-    """Return configured local timezone (from TZ env var or Europe/Moscow default)."""
-    tz_name = os.getenv("TZ", "Europe/Moscow")
-    try:
-        return ZoneInfo(tz_name)
-    except ZoneInfoNotFoundError:
-        logger.warning(f"Unknown timezone '{tz_name}', falling back to Europe/Moscow")
-        return ZoneInfo("Europe/Moscow")
+def _now_local() -> datetime:
+    """Return current time in the server's local timezone (auto-detected from OS)."""
+    return datetime.now().astimezone()
 
 
 def _project_root() -> Path:
@@ -73,7 +66,7 @@ class AgentActivityLogger:
         chat_id: str = "",
         source: str = "user",  # "user" | "heartbeat"
     ) -> None:
-        now = datetime.now(_local_tz())
+        now = _now_local()
         entry = {
             "ts": now.strftime("%Y-%m-%d %H:%M:%S %Z"),
             "agent": self.agent_id,
@@ -116,7 +109,7 @@ class AgentActivityLogger:
         tool_filter: only entries for this tool name
         limit:       max entries returned (most recent first)
         """
-        today = datetime.now(_local_tz()).date()
+        today = _now_local().date()
 
         # Resolve keyword dates
         def _parse(s: str):
