@@ -10,9 +10,11 @@ Orchestrator Agent — главный координирующий агент с
 - Fallback по цепочке моделей при 429/5xx
 """
 
+import asyncio
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -147,6 +149,11 @@ class OrchestratorAgent:
         # Per-user cancellation flags (set by /stop, cleared at task start)
         self._cancel_flags: dict[str, bool] = {}
 
+        # Background task registry: key = f"{user_id}:{agent_id}"
+        self._background_tasks: dict[str, asyncio.Task] = {}
+        # Completed background task results waiting to be read
+        self._background_results: dict[str, dict[str, Any]] = {}
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -194,6 +201,9 @@ class OrchestratorAgent:
             providers_config=get_providers_config(),
             activity_logger=activity_log,
             delegate_callback=self._delegate_task,
+            background_runner=self.run_agent_background,
+            get_result_callback=self.get_background_result,
+            cancel_callback=self.cancel_agent_background_tasks,
         )
 
         logger.info("Orchestrator Agent initialized")
@@ -366,16 +376,21 @@ class OrchestratorAgent:
         debug_events: list[dict] | None = None,
         mode: str = "agent",
         override_tools: list[dict] | None = None,
+        dispatcher: "ToolDispatcher | None" = None,
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
         Returns (response_text, model_id_used).
 
+        dispatcher: if provided, use this instead of self.tool_dispatcher.
+                    Pass explicitly for sub-agent calls to avoid state conflicts
+                    when background tasks run concurrently.
         debug_events: if provided, LLM round events are appended here
-        mode: "agent" = all tools; "ask" = execute_command + workspace_write blocked
+        mode: "agent" = all tools; "ask" = safe commands only (whitelist-level)
         override_tools: if set, use exactly these tools instead of mode-based selection
                         (used for heartbeat to pass only workspace_read)
         """
+        effective_dispatcher = dispatcher or self.tool_dispatcher
         model_used = model_id
         tool_context = {
             "user_id": user_id,
@@ -443,7 +458,7 @@ class OrchestratorAgent:
 
                 logger.info(f"[{task_id}] Tool call: {tool_name}({list(args.keys())})")
 
-                result = await self.tool_dispatcher.dispatch(
+                result = await effective_dispatcher.dispatch(
                     tool_name=tool_name,
                     tool_args=args,
                     context=tool_context,
@@ -474,6 +489,40 @@ class OrchestratorAgent:
             return text or self._fallback_text(), model_used
         raise LLMUnavailableError(llm_error)
 
+    def _make_sub_dispatcher(
+        self,
+        agent_id: str,
+        parent_debug_collector: list[dict] | None = None,
+    ) -> "ToolDispatcher":
+        """Create an isolated ToolDispatcher for a sub-agent (no delegate_callback)."""
+        sub_workspace = self._get_workspace(agent_id)
+        sub_logger = self._get_activity_logger(agent_id)
+        d = ToolDispatcher(
+            workspace=sub_workspace,
+            http_client=self.http_client,
+            providers_config=get_providers_config(),
+            activity_logger=sub_logger,
+            delegate_callback=None,
+        )
+        if parent_debug_collector is not None:
+            d.set_debug_collector(parent_debug_collector)
+        return d
+
+    def _resolve_agent_model(self, agent_id: str, fallback: str) -> str:
+        """
+        Resolve the model for a sub-agent in priority order:
+          1. Agent's workspace config.yaml → default_model
+          2. Global providers.yaml → agents[id].default_model
+          3. fallback (caller's active model)
+        """
+        ws_cfg = self._get_workspace(agent_id).read_config_dict()
+        if ws_cfg.get("default_model"):
+            return ws_cfg["default_model"]
+        for a in get_providers_config().get("agents", []):
+            if a.get("id") == agent_id and a.get("default_model"):
+                return a["default_model"]
+        return fallback
+
     async def _delegate_task(
         self,
         agent_id: str,
@@ -482,64 +531,124 @@ class OrchestratorAgent:
         mode: str = "agent",
     ) -> str:
         """
-        Run a task on behalf of a specialist sub-agent (e.g. 'coder').
-        Called by the delegate_to_agent tool.
-
-        The sub-agent gets its own workspace and activity logger but shares
-        the same HTTP client and model. To prevent infinite delegation loops
-        the sub-agent's dispatcher receives delegate_callback=None (AGENT_TOOLS
-        already excludes the delegate_to_agent schema too).
+        Synchronous delegation — blocks until the sub-agent finishes.
+        Uses an isolated ToolDispatcher so concurrent background calls are safe.
         """
-        sub_workspace = self._get_workspace(agent_id)
-        sub_logger = self._get_activity_logger(agent_id)
-
-        # Prefer agent-specific default_model from providers.yaml over the
-        # orchestrator's active chat model — coder may need a more capable model.
-        cfg = get_providers_config()
-        agent_default_model: str | None = None
-        for a in cfg.get("agents", []):
-            if a.get("id") == agent_id:
-                agent_default_model = a.get("default_model")
-                break
-        model_id = agent_default_model or context.get("model_id") or settings.default_chat_model
-
-        sub_dispatcher = ToolDispatcher(
-            workspace=sub_workspace,
-            http_client=self.http_client,
-            providers_config=get_providers_config(),
-            activity_logger=sub_logger,
-            delegate_callback=None,  # sub-agents cannot delegate further
+        model_id = self._resolve_agent_model(
+            agent_id, context.get("model_id") or settings.default_chat_model
         )
-
-        # Propagate debug collector so sub-agent tool calls appear in the trace
-        if self.tool_dispatcher and self.tool_dispatcher._debug_collector is not None:
-            sub_dispatcher.set_debug_collector(self.tool_dispatcher._debug_collector)
-
-        # Build sub-agent messages with its own system prompt (no shared history)
+        parent_debug = self.tool_dispatcher._debug_collector if self.tool_dispatcher else None
+        sub_dispatcher = self._make_sub_dispatcher(agent_id, parent_debug_collector=parent_debug)
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": sub_workspace.config.system_prompt},
+            {"role": "system", "content": self._get_workspace(agent_id).config.system_prompt},
             {"role": "user", "content": task},
         ]
+        logger.info(f"Delegating to '{agent_id}' (mode={mode}, model={model_id}): {task[:60]}…")
+        response_text, _ = await self._run_llm_with_tools(
+            messages=messages,
+            model_id=model_id,
+            user_id=context.get("user_id", "unknown"),
+            chat_id=context.get("chat_id", "default"),
+            task_id=f"sub-{agent_id}-{uuid4().hex[:8]}",
+            source=context.get("source", "user"),
+            agent_id=agent_id,
+            debug_events=sub_dispatcher._debug_collector,
+            mode=mode,
+            override_tools=AGENT_TOOLS,
+            dispatcher=sub_dispatcher,
+        )
+        return response_text
 
-        old_dispatcher = self.tool_dispatcher
-        self.tool_dispatcher = sub_dispatcher
-        try:
-            logger.info(f"Delegating to '{agent_id}' (mode={mode}, model={model_id}): {task[:60]}…")
-            response_text, _ = await self._run_llm_with_tools(
-                messages=messages,
-                model_id=model_id,
-                user_id=context.get("user_id", "unknown"),
-                chat_id=context.get("chat_id", "default"),
-                task_id=f"sub-{agent_id}-{uuid4().hex[:8]}",
-                source=context.get("source", "user"),
-                agent_id=agent_id,
-                debug_events=sub_dispatcher._debug_collector,
-                mode=mode,
-                override_tools=AGENT_TOOLS,  # no recursive delegation
-            )
-            return response_text
-        finally:
-            self.tool_dispatcher = old_dispatcher
+    async def run_agent_background(
+        self,
+        agent_id: str,
+        task: str,
+        context: dict[str, Any],
+        mode: str = "agent",
+        notify_callback: Callable | None = None,
+    ) -> str:
+        """
+        Start a background asyncio Task for a sub-agent. Returns immediately.
+        Result is stored in _background_results; notify_callback fires on completion.
+        """
+        user_id = context.get("user_id", "unknown")
+        key = f"{user_id}:{agent_id}"
+
+        existing = self._background_tasks.get(key)
+        if existing and not existing.done():
+            existing.cancel()
+            logger.info(f"Cancelled previous background task for {key}")
+
+        model_id = self._resolve_agent_model(
+            agent_id, context.get("model_id") or settings.default_chat_model
+        )
+        sub_dispatcher = self._make_sub_dispatcher(agent_id)
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": self._get_workspace(agent_id).config.system_prompt},
+            {"role": "user", "content": task},
+        ]
+        task_id = f"bg-{agent_id}-{uuid4().hex[:8]}"
+
+        async def _run_bg() -> None:
+            status, result_text = "completed", ""
+            try:
+                result_text, _ = await self._run_llm_with_tools(
+                    messages=messages,
+                    model_id=model_id,
+                    user_id=user_id,
+                    chat_id=context.get("chat_id", "default"),
+                    task_id=task_id,
+                    source=context.get("source", "user"),
+                    agent_id=agent_id,
+                    mode=mode,
+                    override_tools=AGENT_TOOLS,
+                    dispatcher=sub_dispatcher,
+                )
+            except asyncio.CancelledError:
+                status, result_text = "cancelled", "Задача отменена."
+                logger.info(f"Background task {task_id} cancelled")
+            except LLMUnavailableError as e:
+                status, result_text = "error", f"❌ Модель недоступна: {e}"
+                logger.warning(f"Background task {task_id} LLM error: {e}")
+            except Exception as e:
+                status = "error"
+                result_text = f"❌ Ошибка: {type(e).__name__}: {e}"
+                logger.error(f"Background task {task_id} failed: {e}", exc_info=True)
+
+            self._background_results[key] = {
+                "agent_id": agent_id,
+                "status": status,
+                "result": result_text,
+                "timestamp": datetime.now().astimezone().isoformat(),
+                "task_id": task_id,
+            }
+            if notify_callback:
+                try:
+                    await notify_callback(user_id, agent_id, status, result_text)
+                except Exception as e:
+                    logger.warning(f"Background notify callback failed: {e}")
+
+        bg = asyncio.create_task(_run_bg(), name=task_id)
+        self._background_tasks[key] = bg
+        logger.info(f"Started background task {task_id} for '{agent_id}', user={user_id}")
+        return key
+
+    def cancel_agent_background_tasks(self, agent_id: str, user_id: str) -> str:
+        """Cancel any running background task for agent_id + user_id."""
+        key = f"{user_id}:{agent_id}"
+        task = self._background_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            return f"Фоновая задача агента '{agent_id}' отменена."
+        return f"Активных фоновых задач агента '{agent_id}' не найдено."
+
+    def get_background_result(self, agent_id: str, user_id: str) -> dict[str, Any] | None:
+        """Return (and clear) completed background result, or status if still running."""
+        key = f"{user_id}:{agent_id}"
+        task = self._background_tasks.get(key)
+        if task and not task.done():
+            return {"agent_id": agent_id, "status": "running", "result": None}
+        return self._background_results.pop(key, None)
 
     async def _call_llm(
         self,

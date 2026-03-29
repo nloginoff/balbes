@@ -63,16 +63,39 @@ def _load_full_config() -> dict[str, Any]:
     return {}
 
 
+def _load_workspace_config(agent_id: str) -> dict[str, Any]:
+    """Load agent's workspace config.yaml if it exists. Returns {} on failure."""
+    try:
+        from pathlib import Path
+
+        import yaml
+
+        path = (
+            Path(__file__).parent.parent.parent.parent
+            / "data"
+            / "agents"
+            / agent_id
+            / "config.yaml"
+        )
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning(f"Failed to load workspace config for {agent_id}: {e}")
+    return {}
+
+
 def _resolve_config(agent_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
     """
     Return the effective server_commands config for the given agent and mode.
 
-    In "ask" mode the per-agent "server_commands_ask" key (if present) is used
-    instead of "server_commands", giving a restricted whitelist of safe commands.
+    In "ask" mode the "server_commands_ask" key (if present) is used instead of
+    "server_commands", giving a restricted whitelist of safe commands.
 
     Merge order (later overrides earlier):
-      1. Global  skills.server_commands
-      2. Per-agent agents[id].server_commands[_ask]  (if agent_id given)
+      1. Global  skills.server_commands  (providers.yaml)
+      2. Per-agent agents[id].server_commands[_ask]  (providers.yaml)
+      3. Per-agent workspace config.yaml server_commands[_ask]  (highest priority)
     """
     full = _load_full_config()
     global_cfg: dict[str, Any] = full.get("skills", {}).get("server_commands", {})
@@ -81,16 +104,24 @@ def _resolve_config(agent_id: str | None = None, mode: str = "agent") -> dict[st
         return global_cfg
 
     ask_key = "server_commands_ask" if mode == "ask" else "server_commands"
-    for agent in full.get("agents", []):
-        if agent.get("id") != agent_id:
-            continue
-        # Try mode-specific key first, fall back to generic server_commands
-        per_agent_raw = agent.get(ask_key) or agent.get("server_commands")
-        if per_agent_raw:
-            merged = {**global_cfg, **dict(per_agent_raw)}
-            return merged
 
-    return global_cfg
+    # Layer 2: providers.yaml per-agent override
+    providers_override: dict[str, Any] = {}
+    for agent in full.get("agents", []):
+        if agent.get("id") == agent_id:
+            raw = agent.get(ask_key) or agent.get("server_commands")
+            if raw:
+                providers_override = dict(raw)
+            break
+
+    # Layer 3: workspace config.yaml (highest priority — agent can edit this)
+    ws_cfg = _load_workspace_config(agent_id)
+    ws_override: dict[str, Any] = ws_cfg.get(ask_key) or ws_cfg.get("server_commands") or {}
+
+    merged = {**global_cfg, **providers_override}
+    if ws_override:
+        merged = {**merged, **ws_override}
+    return merged
 
 
 class ServerCommandSkill:

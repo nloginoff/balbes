@@ -42,8 +42,18 @@ BOOTSTRAP_FILES = [
     "HEARTBEAT.md",
 ]
 
-# Files the agent is allowed to write to
-WRITEABLE_FILES = {"AGENTS.md", "SOUL.md", "USER.md", "MEMORY.md", "IDENTITY.md", "HEARTBEAT.md"}
+# Files the agent is allowed to write to via workspace_write tool.
+# config.yaml is treated specially: readable/writable but NOT injected into
+# the system prompt — it holds structured settings the system reads directly.
+WRITEABLE_FILES = {
+    "AGENTS.md",
+    "SOUL.md",
+    "USER.md",
+    "MEMORY.md",
+    "IDENTITY.md",
+    "HEARTBEAT.md",
+    "config.yaml",
+}
 
 
 @dataclass
@@ -272,8 +282,27 @@ class AgentWorkspace:
             timer.start()
             _push_timers[key] = timer
 
+    def read_config_dict(self) -> dict:
+        """
+        Parse and return the agent's config.yaml as a dict.
+        Returns an empty dict if the file doesn't exist or fails to parse.
+        This is the structured config that the system reads directly (not injected
+        into the LLM system prompt — use workspace_read('config.yaml') for that).
+        """
+        path = self.workspace_dir / "config.yaml"
+        if not path.exists():
+            return {}
+        try:
+            import yaml
+
+            with open(path, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.warning(f"[{self.agent_id}] Failed to parse config.yaml: {e}")
+            return {}
+
     def list_files(self) -> list[str]:
         """Return list of existing workspace files."""
         if not self.workspace_dir.exists():
             return []
-        return [f.name for f in self.workspace_dir.iterdir() if f.suffix == ".md"]
+        return [f.name for f in self.workspace_dir.iterdir() if f.suffix in (".md", ".yaml")]

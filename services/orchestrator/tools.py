@@ -208,8 +208,62 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                         "enum": ["agent", "ask"],
                         "default": "agent",
                     },
+                    "background": {
+                        "type": "boolean",
+                        "description": (
+                            "If true, run the task in the background and return immediately. "
+                            "Use when the task is long-running and the user should not wait. "
+                            "Retrieve the result later with get_agent_result(agent_id). "
+                            "Default: false (synchronous, wait for result)."
+                        ),
+                        "default": False,
+                    },
                 },
                 "required": ["agent_id", "task"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_agent_result",
+            "description": (
+                "Retrieve the result of a background agent task. "
+                "Returns the result text if completed, 'running' if still in progress, "
+                "or null if no task was started. Always call this before telling the "
+                "user the coder is done with a background task."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent whose result to retrieve, e.g. 'coder'",
+                        "enum": ["coder"],
+                    },
+                },
+                "required": ["agent_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_agent_task",
+            "description": (
+                "Cancel a running background task for a specific agent. "
+                "Use when the user says 'stop the coder', 'cancel coder task', etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent whose task to cancel, e.g. 'coder'",
+                        "enum": ["coder"],
+                    },
+                },
+                "required": ["agent_id"],
             },
         },
     },
@@ -307,15 +361,23 @@ class ToolDispatcher:
         providers_config=None,
         activity_logger=None,
         delegate_callback=None,
+        background_runner=None,
+        get_result_callback=None,
+        cancel_callback=None,
     ):
         self.workspace = workspace
         self.http_client = http_client
         self.providers_config = providers_config
         self._logger = activity_logger  # AgentActivityLogger | None
         self._debug_collector: list[dict] | None = None  # set per-task when debug=True
-        # async callable(agent_id, task, context, mode) -> str
-        # Set to None for sub-agents to prevent recursive delegation.
+        # async (agent_id, task, context, mode) -> str  — synchronous delegation
         self._delegate_callback = delegate_callback
+        # async (agent_id, task, context, mode, notify_cb) -> key  — background delegation
+        self._background_runner = background_runner
+        # (agent_id, user_id) -> dict | None  — retrieve background result
+        self._get_result_callback = get_result_callback
+        # (agent_id, user_id) -> str  — cancel background task
+        self._cancel_callback = cancel_callback
 
         # Lazy-loaded skill instances
         self._web_search = None
@@ -375,6 +437,12 @@ class ToolDispatcher:
 
             elif tool_name == "delegate_to_agent":
                 result = await self._do_delegate_to_agent(tool_args, context)
+
+            elif tool_name == "get_agent_result":
+                result = self._do_get_agent_result(tool_args, context)
+
+            elif tool_name == "cancel_agent_task":
+                result = self._do_cancel_agent_task(tool_args, context)
 
             elif tool_name == "read_agent_logs":
                 result = self._do_read_agent_logs(tool_args)
@@ -534,16 +602,38 @@ class ToolDispatcher:
             return f"Failed to save to memory: {e}"
 
     async def _do_delegate_to_agent(self, args: dict[str, Any], context: dict[str, Any]) -> str:
-        if not self._delegate_callback:
+        if not self._delegate_callback and not self._background_runner:
             return "Delegation is not available (sub-agents cannot delegate further)."
 
         agent_id = args.get("agent_id", "coder")
         task = args.get("task", "").strip()
         mode = args.get("mode", "agent")
+        background = bool(args.get("background", False))
 
         if not task:
             return "Delegation failed: no task description provided."
 
+        if background:
+            if not self._background_runner:
+                return "Background delegation not available."
+            try:
+                key = await self._background_runner(
+                    agent_id=agent_id,
+                    task=task,
+                    context=context,
+                    mode=mode,
+                    notify_callback=None,
+                )
+                return (
+                    f"✅ Задача передана агенту '{agent_id}' (фоновый режим, ключ: {key}). "
+                    "Используй get_agent_result для получения результата когда агент завершит работу."
+                )
+            except Exception as e:
+                return f"Ошибка запуска фоновой задачи для '{agent_id}': {type(e).__name__}: {e}"
+
+        # Synchronous delegation
+        if not self._delegate_callback:
+            return "Synchronous delegation not available."
         try:
             result = await self._delegate_callback(
                 agent_id=agent_id,
@@ -555,6 +645,28 @@ class ToolDispatcher:
         except Exception as e:
             logger.error(f"Delegation to {agent_id} failed: {e}", exc_info=True)
             return f"Delegation to '{agent_id}' failed: {type(e).__name__}: {e}"
+
+    def _do_get_agent_result(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        if not self._get_result_callback:
+            return "get_agent_result not available."
+        agent_id = args.get("agent_id", "coder")
+        user_id = context.get("user_id", "unknown")
+        res = self._get_result_callback(agent_id, user_id)
+        if res is None:
+            return f"Нет результатов от агента '{agent_id}'. Задача не была запущена или результат уже был прочитан."
+        status = res.get("status", "unknown")
+        if status == "running":
+            return f"Агент '{agent_id}' всё ещё работает над задачей. Попробуй позже."
+        result_text = res.get("result", "")
+        ts = res.get("timestamp", "")
+        return f"[Agent {agent_id}] ({status}, {ts}):\n{result_text}"
+
+    def _do_cancel_agent_task(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        if not self._cancel_callback:
+            return "cancel_agent_task not available."
+        agent_id = args.get("agent_id", "coder")
+        user_id = context.get("user_id", "unknown")
+        return self._cancel_callback(agent_id, user_id)
 
     def _do_read_agent_logs(self, args: dict[str, Any]) -> str:
         if not self._logger:
@@ -612,7 +724,12 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         agent = args.get("agent_id", "?")
         task_preview = args.get("task", "")[:60]
         mode = args.get("mode", "agent")
-        return f"agent='{agent}' mode='{mode}' task='{task_preview}'"
+        bg = " [bg]" if args.get("background") else ""
+        return f"agent='{agent}' mode='{mode}'{bg} task='{task_preview}'"
+    if tool_name == "get_agent_result":
+        return f"agent='{args.get('agent_id', '?')}'"
+    if tool_name == "cancel_agent_task":
+        return f"agent='{args.get('agent_id', '?')}'"
     return str(args)[:80]
 
 
