@@ -49,28 +49,53 @@ ALWAYS_BLOCKED = [
 ]
 
 
-def _load_config() -> dict[str, Any]:
+def _load_full_config() -> dict[str, Any]:
+    """Load the entire providers.yaml, returning empty dict on failure."""
     try:
         import yaml
 
         cfg_path = Path(__file__).parent.parent.parent.parent / "config" / "providers.yaml"
         if cfg_path.exists():
             with open(cfg_path, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
-            return data.get("skills", {}).get("server_commands", {})
+                return yaml.safe_load(f) or {}
     except Exception as e:
         logger.warning(f"Failed to load providers.yaml: {e}")
     return {}
 
 
+def _resolve_config(agent_id: str | None = None) -> dict[str, Any]:
+    """
+    Return the effective server_commands config for the given agent.
+
+    Merge order (later overrides earlier):
+      1. Global  skills.server_commands
+      2. Per-agent agents[id].server_commands  (if agent_id given)
+    """
+    full = _load_full_config()
+    global_cfg: dict[str, Any] = full.get("skills", {}).get("server_commands", {})
+
+    if not agent_id:
+        return global_cfg
+
+    for agent in full.get("agents", []):
+        if agent.get("id") == agent_id and "server_commands" in agent:
+            per_agent = dict(agent["server_commands"])
+            # Merge: per-agent overrides global, but keep global keys not present in per-agent
+            merged = {**global_cfg, **per_agent}
+            return merged
+
+    return global_cfg
+
+
 class ServerCommandSkill:
     def __init__(self):
-        self._cfg: dict[str, Any] | None = None
+        # Cache is keyed by agent_id (None = global)
+        self._cfg_cache: dict[str | None, dict[str, Any]] = {}
 
-    def _get_config(self) -> dict[str, Any]:
-        if self._cfg is None:
-            self._cfg = _load_config()
-        return self._cfg
+    def _get_config(self, agent_id: str | None = None) -> dict[str, Any]:
+        if agent_id not in self._cfg_cache:
+            self._cfg_cache[agent_id] = _resolve_config(agent_id)
+        return self._cfg_cache[agent_id]
 
     def _is_always_blocked(self, command: str) -> str | None:
         """Return block reason if command matches an always-blocked pattern."""
@@ -98,8 +123,9 @@ class ServerCommandSkill:
         command: str,
         user_id: str = "unknown",
         chat_id: str = "unknown",
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
-        cfg = self._get_config()
+        cfg = self._get_config(agent_id)
 
         if not cfg.get("enabled", True):
             return {
@@ -127,18 +153,29 @@ class ServerCommandSkill:
             }
 
         mode = cfg.get("mode", "whitelist")
+        if mode == "disabled":
+            return {
+                "command": command,
+                "stdout": "",
+                "stderr": f"Server commands disabled for agent '{agent_id or 'global'}'",
+                "exit_code": 1,
+                "blocked": True,
+                "block_reason": "Disabled for this agent",
+            }
         if mode == "whitelist":
             allowed = cfg.get("allowed_commands", [])
             if not self._is_whitelisted(command, allowed):
+                agent_label = f"agent '{agent_id}'" if agent_id else "global whitelist"
                 logger.warning(
-                    f"NOT WHITELISTED command from user={user_id} chat={chat_id}: '{command}'"
+                    f"NOT WHITELISTED command from user={user_id} chat={chat_id} "
+                    f"agent={agent_id}: '{command}'"
                 )
                 return {
                     "command": command,
                     "stdout": "",
                     "stderr": (
-                        f"Command not in whitelist: '{command}'\n"
-                        f"Allowed commands: {', '.join(allowed[:10])}"
+                        f"Command not in whitelist for {agent_label}: '{command}'\n"
+                        f"Allowed: {', '.join(allowed[:15])}"
                     ),
                     "exit_code": 1,
                     "blocked": True,

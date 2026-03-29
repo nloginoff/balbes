@@ -85,15 +85,85 @@ providers:
 
 
 # Available agents (shown in /agents menu)
+# Each agent can override: fallback_chain, token_limits, server_commands
+# Omitted fields fall back to the global defaults defined below.
 agents:
   - id: "orchestrator"
     display_name: "Balbes"
     description: "Основной интеллектуальный ассистент"
     emoji: "🤖"
+
+    # Fallback chain for this agent (free → cheap only)
+    fallback_chain:
+      - "openrouter/stepfun/step-3.5-flash:free"
+      - "openrouter/meta-llama/llama-3.3-70b-instruct"
+      - "openrouter/minimax/minimax-m2.5"
+
+    # Token budget for this agent
+    token_limits:
+      daily: 100000
+      hourly: 15000
+
+    # Server commands this agent is allowed to run
+    server_commands:
+      mode: whitelist           # whitelist | any | disabled
+      timeout_seconds: 30
+      allowed_commands:
+        - "df -h"
+        - "free -h"
+        - "uptime"
+        - "docker ps"
+        - "docker logs {container}"
+        - "docker stats --no-stream"
+        - "systemctl status {service}"
+        - "ps aux"
+        - "ping -c 4 {host}"
+
   - id: "coder"
     display_name: "Coder"
     description: "Специалист по написанию и анализу кода"
     emoji: "💻"
+
+    # Coder gets medium models as fallback for better code quality
+    fallback_chain:
+      - "openrouter/stepfun/step-3.5-flash:free"
+      - "openrouter/moonshotai/kimi-k2.5"
+      - "openrouter/meta-llama/llama-3.3-70b-instruct"
+      - "openrouter/minimax/minimax-m2.5"
+
+    # Coder can use more tokens (large codebases)
+    token_limits:
+      daily: 200000
+      hourly: 30000
+
+    # Coder has broader command access for development tasks
+    server_commands:
+      mode: whitelist
+      timeout_seconds: 60       # longer timeout for builds/tests
+      allowed_commands:
+        - "python {script}"
+        - "python3 {script}"
+        - "pip install {package}"
+        - "pip list"
+        - "pip show {package}"
+        - "node {script}"
+        - "npm {command}"
+        - "npm run {script}"
+        - "git status"
+        - "git log --oneline -20"
+        - "git log --oneline -{n}"
+        - "git diff"
+        - "git diff {file}"
+        - "git branch"
+        - "ls {path}"
+        - "ls -la {path}"
+        - "cat {file}"
+        - "head -n {n} {file}"
+        - "tail -n {n} {file}"
+        - "wc -l {file}"
+        - "find {path} -name {pattern}"
+        - "df -h"
+        - "free -h"
 
 
 # Models available for user selection (shown in /model menu)

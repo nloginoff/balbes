@@ -275,6 +275,7 @@ class OrchestratorAgent:
                 chat_id=chat_id,
                 task_id=task_id,
                 source=context.get("source", "user") if context else "user",
+                agent_id=effective_agent_id,
             )
 
             # Save assistant response to history
@@ -317,6 +318,7 @@ class OrchestratorAgent:
         chat_id: str,
         task_id: str,
         source: str = "user",
+        agent_id: str | None = None,
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
@@ -326,6 +328,7 @@ class OrchestratorAgent:
         tool_context = {
             "user_id": user_id,
             "chat_id": chat_id,
+            "agent_id": agent_id or self.agent_id,
             "memory_service_url": self.memory_service_url,
             "openrouter_api_key": settings.openrouter_api_key,
             "source": source,
@@ -340,6 +343,7 @@ class OrchestratorAgent:
                 messages=messages,
                 model_id=model_id,
                 with_tools=True,
+                agent_id=agent_id,
             )
 
             if response_data is None:
@@ -392,6 +396,7 @@ class OrchestratorAgent:
             messages=messages,
             model_id=model_id,
             with_tools=False,
+            agent_id=agent_id,
         )
         if response_data:
             text = (
@@ -405,6 +410,7 @@ class OrchestratorAgent:
         messages: list[dict[str, Any]],
         model_id: str,
         with_tools: bool = True,
+        agent_id: str | None = None,
     ) -> tuple[dict[str, Any] | None, str]:
         """
         Call LLM API with fallback chain.
@@ -413,7 +419,7 @@ class OrchestratorAgent:
         if not self.http_client or not settings.openrouter_api_key:
             return None, model_id
 
-        candidates = self._get_model_candidates(model_id)
+        candidates = self._get_model_candidates(model_id, agent_id=agent_id)
 
         for candidate in candidates:
             openrouter_model = self._to_openrouter_id(candidate)
@@ -480,10 +486,30 @@ class OrchestratorAgent:
             return active[0]["id"]
         return settings.default_chat_model
 
-    def _get_model_candidates(self, primary_model_id: str) -> list[str]:
-        """Return ordered fallback chain starting from primary."""
+    def _get_model_candidates(
+        self, primary_model_id: str, agent_id: str | None = None
+    ) -> list[str]:
+        """
+        Return ordered fallback chain starting from primary model.
+
+        Lookup order:
+          1. Per-agent fallback_chain from providers.yaml (if agent_id given)
+          2. Global default_fallback_chain
+          3. CHAT_FALLBACK_MODELS env var
+        """
         cfg = get_providers_config()
-        chain = [entry.get("model") for entry in cfg.get("default_fallback_chain", [])]
+
+        # Try per-agent chain first
+        agent_chain: list[str] = []
+        if agent_id:
+            for a in cfg.get("agents", []):
+                if a.get("id") == agent_id and "fallback_chain" in a:
+                    agent_chain = a["fallback_chain"]
+                    break
+
+        global_chain = [entry.get("model") for entry in cfg.get("default_fallback_chain", [])]
+        chain = agent_chain if agent_chain else global_chain
+
         candidates: list[str] = []
         for m in [primary_model_id] + chain:
             if m and m not in candidates:

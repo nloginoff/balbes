@@ -360,6 +360,7 @@ class ToolDispatcher:
             command=args["command"],
             user_id=context.get("user_id", "unknown"),
             chat_id=context.get("chat_id", "unknown"),
+            agent_id=context.get("agent_id"),
         )
         output = result.get("stdout", "").strip()
         stderr = result.get("stderr", "").strip()
