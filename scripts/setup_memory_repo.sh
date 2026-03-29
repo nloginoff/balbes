@@ -77,10 +77,12 @@ if [[ -d ".git" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Case 2: Remote repo already exists (e.g. setting up PROD) — clone it
+# Case 2: Remote repo has commits (e.g. setting up PROD after DEV is done)
 # ---------------------------------------------------------------------------
-if git ls-remote "$REPO_URL" HEAD &>/dev/null; then
-    echo "🌐  Remote repo exists. Importing into data/agents/..."
+REMOTE_HEAD="$(git ls-remote "$REPO_URL" HEAD 2>/dev/null | awk '{print $1}')"
+
+if [[ -n "$REMOTE_HEAD" ]]; then
+    echo "🌐  Remote repo has commits. Cloning into data/agents/..."
 
     TMPDIR_CLONE="$(mktemp -d)"
     git clone --depth=1 "$REPO_URL" "$TMPDIR_CLONE/clone"
@@ -93,7 +95,7 @@ if git ls-remote "$REPO_URL" HEAD &>/dev/null; then
     echo "✅  Cloned existing memory repo into data/agents/"
     echo ""
 
-    # Check if we have local files not yet in the repo and commit them
+    # Commit any local files not yet in the remote repo
     git add -A
     if ! git diff --cached --quiet 2>/dev/null; then
         git commit -m "sync: merge local files from this host"
@@ -102,8 +104,11 @@ if git ls-remote "$REPO_URL" HEAD &>/dev/null; then
     exit 0
 fi
 
+echo "ℹ️   Remote repo is empty (no commits yet). Initializing fresh..."
+echo ""
+
 # ---------------------------------------------------------------------------
-# Case 3: Fresh init — new empty remote repo
+# Case 3: Fresh init — new empty remote repo (most common first-time case)
 # ---------------------------------------------------------------------------
 echo "🔧  Initializing fresh memory repo in data/agents/ ..."
 git init -b master
