@@ -181,6 +181,7 @@ class OrchestratorAgent:
         user_id: str,
         chat_id: str | None = None,
         agent_id: str | None = None,
+        model_id: str | None = None,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
@@ -191,6 +192,8 @@ class OrchestratorAgent:
             user_id: Telegram user_id (string)
             chat_id: Chat session ID. If None, uses/creates default chat.
             agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
+            model_id: Override model for this task. If None, uses the chat's configured model.
+                      Pass explicitly for heartbeat (free model) or tests.
             context: Extra context dict (unused externally, kept for compat)
         """
         task_id = str(uuid4())
@@ -210,8 +213,9 @@ class OrchestratorAgent:
             # Load chat history
             history = await self._get_chat_history(user_id, chat_id)
 
-            # Get model for this chat
-            model_id = await self._get_model_for_chat(user_id, chat_id)
+            # Model: use the explicit override if provided, otherwise the chat's configured model
+            if model_id is None:
+                model_id = await self._get_model_for_chat(user_id, chat_id)
 
             # Load workspace for the selected agent (cached after first use)
             workspace = self._get_workspace(effective_agent_id)

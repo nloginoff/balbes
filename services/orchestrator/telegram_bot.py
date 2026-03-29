@@ -131,6 +131,7 @@ def _load_heartbeat_config() -> dict:
     return {
         "enabled": cfg.get("enabled", False),
         "every_minutes": cfg.get("every_minutes", 30),
+        "model": cfg.get("model") or None,  # None = use chat's own model
         "active_hours_start": cfg.get("active_hours_start", "08:00"),
         "active_hours_end": cfg.get("active_hours_end", "23:00"),
         "target_user_id": cfg.get("target_user_id") or settings.telegram_user_id,
@@ -255,13 +256,18 @@ class BalbesTelegramBot:
         logger.debug(f"Heartbeat: running for user {user_id}")
 
         try:
+            params: dict = {
+                "user_id": user_id,
+                "description": HEARTBEAT_PROMPT,
+                "agent_id": "orchestrator",
+            }
+            # Use the heartbeat-specific model if configured, otherwise the chat model
+            if cfg.get("model"):
+                params["model_id"] = cfg["model"]
+
             response = await self._get_http().post(
                 f"{self.orchestrator_url}/api/v1/tasks",
-                params={
-                    "user_id": user_id,
-                    "description": HEARTBEAT_PROMPT,
-                    "agent_id": "orchestrator",
-                },
+                params=params,
                 timeout=90.0,
             )
         except Exception as e:

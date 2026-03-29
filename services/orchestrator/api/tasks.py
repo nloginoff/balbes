@@ -17,6 +17,7 @@ async def create_task(
     description: str,
     chat_id: str | None = None,
     agent_id: str | None = None,
+    model_id: str | None = None,
 ) -> dict:
     """
     Create and execute a task within a chat session.
@@ -26,6 +27,7 @@ async def create_task(
         description: Task / message text
         chat_id: Chat session ID (optional, uses active chat if omitted)
         agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
+        model_id: Override model for this task (e.g. heartbeat uses a fixed free model).
     """
     import main as orchestrator_main
 
@@ -41,6 +43,7 @@ async def create_task(
             user_id=user_id,
             chat_id=chat_id,
             agent_id=agent_id,
+            model_id=model_id,
         )
         return result
 

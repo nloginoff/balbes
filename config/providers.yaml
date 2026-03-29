@@ -215,8 +215,9 @@ skills:
 # Heartbeat — proactive agent messaging
 # The agent wakes up on schedule, reads HEARTBEAT.md, and messages the user if needed.
 heartbeat:
-  enabled: false                 # set to true to activate proactive messages
-  every_minutes: 30              # how often to run (minimum 5)
+  enabled: true                  # proactive agent messages are active
+  every_minutes: 5               # how often to run (minimum 5)
+  model: "openrouter/stepfun/step-3.5-flash:free"   # always use this model (free, ignores chat model)
   active_hours_start: "09:00"    # local time — don't run before this hour
   active_hours_end: "23:00"      # local time — don't run after this hour
   target_user_id: ${TELEGRAM_USER_ID}   # Telegram user_id to send proactive messages to
