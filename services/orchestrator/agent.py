@@ -214,6 +214,10 @@ class OrchestratorAgent:
         self._task_registry: dict[str, dict[str, Any]] = {}
         self._TASK_REGISTRY_MAX = 50  # total entries kept
 
+        # Live debug event buffer for background tasks: key = f"{user_id}:{agent_id}"
+        # Events are appended by the sub-agent's _run_llm_with_tools; drained by poll_bg_task.
+        self._bg_debug_buffer: dict[str, list[dict[str, Any]]] = {}
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -370,6 +374,9 @@ class OrchestratorAgent:
             if self.tool_dispatcher:
                 self.tool_dispatcher.set_debug_collector(debug_events if debug else None)
 
+            # Snapshot background task keys before LLM run to detect new delegations
+            _bg_keys_before = set(self._background_tasks.keys())
+
             # Run LLM with tool call loop
             response_text, model_used = await self._run_llm_with_tools(
                 messages=messages,
@@ -384,6 +391,15 @@ class OrchestratorAgent:
                 # Heartbeat uses only workspace_read — all other tools add tokens with no benefit
                 override_tools=HEARTBEAT_TOOLS if is_heartbeat else None,
             )
+
+            # Detect newly started background tasks during this execution
+            _bg_keys_after = set(self._background_tasks.keys())
+            _new_bg_keys = _bg_keys_after - _bg_keys_before
+            background_tasks_started = [
+                {"agent_id": k.split(":", 1)[1], "key": k}
+                for k in _new_bg_keys
+                if ":" in k and k.split(":", 1)[0] == user_id
+            ]
 
             # Detach debug collector
             if self.tool_dispatcher:
@@ -406,6 +422,8 @@ class OrchestratorAgent:
                 "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
+            if background_tasks_started:
+                result["background_tasks_started"] = background_tasks_started
             if debug and debug_events:
                 result["debug_events"] = debug_events
             return result
@@ -466,6 +484,10 @@ class OrchestratorAgent:
                         (used for heartbeat to pass only workspace_read)
         """
         effective_dispatcher = dispatcher or self.tool_dispatcher
+        # Attach debug collector to dispatcher so tool events (tool_start/tool_done)
+        # are also captured — important for background task streaming.
+        if debug_events is not None and effective_dispatcher:
+            effective_dispatcher.set_debug_collector(debug_events)
         model_used = model_id
         tool_context = {
             "user_id": user_id,
@@ -683,6 +705,10 @@ class OrchestratorAgent:
         ]
         task_id = f"bg-{agent_id}-{uuid4().hex[:8]}"
 
+        # Shared debug buffer: events are appended by _run_llm_with_tools and
+        # drained periodically by the bot's background monitor via poll_bg_task().
+        bg_debug: list[dict[str, Any]] = []
+
         async def _run_bg() -> None:
             status, result_text = "completed", ""
             try:
@@ -697,6 +723,7 @@ class OrchestratorAgent:
                     mode=mode,
                     override_tools=AGENT_TOOLS,
                     dispatcher=sub_dispatcher,
+                    debug_events=bg_debug,
                 )
             except asyncio.CancelledError:
                 status, result_text = "cancelled", "Задача отменена."
@@ -723,6 +750,7 @@ class OrchestratorAgent:
                 except Exception as e:
                     logger.warning(f"Background notify callback failed: {e}")
 
+        self._bg_debug_buffer[key] = bg_debug
         self._register_task(
             task_id=task_id,
             agent_id=agent_id,
@@ -794,6 +822,65 @@ class OrchestratorAgent:
         finished = [e for e in entries if e.get("status") != "running"]
         finished.sort(key=lambda e: e.get("started_at", ""), reverse=True)
         return (running + finished)[:limit]
+
+    def drain_bg_debug(self, key: str) -> list[dict[str, Any]]:
+        """Return and clear accumulated debug events for a background task."""
+        buf = self._bg_debug_buffer.get(key)
+        if not buf:
+            return []
+        events = buf[:]
+        buf.clear()
+        return events
+
+    def poll_bg_task(
+        self, user_id: str, agent_id: str, consume_result: bool = False
+    ) -> dict[str, Any]:
+        """
+        Poll the current state of a background task.
+        Returns: {status, events (drained), result (if finished), finished_at}
+        consume_result=True pops the result from _background_results (used by monitor on delivery).
+        """
+        key = f"{user_id}:{agent_id}"
+
+        # Determine live status
+        bg_task = self._background_tasks.get(key)
+        if bg_task and not bg_task.done():
+            status = "running"
+        elif key in self._background_results:
+            status = self._background_results[key].get("status", "completed")
+        else:
+            # No record at all — either never started or already consumed
+            task_entry = next(
+                (
+                    e
+                    for e in self._task_registry.values()
+                    if e.get("user_id") == user_id
+                    and e.get("agent_id") == agent_id
+                    and e.get("background")
+                ),
+                None,
+            )
+            status = task_entry.get("status", "unknown") if task_entry else "unknown"
+
+        events = self.drain_bg_debug(key)
+
+        result_text: str | None = None
+        finished_at: str | None = None
+        if status != "running":
+            if consume_result:
+                bg_res = self._background_results.pop(key, None)
+            else:
+                bg_res = self._background_results.get(key)
+            if bg_res:
+                result_text = bg_res.get("result")
+                finished_at = bg_res.get("timestamp")
+
+        return {
+            "status": status,
+            "events": events,
+            "result": result_text,
+            "finished_at": finished_at,
+        }
 
     def cancel_agent_background_tasks(self, agent_id: str, user_id: str) -> str:
         """Cancel any running background task for agent_id + user_id."""

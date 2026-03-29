@@ -200,6 +200,12 @@ class BalbesTelegramBot:
         # Heartbeat background task
         self._heartbeat_task: asyncio.Task | None = None
 
+        # Background task monitors: key = f"{user_id}:{agent_id}" → asyncio.Task
+        # Each monitor polls the orchestrator for progress and sends updates to Telegram.
+        self._bg_monitors: dict[str, asyncio.Task] = {}
+        # Maps monitor key → Telegram chat_id (int) so the monitor knows where to write
+        self._bg_monitor_chat: dict[str, int] = {}
+
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
@@ -631,7 +637,12 @@ class BalbesTelegramBot:
         return False
 
     @staticmethod
-    def _format_debug_trace(debug_events: list[dict], duration_ms: float) -> str:
+    def _format_debug_trace(
+        debug_events: list[dict],
+        elapsed_ms: float | None,
+        agent_prefix: str | None = None,
+        batch: int | None = None,
+    ) -> str:
         """
         Format orchestrator debug events into a compact HTML trace.
 
@@ -642,13 +653,23 @@ class BalbesTelegramBot:
           [orchestrator] 🔧 delegate_to_agent ← agent='coder'…
           [coder] LLM round 1 → model
           [coder] 🔧 execute_command ← cmd='git status'
+
+        agent_prefix: when showing streaming bg-task updates, prefix with agent name.
+        batch: if set, shown as "(часть N)" for streaming batches.
         """
         import html as _html
 
         if not debug_events:
             return ""
 
-        lines = ["⚙️ <b>Трейс выполнения:</b>"]
+        if agent_prefix and batch is not None:
+            header = f"⚙️ <b>[{_html.escape(agent_prefix)}] трейс (часть {batch}):</b>"
+        elif agent_prefix:
+            header = f"⚙️ <b>[{_html.escape(agent_prefix)}] трейс:</b>"
+        else:
+            header = "⚙️ <b>Трейс выполнения:</b>"
+
+        lines = [header]
         for ev in debug_events:
             t = ev.get("type")
             raw_agent = ev.get("agent", "")
@@ -669,7 +690,8 @@ class BalbesTelegramBot:
                 icon = "✅" if ok else "❌"
                 lines.append(f"     {icon} → {summary} <i>({ms}ms)</i>")
 
-        lines.append(f"  ⏱ Итого: <i>{duration_ms:.0f}ms</i>")
+        if elapsed_ms is not None:
+            lines.append(f"  ⏱ Итого: <i>{elapsed_ms:.0f}ms</i>")
         return "\n".join(lines)
 
     # -------------------------------------------------------------------------
@@ -1094,8 +1116,20 @@ class BalbesTelegramBot:
         user_id = str(user.id)
         task = self._active_tasks.get(user_id)
 
+        # Also cancel all background monitors for this user
+        monitor_keys = [k for k in self._bg_monitors if k.startswith(f"{user_id}:")]
+        for k in monitor_keys:
+            mon = self._bg_monitors.pop(k, None)
+            if mon and not mon.done():
+                mon.cancel()
+
         if not task or task.done():
-            await update.message.reply_text("✅ Нет активных задач для остановки")
+            if monitor_keys:
+                await update.message.reply_text(
+                    f"✋ Остановлены фоновые мониторы: {', '.join(k.split(':')[1] for k in monitor_keys)}"
+                )
+            else:
+                await update.message.reply_text("✅ Нет активных задач для остановки")
             return
 
         # Cancel the bot-side asyncio task (interrupts the HTTP wait immediately)
@@ -1156,6 +1190,152 @@ class BalbesTelegramBot:
 
         text = "\n".join(lines)
         await update.message.reply_text(text, parse_mode="HTML")
+
+    def _start_bg_monitor(
+        self,
+        tg_chat_id: int,
+        user_id: str,
+        agent_id: str,
+        debug: bool,
+    ) -> None:
+        """Spawn an asyncio task that polls the background agent and reports to Telegram."""
+        key = f"{user_id}:{agent_id}"
+        existing = self._bg_monitors.get(key)
+        if existing and not existing.done():
+            return  # already monitoring this agent for this user
+        self._bg_monitor_chat[key] = tg_chat_id
+        task = asyncio.create_task(
+            self._bg_monitor_loop(tg_chat_id, user_id, agent_id, debug),
+            name=f"bgmon-{key}",
+        )
+        self._bg_monitors[key] = task
+
+    async def _bg_monitor_loop(
+        self,
+        tg_chat_id: int,
+        user_id: str,
+        agent_id: str,
+        debug: bool,
+    ) -> None:
+        """
+        Poll orchestrator every 5 seconds for debug events and completion status.
+        Sends live debug traces to the Telegram chat; auto-sends final result on done.
+        """
+        key = f"{user_id}:{agent_id}"
+        batch_num = 0
+        poll_interval = 5  # seconds
+
+        try:
+            while True:
+                await asyncio.sleep(poll_interval)
+
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.get(
+                            f"{self.orchestrator_url}/api/v1/tasks/bg/events",
+                            params={"user_id": user_id, "agent_id": agent_id},
+                        )
+                        if resp.status_code != 200:
+                            logger.warning(f"[bgmon] poll returned {resp.status_code} for {key}")
+                            continue
+                        data = resp.json()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning(f"[bgmon] poll error for {key}: {e}")
+                    continue
+
+                events = data.get("events", [])
+                current_status = data.get("status", "running")
+
+                # Send debug trace batch if debug is on and there are new events
+                if debug and events:
+                    batch_num += 1
+                    trace = self._format_debug_trace(
+                        events,
+                        elapsed_ms=None,
+                        agent_prefix=agent_id,
+                        batch=batch_num,
+                    )
+                    if trace:
+                        try:
+                            await self.app.bot.send_message(tg_chat_id, trace, parse_mode="HTML")
+                        except Exception as e:
+                            logger.warning(f"[bgmon] debug send failed: {e}")
+
+                if current_status != "running":
+                    # Final poll — consume the result
+                    try:
+                        async with httpx.AsyncClient(timeout=10) as client:
+                            final_resp = await client.get(
+                                f"{self.orchestrator_url}/api/v1/tasks/bg/events",
+                                params={
+                                    "user_id": user_id,
+                                    "agent_id": agent_id,
+                                    "consume_result": "true",
+                                },
+                            )
+                            final_data = (
+                                final_resp.json() if final_resp.status_code == 200 else data
+                            )
+                    except Exception:
+                        final_data = data
+
+                    # Send any remaining events
+                    last_events = final_data.get("events", [])
+                    if debug and last_events:
+                        batch_num += 1
+                        trace = self._format_debug_trace(
+                            last_events,
+                            elapsed_ms=None,
+                            agent_prefix=agent_id,
+                            batch=batch_num,
+                        )
+                        if trace:
+                            try:
+                                await self.app.bot.send_message(
+                                    tg_chat_id, trace, parse_mode="HTML"
+                                )
+                            except Exception:
+                                pass
+
+                    # Send final result
+                    result_text = final_data.get("result") or ""
+                    status_label = final_data.get("status", current_status)
+                    finished_at = (final_data.get("finished_at") or "")[:16].replace("T", " ")
+
+                    if status_label == "completed":
+                        header = f"✅ <b>[{agent_id}]</b> завершил задачу"
+                    elif status_label == "cancelled":
+                        header = f"🚫 <b>[{agent_id}]</b> задача отменена"
+                    else:
+                        header = f"❌ <b>[{agent_id}]</b> задача завершилась с ошибкой"
+
+                    if finished_at:
+                        header += f" <i>({finished_at})</i>"
+
+                    try:
+                        await self.app.bot.send_message(tg_chat_id, header, parse_mode="HTML")
+                    except Exception:
+                        pass
+
+                    if result_text:
+                        try:
+                            await self.app.bot.send_message(
+                                tg_chat_id, result_text, parse_mode="Markdown"
+                            )
+                        except Exception:
+                            try:
+                                await self.app.bot.send_message(tg_chat_id, result_text)
+                            except Exception:
+                                pass
+                    break
+
+        except asyncio.CancelledError:
+            logger.info(f"[bgmon] monitor cancelled for {key}")
+        finally:
+            self._bg_monitors.pop(key, None)
+            self._bg_monitor_chat.pop(key, None)
 
     async def _cancel_orchestrator_task(self, user_id: str) -> None:
         """Send a cancel signal to the orchestrator for this user."""
@@ -1464,13 +1644,26 @@ class BalbesTelegramBot:
                         # Send debug trace before the main response (HTML mode — safe for any content)
                         debug_events = result.get("debug_events")
                         if debug_events:
-                            duration_ms = result.get("duration_ms", 0)
-                            trace = self._format_debug_trace(debug_events, duration_ms)
+                            trace = self._format_debug_trace(
+                                debug_events,
+                                elapsed_ms=result.get("duration_ms"),
+                            )
                             if trace:
                                 try:
                                     await message.reply_text(trace, parse_mode="HTML")
                                 except Exception:
                                     await message.reply_text(trace)
+
+                        # Start background monitors for any delegated agents
+                        bg_started = result.get("background_tasks_started", [])
+                        debug_on = chat_settings.get("debug", False)
+                        for bg in bg_started:
+                            self._start_bg_monitor(
+                                tg_chat_id=chat_tg.id,
+                                user_id=str(user.id),
+                                agent_id=bg["agent_id"],
+                                debug=debug_on,
+                            )
                     else:
                         error = result.get("error", "")
                         # Check if it's a model unavailability error

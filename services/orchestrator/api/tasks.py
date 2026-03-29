@@ -96,6 +96,32 @@ async def list_tasks(user_id: str | None = None, limit: int = 20) -> dict:
     return {"tasks": tasks, "count": len(tasks)}
 
 
+@router.get("/bg/events")
+async def bg_events(
+    user_id: str,
+    agent_id: str,
+    consume_result: bool = False,
+) -> dict:
+    """
+    Poll background task progress for a specific user+agent pair.
+    Returns accumulated debug events (drains the buffer) and current status.
+    Pass consume_result=true when the client is ready to display the final result
+    (removes it from the internal store so get_agent_result tool won't double-report).
+    """
+    import main as orchestrator_main
+
+    if not orchestrator_main.orchestrator_agent:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized",
+        )
+    return orchestrator_main.orchestrator_agent.poll_bg_task(
+        user_id=user_id,
+        agent_id=agent_id,
+        consume_result=consume_result,
+    )
+
+
 @router.get("/{task_id}")
 async def get_task(task_id: str) -> dict:
     """Get task status and results."""
