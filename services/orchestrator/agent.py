@@ -14,6 +14,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -120,6 +122,59 @@ def build_messages_for_llm(
         messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": user_input})
     return messages
+
+
+_XML_TOOL_CALL_RE = re.compile(
+    r"<[a-zA-Z0-9_-]+:tool_call>(.*?)</[a-zA-Z0-9_-]+:tool_call>",
+    re.DOTALL,
+)
+
+
+def _parse_xml_tool_calls(content: str) -> list[dict] | None:
+    """
+    Parse XML-format tool calls that some models (e.g. minimax) embed in message text
+    instead of using the standard tool_calls field.
+
+    Supported format:
+        <model:tool_call>
+          <invoke name="tool_name">
+            <parameter name="param1">value1</parameter>
+          </invoke>
+        </model:tool_call>
+
+    Returns a list of OpenAI-style tool call dicts, or None if nothing parseable found.
+    """
+    matches = _XML_TOOL_CALL_RE.findall(content)
+    if not matches:
+        return None
+
+    tool_calls: list[dict] = []
+    for block in matches:
+        try:
+            root = ET.fromstring(f"<root>{block}</root>")
+        except ET.ParseError:
+            continue
+        for invoke in root.findall("invoke"):
+            name = invoke.get("name", "").strip()
+            if not name:
+                continue
+            params: dict[str, Any] = {}
+            for param in invoke.findall("parameter"):
+                pname = param.get("name", "").strip()
+                if pname:
+                    params[pname] = (param.text or "").strip()
+            tool_calls.append(
+                {
+                    "id": f"call_{uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": json.dumps(params, ensure_ascii=False),
+                    },
+                }
+            )
+
+    return tool_calls if tool_calls else None
 
 
 class OrchestratorAgent:
@@ -456,12 +511,31 @@ class OrchestratorAgent:
             message = choice.get("message", {})
             tool_calls = message.get("tool_calls")
 
+            # Some models (e.g. minimax) embed XML tool calls in message text
+            # instead of using the standard tool_calls field — parse them as a fallback.
+            content_text: str = message.get("content") or ""
+            if not tool_calls and content_text:
+                tool_calls = _parse_xml_tool_calls(content_text)
+                if tool_calls:
+                    logger.debug(
+                        f"[{task_id}] Parsed {len(tool_calls)} XML tool call(s) from message content"
+                    )
+                    # Strip the XML markup from the visible content so it isn't
+                    # echoed back to the LLM on the next round.
+                    content_text = _XML_TOOL_CALL_RE.sub("", content_text).strip()
+
             if not tool_calls:
                 # Final text response
-                return message.get("content", "").strip() or self._fallback_text(), model_used
+                return content_text or self._fallback_text(), model_used
 
             # Process tool calls
-            messages.append({"role": "assistant", "content": None, "tool_calls": tool_calls})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": content_text or None,
+                    "tool_calls": tool_calls,
+                }
+            )
 
             for tc in tool_calls:
                 tool_name = tc.get("function", {}).get("name", "")
@@ -715,14 +789,11 @@ class OrchestratorAgent:
         if user_id:
             entries = [e for e in entries if e.get("user_id") == user_id]
 
-        # Sort: running first, then by started_at desc
-        def _sort_key(e: dict) -> tuple:
-            running = 0 if e["status"] == "running" else 1
-            return (running, e.get("started_at", ""))
-
-        entries.sort(key=_sort_key, reverse=False)
-        entries.sort(key=lambda e: (0 if e["status"] == "running" else 1))
-        return entries[-limit:][::-1]
+        # Running tasks first, then finished sorted by started_at descending
+        running = [e for e in entries if e.get("status") == "running"]
+        finished = [e for e in entries if e.get("status") != "running"]
+        finished.sort(key=lambda e: e.get("started_at", ""), reverse=True)
+        return (running + finished)[:limit]
 
     def cancel_agent_background_tasks(self, agent_id: str, user_id: str) -> str:
         """Cancel any running background task for agent_id + user_id."""

@@ -148,9 +148,10 @@ agents:
     # Server commands available in "ask" mode (safe, read-only / info only)
     server_commands_ask:
       mode: whitelist
-      timeout_seconds: 30
+      timeout_seconds: 120
       allowed_commands:
         - "date"
+        - "sleep {n}"
         - "find {path} -name {pattern}"
         - "find {path} -type {type}"
         - "df -h"
@@ -173,10 +174,11 @@ agents:
     # Server commands available in "agent" mode (full dev whitelist)
     server_commands:
       mode: whitelist           # whitelist | any | disabled
-      timeout_seconds: 30
+      timeout_seconds: 120
       allowed_commands:
         # ── Info / diagnostics (same as ask) ──
         - "date"
+        - "sleep {n}"
         - "find {path} -name {pattern}"
         - "find {path} -type {type}"
         - "df -h"
@@ -251,9 +253,10 @@ agents:
     # Coder: restricted commands in "ask" mode (safe info only)
     server_commands_ask:
       mode: whitelist
-      timeout_seconds: 30
+      timeout_seconds: 120
       allowed_commands:
         - "date"
+        - "sleep {n}"
         - "find {path} -name {pattern}"
         - "find {path} -type {type}"
         - "df -h"
@@ -290,10 +293,11 @@ agents:
     # Coder: full development whitelist in "agent" mode
     server_commands:
       mode: whitelist
-      timeout_seconds: 60       # longer timeout for builds/tests
+      timeout_seconds: 120      # longer timeout for builds/tests and sleep
       allowed_commands:
         # ── Info / diagnostics ──
         - "date"
+        - "sleep {n}"
         - "find {path} -name {pattern}"
         - "find {path} -type {type}"
         - "df -h"
