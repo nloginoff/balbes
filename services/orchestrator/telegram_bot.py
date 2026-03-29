@@ -104,9 +104,12 @@ class BalbesTelegramBot:
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
-        self.app = Application.builder().token(self.token).build()
-        # Sequential update processing — required for ConversationHandler correctness
-        self.app.concurrent_updates = False
+        self.app = (
+            Application.builder()
+            .token(self.token)
+            .concurrent_updates(False)  # sequential — required for correct state handling
+            .build()
+        )
         self._setup_handlers()
         logger.info("Telegram bot initialized")
 

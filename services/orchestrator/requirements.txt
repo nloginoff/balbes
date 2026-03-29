@@ -1,12 +1,12 @@
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-httpx==0.25.2
-python-telegram-bot==20.3
-asyncpg==0.29.0
-qdrant-client==2.7.0
-aioredis==2.0.1
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+httpx>=0.25.0
+python-telegram-bot>=20.3
+asyncpg>=0.29.0
+qdrant-client>=1.7.0
+redis>=4.5.0
 PyYAML>=6.0
 tiktoken>=0.5.0
 # Voice transcription (requires: sudo apt install ffmpeg)
