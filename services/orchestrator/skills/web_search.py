@@ -95,15 +95,15 @@ class WebSearchSkill:
                         results = await self._search_tavily(query, max_results, key)
                 elif provider == "yandex":
                     key = settings.yandex_search_key
-                    user = settings.yandex_search_user
-                    if key and user:
+                    folder_id = settings.yandex_folder_id
+                    if key and folder_id:
                         deferred = p_cfg.get("use_deferred", False)
                         if deferred:
                             results = await self._search_yandex_deferred(
-                                query, max_results, user, key
+                                query, max_results, folder_id, key
                             )
                         else:
-                            results = await self._search_yandex(query, max_results, user, key)
+                            results = await self._search_yandex(query, max_results, folder_id, key)
                 elif provider == "brave":
                     key = settings.brave_search_key
                     if key:
@@ -154,19 +154,23 @@ class WebSearchSkill:
         return results
 
     # -------------------------------------------------------------------------
-    # Yandex XML
+    # Yandex Search API v2 (Yandex Cloud / AI Studio)
+    # Docs: https://aistudio.yandex.ru/docs/ru/search-api/api-ref/
+    # Auth: Authorization: Api-Key <AQVN...>
+    # Requires: YANDEX_SEARCH_KEY + YANDEX_FOLDER_ID in .env
     # -------------------------------------------------------------------------
+
+    _YANDEX_SEARCH_URL = "https://searchapi.api.cloud.yandex.net/v2/web/search"
+    _YANDEX_SEARCH_ASYNC_URL = "https://searchapi.api.cloud.yandex.net/v2/web/searchAsync"
+    _YANDEX_OPERATION_URL = "https://operation.api.cloud.yandex.net/operations"
 
     @staticmethod
     def _parse_yandex_xml(xml_text: str, max_results: int) -> list[SearchResult]:
-        """Parse Yandex XML search response into SearchResult list."""
+        """Parse Yandex XML search response (embedded in v2 rawData field)."""
         results: list[SearchResult] = []
         try:
             root = ET.fromstring(xml_text)
-            ns = ""
-            response_el = root.find(f"{ns}response")
-            if response_el is None:
-                response_el = root
+            response_el = root.find("response") or root
 
             for doc in response_el.iter("doc"):
                 if len(results) >= max_results:
@@ -177,7 +181,6 @@ class WebSearchSkill:
                 if url_el is None:
                     continue
 
-                # Strip embedded XML tags (e.g. <hlword>) from title/headline
                 def _text(el: ET.Element | None) -> str:
                     if el is None:
                         return ""
@@ -194,98 +197,115 @@ class WebSearchSkill:
             logger.warning(f"Failed to parse Yandex XML response: {e}")
         return results
 
-    async def _search_yandex(
-        self, query: str, max_results: int, user: str, key: str
-    ) -> list[SearchResult]:
-        """Synchronous Yandex XML search."""
-        client = await self._get_client()
-        params = {
-            "user": user,
-            "key": key,
-            "query": query,
-            "l10n": "ru",
-            "sortby": "rlv",
-            "filter": "none",
-            "groupby": f'attr="".mode=flat.groups-on-page={max_results}.docs-in-group=1',
+    @staticmethod
+    def _parse_yandex_v2_response(data: dict, max_results: int) -> list[SearchResult]:
+        """Parse Yandex Search API v2 JSON — rawData is base64-encoded XML."""
+        import base64
+
+        raw = data.get("rawData") or data.get("response", {}).get("rawData", "")
+        if not raw:
+            logger.warning("Yandex v2: no rawData in response, keys: %s", list(data.keys()))
+            return []
+        try:
+            xml_text = base64.b64decode(raw).decode("utf-8", errors="replace")
+            return WebSearchSkill._parse_yandex_xml(xml_text, max_results)
+        except Exception as e:
+            logger.warning(f"Yandex v2: failed to decode rawData: {e}")
+            return []
+
+    def _yandex_headers(self, key: str) -> dict[str, str]:
+        return {
+            "Authorization": f"Api-Key {key}",
+            "Content-Type": "application/json",
         }
-        response = await client.get(
-            "https://yandex.com/search/xml",
-            params=params,
-            headers={"Accept": "application/xml"},
+
+    def _yandex_body(self, query: str, max_results: int, folder_id: str) -> dict:
+        return {
+            "folderId": folder_id,
+            "query": {
+                "searchType": "SEARCH_TYPE_RU",
+                "queryText": query,
+            },
+            "groupingOptions": {
+                "groupsOnPage": max_results,
+                "docsInGroup": 1,
+            },
+        }
+
+    async def _search_yandex(
+        self, query: str, max_results: int, folder_id: str, key: str
+    ) -> list[SearchResult]:
+        """Synchronous Yandex Search API v2."""
+        client = await self._get_client()
+        response = await client.post(
+            self._YANDEX_SEARCH_URL,
+            headers=self._yandex_headers(key),
+            json=self._yandex_body(query, max_results, folder_id),
             timeout=15.0,
         )
         response.raise_for_status()
-        return self._parse_yandex_xml(response.text, max_results)
+        return self._parse_yandex_v2_response(response.json(), max_results)
 
     async def _search_yandex_deferred(
         self,
         query: str,
         max_results: int,
-        user: str,
+        folder_id: str,
         key: str,
-        poll_interval: float = 1.5,
-        max_polls: int = 10,
+        poll_interval: float = 2.0,
+        max_polls: int = 15,
     ) -> list[SearchResult]:
         """
-        Deferred (async) Yandex XML search — submit job then poll until results arrive.
-        Falls back to synchronous search if deferred fails.
+        Async Yandex Search API v2 — submit job then poll operations endpoint.
+        Falls back to synchronous search if deferred fails or times out.
         """
         import asyncio
 
         client = await self._get_client()
-        auth_params = {"user": user, "key": key}
-        query_xml = (
-            '<?xml version="1.0" encoding="UTF-8"?>'
-            "<request>"
-            f"<query>{query}</query>"
-            "<sortby>rlv</sortby>"
-            "<filter-info>"
-            '<filtering id="moderate"/>'
-            "</filter-info>"
-            f'<groupings><groupby attr="" mode="flat" groups-on-page="{max_results}" docs-in-group="1"/></groupings>'
-            "</request>"
-        )
+        headers = self._yandex_headers(key)
+        body = self._yandex_body(query, max_results, folder_id)
 
         try:
-            # Step 1: submit
             start_resp = await client.post(
-                "https://yandex.com/search/xml/deferred-start",
-                params=auth_params,
-                content=query_xml,
-                headers={"Content-Type": "application/xml"},
+                self._YANDEX_SEARCH_ASYNC_URL,
+                headers=headers,
+                json=body,
                 timeout=15.0,
             )
             start_resp.raise_for_status()
-            start_root = ET.fromstring(start_resp.text)
-            req_id_el = start_root.find(".//req-id") or start_root.find("req-id")
-            if req_id_el is None or not req_id_el.text:
-                logger.warning("Yandex deferred: no req-id in response, falling back to sync")
-                return await self._search_yandex(query, max_results, user, key)
-            req_id = req_id_el.text.strip()
-            logger.debug(f"Yandex deferred search started: req_id={req_id}")
+            operation = start_resp.json()
+            op_id = operation.get("id")
+            if not op_id:
+                logger.warning("Yandex deferred: no operation id, falling back to sync")
+                return await self._search_yandex(query, max_results, folder_id, key)
+            logger.debug(f"Yandex deferred search started: op_id={op_id}")
 
-            # Step 2: poll
-            for _ in range(max_polls):
+            for attempt in range(max_polls):
                 await asyncio.sleep(poll_interval)
                 poll_resp = await client.get(
-                    "https://yandex.com/search/xml/deferred",
-                    params={**auth_params, "req_id": req_id},
+                    f"{self._YANDEX_OPERATION_URL}/{op_id}",
+                    headers=headers,
                     timeout=15.0,
                 )
-                if poll_resp.status_code == 202:
-                    # Still in progress
-                    continue
                 poll_resp.raise_for_status()
-                results = self._parse_yandex_xml(poll_resp.text, max_results)
+                op = poll_resp.json()
+                if not op.get("done", False):
+                    logger.debug(f"Yandex deferred: still running (attempt {attempt + 1})")
+                    continue
+                if "error" in op:
+                    logger.warning(f"Yandex deferred: operation error: {op['error']}")
+                    return []
+                result_data = op.get("response", op)
+                results = self._parse_yandex_v2_response(result_data, max_results)
                 logger.debug(f"Yandex deferred search done: {len(results)} results")
                 return results
 
             logger.warning("Yandex deferred search timed out, falling back to sync")
-            return await self._search_yandex(query, max_results, user, key)
+            return await self._search_yandex(query, max_results, folder_id, key)
 
         except Exception as e:
             logger.warning(f"Yandex deferred search failed ({e}), falling back to sync")
-            return await self._search_yandex(query, max_results, user, key)
+            return await self._search_yandex(query, max_results, folder_id, key)
 
     # -------------------------------------------------------------------------
     # Brave

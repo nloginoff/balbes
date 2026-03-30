@@ -208,9 +208,18 @@ class Settings(BaseSettings):
     # =============================================================================
     brave_search_key: str | None = Field(default=None, description="Brave Search API key")
     tavily_api_key: str | None = Field(default=None, description="Tavily Search API key")
-    yandex_search_key: str | None = Field(default=None, description="Yandex XML Search API key")
+    # Yandex Search API v2 (Yandex Cloud / AI Studio)
+    # Key format: AQVN... — get at console.yandex.cloud → IAM → Service accounts → API keys
+    yandex_search_key: str | None = Field(
+        default=None, description="Yandex Search API v2 key (AQVN...)"
+    )
+    # Folder ID — get at console.yandex.cloud → Resource Manager → select folder → copy ID
+    yandex_folder_id: str | None = Field(
+        default=None, description="Yandex Cloud folder ID (b1g...)"
+    )
+    # Legacy XML API (no longer used — kept for env compat)
     yandex_search_user: str | None = Field(
-        default=None, description="Yandex XML Search username (Yandex login)"
+        default=None, description="[legacy] Yandex XML Search username"
     )
 
     # =============================================================================
@@ -228,6 +237,7 @@ class Settings(BaseSettings):
         "brave_search_key",
         "tavily_api_key",
         "yandex_search_key",
+        "yandex_folder_id",
         "yandex_search_user",
         mode="before",
     )

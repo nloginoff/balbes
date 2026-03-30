@@ -71,7 +71,7 @@ async def check_keys() -> dict[str, bool]:
     s = get_settings()
     keys = {
         "tavily": bool(s.tavily_api_key),
-        "yandex": bool(s.yandex_search_key and s.yandex_search_user),
+        "yandex": bool(s.yandex_search_key and s.yandex_folder_id),
         "brave": bool(s.brave_search_key),
     }
     print("📋 API keys status:")
