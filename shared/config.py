@@ -208,6 +208,10 @@ class Settings(BaseSettings):
     # =============================================================================
     brave_search_key: str | None = Field(default=None, description="Brave Search API key")
     tavily_api_key: str | None = Field(default=None, description="Tavily Search API key")
+    yandex_search_key: str | None = Field(default=None, description="Yandex XML Search API key")
+    yandex_search_user: str | None = Field(
+        default=None, description="Yandex XML Search username (Yandex login)"
+    )
 
     # =============================================================================
     # Optional
@@ -223,6 +227,8 @@ class Settings(BaseSettings):
         "telegram_bot_token",
         "brave_search_key",
         "tavily_api_key",
+        "yandex_search_key",
+        "yandex_search_user",
         mode="before",
     )
     @classmethod

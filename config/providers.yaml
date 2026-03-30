@@ -289,6 +289,20 @@ agents:
         - "git -C {path} diff"
         - "git -C {path} diff {file}"
         - "git -C {path} branch"
+        # ── Search (read-only) ──
+        - "grep {pattern} {file}"
+        - "grep -n {pattern} {file}"
+        - "grep -r {pattern} {path}"
+        - "grep -rn {pattern} {path}"
+        - "grep -rl {pattern} {path}"
+        - "rg {pattern}"
+        - "rg {pattern} {path}"
+        - "rg -l {pattern} {path}"
+        - "diff {file1} {file2}"
+        - "diff -u {file1} {file2}"
+        - "tree {path}"
+        - "tree"
+        - "which {command}"
 
     # Coder: full development whitelist in "agent" mode
     server_commands:
@@ -365,6 +379,34 @@ agents:
         - "git -C {path} push origin {branch}"
         - "git -C {path} pull"
         - "git -C {path} pull origin {branch}"
+        # ── File operations ──
+        - "cp {src} {dst}"
+        - "mv {src} {dst}"
+        - "mkdir {path}"
+        - "mkdir -p {path}"
+        - "touch {file}"
+        - "diff {file1} {file2}"
+        - "diff -u {file1} {file2}"
+        - "tree {path}"
+        - "tree"
+        - "which {command}"
+        # ── Search / grep ──
+        - "grep {pattern} {file}"
+        - "grep -n {pattern} {file}"
+        - "grep -r {pattern} {path}"
+        - "grep -rn {pattern} {path}"
+        - "grep -rl {pattern} {path}"
+        - "grep -ri {pattern} {path}"
+        - "grep -rin {pattern} {path}"
+        - "rg {pattern}"
+        - "rg {pattern} {path}"
+        - "rg -l {pattern} {path}"
+        - "rg -n {pattern} {path}"
+        - "rg -i {pattern} {path}"
+        # ── Script execution ──
+        - "bash {script}"
+        - "sh {script}"
+        - "chmod +x {file}"
 
 
 # Models available for user selection (shown in /model menu)
@@ -515,18 +557,17 @@ whisper:
 skills:
   web_search:
     enabled: true
-    default_provider: "duckduckgo"   # duckduckgo | brave | tavily
+    default_provider: "tavily"       # tavily | yandex | brave
     providers:
-      duckduckgo:
-        enabled: true
+      tavily:
+        enabled: true                # requires TAVILY_API_KEY in .env.prod
         max_results: 5
+      yandex:
+        enabled: true                # requires YANDEX_SEARCH_KEY + YANDEX_SEARCH_USER in .env.prod
+        max_results: 5
+        use_deferred: false          # true = deferred (async) Yandex search; false = sync (default)
       brave:
         enabled: false               # enable when BRAVE_SEARCH_KEY is set
-        api_key: ${BRAVE_SEARCH_KEY}
-        max_results: 5
-      tavily:
-        enabled: false               # enable when TAVILY_API_KEY is set
-        api_key: ${TAVILY_API_KEY}
         max_results: 5
 
   fetch_url:

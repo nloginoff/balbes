@@ -8,7 +8,13 @@ Every tool call is automatically logged via AgentActivityLogger.
 
 import logging
 import time
+from pathlib import Path
 from typing import Any
+
+# Project root — two levels up from services/orchestrator/
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+# Maximum chars returned by file_read (prevents huge files swamping the context)
+_FILE_READ_MAX_CHARS = 30_000
 
 logger = logging.getLogger("orchestrator.tools")
 
@@ -334,6 +340,60 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_read",
+            "description": (
+                "Read a project file by path and return its contents. "
+                "Supports optional line range (offset/limit) for large files. "
+                "Path must be relative to the project root or absolute within it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to project root, e.g. 'services/orchestrator/agent.py'",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "First line to return (1-based). Omit to start from beginning.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to return (default 200).",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "file_write",
+            "description": (
+                "Write (create or overwrite) a project file with the given content. "
+                "Path must be relative to the project root or absolute within it. "
+                "Forbidden: .env files, credential files, private key files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to project root, e.g. 'services/orchestrator/agent.py'",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Complete new content of the file.",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -476,6 +536,12 @@ class ToolDispatcher:
             elif tool_name == "read_agent_logs":
                 result = self._do_read_agent_logs(tool_args)
 
+            elif tool_name == "file_read":
+                result = self._do_file_read(tool_args)
+
+            elif tool_name == "file_write":
+                result = self._do_file_write(tool_args)
+
             else:
                 result = f"Unknown tool: {tool_name}"
                 success = False
@@ -594,6 +660,75 @@ class ToolDispatcher:
         if success:
             return f"File '{args['filename']}' updated successfully."
         return f"Failed to write '{args['filename']}'. File may not be writable."
+
+    def _do_file_read(self, args: dict[str, Any]) -> str:
+        """Read an arbitrary project file (within project root)."""
+        raw_path = args.get("path", "")
+        if not raw_path:
+            return "Error: 'path' parameter is required."
+        try:
+            p = Path(raw_path)
+            resolved = (_PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
+            if not str(resolved).startswith(str(_PROJECT_ROOT)):
+                return f"Access denied: path '{raw_path}' is outside project root."
+            if not resolved.exists():
+                return f"File not found: {raw_path}"
+            if not resolved.is_file():
+                return f"Not a file: {raw_path}"
+        except Exception as e:
+            return f"Invalid path '{raw_path}': {e}"
+
+        try:
+            text = resolved.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            return f"Error reading '{raw_path}': {e}"
+
+        lines = text.splitlines(keepends=True)
+        total = len(lines)
+
+        offset = max(1, int(args.get("offset") or 1))
+        limit = int(args.get("limit") or 200)
+        chunk = lines[offset - 1 : offset - 1 + limit]
+
+        numbered = "".join(f"{offset + i:6}|{line}" for i, line in enumerate(chunk))
+
+        # Trim if result is too large
+        if len(numbered) > _FILE_READ_MAX_CHARS:
+            numbered = numbered[:_FILE_READ_MAX_CHARS] + "\n[... truncated ...]"
+
+        header = (
+            f"--- {raw_path} (lines {offset}-{min(offset + limit - 1, total)} of {total}) ---\n"
+        )
+        return header + numbered
+
+    def _do_file_write(self, args: dict[str, Any]) -> str:
+        """Write an arbitrary project file (within project root, not .env / keys)."""
+        raw_path = args.get("path", "")
+        content = args.get("content", "")
+        if not raw_path:
+            return "Error: 'path' parameter is required."
+
+        # Forbidden patterns
+        forbidden = (".env", ".key", ".pem", ".p12", "secret", "credential", "password")
+        name_lower = Path(raw_path).name.lower()
+        if any(name_lower.startswith(pat) or name_lower.endswith(pat) for pat in forbidden):
+            return f"Write denied: '{raw_path}' matches a forbidden filename pattern."
+
+        try:
+            p = Path(raw_path)
+            resolved = (_PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
+            if not str(resolved).startswith(str(_PROJECT_ROOT)):
+                return f"Access denied: path '{raw_path}' is outside project root."
+        except Exception as e:
+            return f"Invalid path '{raw_path}': {e}"
+
+        try:
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            resolved.write_text(content, encoding="utf-8")
+            rel = resolved.relative_to(_PROJECT_ROOT)
+            return f"Written {len(content)} chars to {rel} ({len(content.splitlines())} lines)."
+        except Exception as e:
+            return f"Error writing '{raw_path}': {e}"
 
     async def _do_rename_chat(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         user_id = context.get("user_id")

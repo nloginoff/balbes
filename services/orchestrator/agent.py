@@ -149,6 +149,8 @@ _TOOL_NAME_CANONICAL: dict[str, str] = {
     "listagettasks": "list_agent_tasks",
     "listmakenttasks": "list_agent_tasks",
     "readagentlogs": "read_agent_logs",
+    "fileread": "file_read",
+    "filewrite": "file_write",
 }
 
 
