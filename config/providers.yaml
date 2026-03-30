@@ -584,8 +584,8 @@ heartbeat:
   active_hours_start: "09:00"    # local server time
   active_hours_end: "23:00"
   # Delay between consecutive LLM rounds (tool-call → next LLM call).
-  # Free models have strict rate limits; 2-3 seconds prevents 429 errors.
-  request_delay_seconds: 2
+  # Free models have strict rate limits; 5 seconds prevents 429 errors.
+  request_delay_seconds: 5
   # target_user_id is taken from TELEGRAM_USER_ID env var (set in .env.prod)
 
 
