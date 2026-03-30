@@ -1,264 +1,298 @@
-# Balbes Multi-Agent System
+# Balbes — Your AI Team, Living in Telegram
 
-Продакшн-готовая мульти-агентная AI-система с Telegram-ботом, долгосрочной памятью, делегированием задач между агентами и автономным выполнением кода.
+> *What if your personal AI assistant could write code, search the web, remember everything, and proactively message you — all from a simple Telegram chat?*
 
-**Версия**: 0.3.0 | **Статус**: 🟢 Production Ready | **Лицензия**: MIT
+**Balbes** is a self-hosted multi-agent AI system built around a Telegram bot. Inspired by the philosophy of [OpenClaw](https://github.com/openclaw), it brings a team of specialized AI agents to your fingertips — no browser, no subscriptions, no walled gardens.
 
----
+The **Coder agent** acts as your personal [Cursor AI](https://cursor.sh) — it reads your codebase, writes code, runs commands, commits changes, and iterates — all via Telegram messages. You describe what you want, it builds it.
 
-## Что умеет система
-
-- **Telegram-бот** — управление через команды и меню; каждый чат имеет свою историю, модель и агента
-- **Мульти-агентная оркестрация** — Оркестратор делегирует задачи агенту Coder в фон; получает и показывает результаты автоматически
-- **Голосовые сообщения** — транскрибация через `faster-whisper` + исправление через LLM
-- **Инструменты агента** — поиск в интернете (DuckDuckGo/Brave/Tavily), загрузка URL, выполнение команд на сервере (по вайтлисту), чтение/запись файлов
-- **Heartbeat** — проактивные сообщения на основе `HEARTBEAT.md` и `MEMORY.md`, каждые 5 минут на бесплатной модели
-- **Долгосрочная память** — семантическое хранилище в Qdrant (по запросу)
-- **Быстрая память** — Redis: история чата 7 дней, авто-удаление неактивных чатов
-- **Версионирование памяти агентов** — приватный GitHub-репо для `data/agents/`, авто-коммит + авто-пуш при каждой записи
-- **Дебаг-трейс** — `/debug` показывает каждый LLM-вызов и вызов инструмента в чат (HTML)
-- **Режимы выполнения** — `/mode ask` (безопасный вайтлист) / `/mode agent` (полный dev-вайтлист)
-- **Контроль доступа** — только авторизованные `TELEGRAM_USER_ID`
+**Version**: 0.4.0 | **Status**: 🟢 Production Running | **License**: MIT
 
 ---
 
-## Быстрый старт
+## Why Balbes?
 
-### Разработка (dev)
+Most AI assistants are stateless chat windows. Balbes is different:
+
+- **It remembers** — semantic long-term memory in Qdrant + 7-day chat history in Redis
+- **It acts** — not just answers, but executes commands, reads/writes files, searches the web
+- **It delegates** — the Orchestrator agent hands off coding tasks to the Coder agent in the background
+- **It reaches out** — the Heartbeat system makes the agent proactively message you with updates, ideas, or reminders
+- **It runs on your server** — your data, your models, your rules
+
+---
+
+## What Makes It Special
+
+### 🤖 Coder Agent — Cursor AI in Your Telegram
+
+Forget switching between apps. The Coder agent is a full coding assistant that can:
+
+- Read any file in your project (`file_read`)
+- Write and modify files (`file_write`)
+- Run `git`, `grep`, `rg`, `diff`, `tree`, shell scripts
+- Commit changes to git automatically
+- Work in the background while you do other things — you get notified when it's done
+
+Give it a task like *"refactor the web_search skill to support a new provider"* and go have coffee.
+
+### 🧠 Long-Term Memory
+
+The agent remembers what you taught it. Semantic search over your notes, decisions, and context — powered by Qdrant. Use `/remember` to save anything, `/recall` to retrieve it.
+
+### 🔍 Web Search
+
+Multi-provider search with automatic fallback:
+- **Tavily** — AI-optimized search results
+- **Yandex Search API v2** — Russian-language search via Yandex Cloud
+- **Brave** — privacy-first alternative
+
+Switch providers on the fly: just say *"search via yandex: ..."*
+
+### 🎙️ Voice Messages
+
+Send a voice note, get a text response. Transcription via `faster-whisper` with optional LLM post-correction.
+
+### 💓 Heartbeat
+
+The agent doesn't wait to be asked. Based on your `HEARTBEAT.md` file, it proactively sends you messages — project updates, reminders, interesting finds. Runs on a free model to save costs.
+
+### 🔧 Full Control via Telegram
+
+No Web UI needed. Everything — switching models, managing chats, reading logs, controlling agents — happens in one Telegram conversation.
+
+> **Web UI status**: A web frontend is in active development, but honestly, the developer doesn't feel the need for it. Everything works beautifully through the Telegram bot, and that's the point. The web interface will ship eventually for those who want it.
+
+---
+
+## Feature Overview
+
+| Feature | Description |
+|---------|-------------|
+| Multi-agent orchestration | Orchestrator delegates tasks to Coder in foreground or background |
+| Per-chat model selection | Each chat can use a different LLM (free → premium tiers) |
+| Background task monitoring | Live debug trace streamed to your Telegram as the agent works |
+| Workspace versioning | Agent workspace files auto-committed to a private git repo |
+| Mode switching | `/mode ask` (safe read-only) / `/mode agent` (full dev powers) |
+| Voice transcription | `faster-whisper` + optional LLM correction |
+| Token limits | Per-agent daily/hourly token budgets with automatic fallback |
+| Multi-chat | Multiple named conversations, each with own history and settings |
+
+---
+
+## Telegram Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Get started |
+| `/help` | Show help |
+| `/agents` | List agents / switch active agent |
+| `/chats` | List chats / switch chat |
+| `/newchat` | Create a new named conversation |
+| `/rename` | Rename current chat |
+| `/model` | Pick a model (free / cheap / medium / premium) |
+| `/clear` | Clear chat history |
+| `/remember` | Save something to long-term memory (Qdrant) |
+| `/recall` | Search long-term memory |
+| `/heartbeat` | Trigger a heartbeat check right now |
+| `/debug` | Toggle live debug trace (every LLM call + tool call shown in chat) |
+| `/mode` | Switch between `ask` and `agent` modes |
+| `/tasks` | View current and completed background tasks |
+| `/stop` | Stop the current agent action |
+| `/status` | System health status |
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│              Telegram Bot                    │
+│  commands · per-user lock · bg monitor loop  │
+└────────────────────┬─────────────────────────┘
+                     │ HTTP
+┌────────────────────▼─────────────────────────┐
+│         Orchestrator (FastAPI)               │
+│  ├── OrchestratorAgent                       │
+│  ├── ToolDispatcher                          │
+│  │     web_search · fetch_url               │
+│  │     execute_command · file_read/write     │
+│  │     workspace_read/write · memory tools  │
+│  │     delegate_to_agent · task management  │
+│  ├── AgentWorkspace (MD files + git)         │
+│  └── Heartbeat loop (proactive messages)     │
+└──────────┬───────────────────────┬───────────┘
+           │                       │
+     ┌─────▼──────┐         ┌──────▼──────┐
+     │   Redis    │         │   Qdrant    │
+     │  history   │         │  long-term  │
+     │  sessions  │         │  memory     │
+     └────────────┘         └─────────────┘
+           │
+     ┌─────▼──────────────────────────────────┐
+     │        Coder Agent (FastAPI)           │
+     │  Delegated tasks · file I/O · git      │
+     │  grep · diff · shell · full dev ops    │
+     └────────────────────────────────────────┘
+```
+
+### Background Task Flow
+
+```
+You → Orchestrator → delegate_to_agent(coder, background=true)
+                            │
+                     Coder Agent works...
+                            │ (every 5s)
+                     bg_monitor_loop ← polls /api/v1/tasks/bg/events
+                            │
+                     Telegram: live trace + final result ✅
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Python 3.13 |
+| Agent framework | FastAPI + asyncio (custom) |
+| LLM gateway | [OpenRouter](https://openrouter.ai) (all major models) |
+| Telegram | python-telegram-bot v22+ |
+| Fast memory | Redis (chat history, sessions, flags) |
+| Long-term memory | Qdrant (semantic vector search) |
+| Database | PostgreSQL |
+| Voice transcription | faster-whisper + ffmpeg |
+| Search | Tavily · Yandex Search API v2 · Brave |
+| Infrastructure | Docker Compose |
+| Code quality | ruff · pre-commit |
+
+---
+
+## Model Tiers
+
+Pick the right model for each task:
+
+| Tier | Use Case | Examples |
+|------|----------|---------|
+| `free` | Default, heartbeat, light tasks | StepFun Step 3.5 Flash, MiniMax M2.5:free |
+| `cheap` | Everyday tasks, fallback | Llama 3.3 70B, MiniMax M2.5 |
+| `medium` | Complex reasoning | Kimi K2.5, Gemini Flash |
+| `premium` | Critical tasks, best quality | Claude Sonnet, GPT-4o |
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Linux server (VPS or local)
+- Docker + Docker Compose
+- Python 3.13
+- Telegram bot token ([@BotFather](https://t.me/botfather))
+- [OpenRouter](https://openrouter.ai) API key
+
+### 1. Clone and configure
 
 ```bash
-cd /home/balbes/projects/dev
-
-# Первый запуск
-source .venv/bin/activate
-pip install -r services/orchestrator/requirements.txt
-
-# Инфраструктура (Redis, Qdrant, RabbitMQ, PostgreSQL)
-docker-compose -f docker-compose.dev.yml up -d
-
-# Запуск сервисов
-./scripts/start_dev.sh
+git clone https://github.com/your-username/balbes.git
+cd balbes
+cp .env.example .env.prod
 ```
 
-### Продакшн
-
-```bash
-# На сервере (папка ~/projects/balbes)
-git pull
-bash scripts/restart_prod.sh
-
-# Проверка здоровья
-bash scripts/healthcheck.sh prod
-```
-
-Логи продакшна:
-```bash
-tail -f ~/projects/balbes/logs/prod/orchestrator.log
-tail -f ~/projects/balbes/logs/prod/telegram_bot.log
-```
-
----
-
-## Структура проекта
-
-```
-dev/
-├── config/
-│   └── providers.yaml          # Модели, агенты, heartbeat, skills, whisper
-│
-├── data/
-│   ├── agents/                 # Workspace каждого агента (отдельный git-репо)
-│   │   ├── orchestrator/
-│   │   │   ├── SOUL.md         # Характер агента
-│   │   │   ├── AGENTS.md       # Инструкции по поведению
-│   │   │   ├── MEMORY.md       # Постоянная важная память
-│   │   │   ├── HEARTBEAT.md    # Список для проактивных сообщений
-│   │   │   ├── TOOLS.md        # Документация по инструментам
-│   │   │   ├── IDENTITY.md     # Личность и стиль
-│   │   │   └── config.yaml     # Переопределение модели/лимитов (высший приоритет)
-│   │   └── coder/
-│   │       └── ...
-│   └── logs/
-│       └── agent_activity/     # JSONL-логи активности агентов (по датам)
-│
-├── services/
-│   ├── orchestrator/           # Главный агент + Telegram-бот (порт 18102)
-│   │   ├── agent.py            # OrchestratorAgent, делегирование, XML parsing
-│   │   ├── telegram_bot.py     # Команды, мониторинг фоновых задач
-│   │   ├── tools.py            # ToolDispatcher, схемы инструментов
-│   │   └── api/tasks.py        # FastAPI: /api/v1/tasks, /api/v1/tasks/bg/events
-│   ├── skills-registry/        # Реестр скиллов (порт 18101)
-│   ├── coder/                  # Агент-кодер (порт 18103)
-│   ├── memory-service/         # Память / история (порт 18100)
-│   └── web-backend/            # API-шлюз (порт 18200)
-│
-├── scripts/
-│   ├── start_prod.sh           # Запуск продакшна (uvicorn --workers 1)
-│   ├── restart_prod.sh         # Перезапуск с проверкой здоровья
-│   ├── healthcheck.sh          # Проверка всех 10 компонентов
-│   └── setup_memory_repo.sh    # Инициализация приватного Git-репо для data/agents/
-│
-└── docker-compose.prod.yml     # PostgreSQL, Redis, Qdrant, RabbitMQ
-```
-
----
-
-## Telegram-команды
-
-| Команда | Описание |
-|---------|----------|
-| `/start` | Начать работу |
-| `/help` | Справка |
-| `/agents` | Список агентов / переключить агента |
-| `/chats` | Список чатов / переключить чат (показывает ID, агент, модель) |
-| `/newchat` | Создать новый чат |
-| `/rename` | Переименовать текущий чат |
-| `/model` | Выбрать модель для чата (по тирам: free/cheap/medium/premium) |
-| `/clear` | Очистить историю чата |
-| `/remember` | Сохранить в долгосрочную память (Qdrant) |
-| `/recall` | Найти в долгосрочной памяти |
-| `/heartbeat` | Запустить проверку heartbeat немедленно |
-| `/debug` | Включить/выключить трейс действий агента в чат |
-| `/mode` | Переключить режим: `ask` (безопасный) / `agent` (разработка) |
-| `/tasks` | Реестр задач: текущие и завершённые |
-| `/stop` | Остановить текущее действие агента |
-| `/status` | Статус системы |
-
----
-
-## Инструменты агента
-
-| Инструмент | Режим | Описание |
-|-----------|-------|----------|
-| `web_search` | ask + agent | Поиск (DuckDuckGo / Brave / Tavily) |
-| `fetch_url` | ask + agent | Загрузить страницу и вернуть текст |
-| `execute_command` | ask + agent | Команда из вайтлиста (ask — информационный, agent — dev) |
-| `workspace_read` | ask + agent | Читать файл из workspace агента |
-| `workspace_write` | ask + agent | Писать файл в workspace (авто-коммит в git) |
-| `rename_chat` | ask + agent | Переименовать текущий чат |
-| `save_to_memory` | ask + agent | Сохранить в Qdrant (семантическая память) |
-| `read_agent_logs` | ask + agent | Прочитать JSONL-логи активности за период |
-| `delegate_to_agent` | agent | Делегировать задачу агенту (foreground / background) |
-| `get_agent_result` | agent | Получить результат завершённой фоновой задачи |
-| `cancel_agent_task` | agent | Отменить фоновую задачу |
-| `list_agent_tasks` | ask + agent | Показать реестр задач |
-
----
-
-## Архитектура
-
-```
-┌───────────────────────────────────────────┐
-│            Telegram Bot                   │
-│  polling · команды · per-user lock        │
-│  /debug trace · bg monitor loop           │
-└──────────────────┬────────────────────────┘
-                   │ HTTP
-┌──────────────────▼────────────────────────┐
-│         Orchestrator (FastAPI)             │
-│  OrchestratorAgent                        │
-│  ├── _run_llm_with_tools (loop)           │
-│  ├── ToolDispatcher                       │
-│  ├── AgentWorkspace (MD files + git)      │
-│  ├── _task_registry (in-memory)           │
-│  ├── _bg_debug_buffer (streaming)         │
-│  └── delegate_to_agent → Coder            │
-└───────┬──────────────────────────┬────────┘
-        │                          │
-┌───────▼──────┐        ┌──────────▼──────┐
-│  Redis       │        │  Qdrant          │
-│  Chat history│        │  Long-term memory│
-│  Sessions    │        │  Embeddings      │
-│  Debug flags │        └─────────────────┘
-└──────────────┘
-```
-
-### Делегирование задач
-
-```
-Пользователь → Оркестратор → delegate_to_agent(coder, background=true)
-                                      │
-                               Coder Agent (собственная модель, вайтлист)
-                                      │  каждые 5 сек
-                               bg_monitor_loop ← poll /api/v1/tasks/bg/events
-                                      │
-                               Telegram: дебаг-трейс (live) + финальный результат
-```
-
----
-
-## Конфигурация LLM (providers.yaml)
-
-### Тиры моделей
-
-| Тир | Использование | Примеры |
-|-----|--------------|---------|
-| `free` | Дефолт, heartbeat, первый fallback | StepFun Step 3.5 Flash, MiniMax M2.5:free |
-| `cheap` | Автоматический fallback | Llama 3.1 8B, Llama 3.3 70B, MiniMax M2.5 |
-| `medium` | Только явный выбор | Kimi K2.5, Gemini 3 Flash |
-| `premium` | Только явный выбор | Claude Sonnet 4.6, GLM-5 Turbo, GPT-5.4 |
-
-### Настройки агентов
-
-Каждый агент в `providers.yaml` и `data/agents/{agent}/config.yaml` может переопределить:
-- `default_model` — модель по умолчанию для делегированных задач
-- `fallback_enabled` — false по умолчанию (ошибка показывается пользователю)
-- `fallback_chain` — цепочка при `fallback_enabled: true`
-- `token_limits` — дневной/часовой лимит токенов
-- `server_commands_ask` / `server_commands` — вайтлист команд по режиму
-
----
-
-## Технологический стек
-
-**Backend**: Python 3.13, FastAPI, uvicorn (workers=1)
-**LLM**: OpenRouter API (OpenAI-совместимый формат), multi-model
-**Telegram**: python-telegram-bot v22+
-**Память быстрая**: Redis (история, сессии, флаги)
-**Память долгосрочная**: Qdrant (семантический поиск)
-**База данных**: PostgreSQL
-**Транскрипция**: faster-whisper + ffmpeg
-**Инфраструктура**: Docker Compose, bash-скрипты
-**Git**: pre-commit (ruff format/check), автокоммит workspace
-
----
-
-## Переменные окружения (.env.prod)
+Edit `.env.prod`:
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-...
 TELEGRAM_BOT_TOKEN=...
-TELEGRAM_USER_ID=125996595          # Разрешённые user ID через запятую
-WEB_AUTH_TOKEN=...
-JWT_SECRET=...
-POSTGRES_PASSWORD=...
-REDIS_PASSWORD=
-BRAVE_SEARCH_KEY=                   # Опционально
-TAVILY_API_KEY=                     # Опционально
-WHISPER_MODEL=base
-WHISPER_DEVICE=cpu
+TELEGRAM_USER_ID=YOUR_TELEGRAM_USER_ID  # get it from @userinfobot
+WEB_AUTH_TOKEN=any-random-secret
+JWT_SECRET=any-random-secret
+POSTGRES_PASSWORD=your-password
 ```
 
----
-
-## Документация
-
-- **[CHANGELOG.md](CHANGELOG.md)** — история версий
-- **[docs/AGENTS_GUIDE.md](docs/AGENTS_GUIDE.md)** — руководство по агентам
-- **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)** — полная конфигурация
-- **[docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md)** — архитектурные решения
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** — деплой в продакшн
-- **[TODO.md](TODO.md)** — план развития
-
----
-
-## Деплой: dev → prod
+Optional (for web search):
 
 ```bash
-# На dev-машине
-cd /home/balbes/projects/dev
-git add . && git commit -m "..." && git push
-
-# На prod-сервере (папка ~/projects/balbes)
-git pull && bash scripts/restart_prod.sh
+TAVILY_API_KEY=tvly-...         # https://tavily.com
+YANDEX_SEARCH_KEY=AQVN...       # Yandex Cloud API key
+YANDEX_FOLDER_ID=b1g...         # Yandex Cloud folder ID
+BRAVE_SEARCH_KEY=...            # https://api.search.brave.com
 ```
+
+### 2. Start infrastructure
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+### 3. Start services
+
+```bash
+bash scripts/start_prod.sh
+```
+
+### 4. Open Telegram and send `/start`
+
+---
+
+## Project Structure
+
+```
+balbes/
+├── config/
+│   └── providers.yaml          # Models, agents, skills, heartbeat config
+├── data/
+│   └── agents/                 # Per-agent workspace (versioned in private git)
+│       ├── orchestrator/
+│       │   ├── SOUL.md         # Agent personality
+│       │   ├── AGENTS.md       # Behavior instructions
+│       │   ├── MEMORY.md       # Persistent important context
+│       │   ├── HEARTBEAT.md    # Topics for proactive messages
+│       │   └── config.yaml     # Per-agent overrides (highest priority)
+│       └── coder/
+├── services/
+│   ├── orchestrator/           # Main agent + Telegram bot (port 18102)
+│   │   ├── agent.py
+│   │   ├── telegram_bot.py
+│   │   ├── tools.py
+│   │   └── skills/             # web_search, server_commands, ...
+│   ├── coder/                  # Coder agent (port 18103)
+│   └── memory-service/         # Memory + history (port 18100)
+├── shared/
+│   └── config.py               # Pydantic settings
+├── scripts/
+│   ├── start_prod.sh
+│   ├── restart_prod.sh
+│   └── healthcheck.sh
+└── docker-compose.prod.yml
+```
+
+---
+
+## Configuration
+
+All agent behavior is controlled through:
+
+- **`config/providers.yaml`** — models, tiers, per-agent settings, skill configs, heartbeat
+- **`data/agents/{agent}/config.yaml`** — per-agent overrides (highest priority)
+- **`data/agents/{agent}/AGENTS.md`** — behavioral instructions fed to the LLM
+- **`data/agents/{agent}/MEMORY.md`** — persistent context the agent always carries
+- **`.env.prod`** — secrets and infrastructure settings
+
+See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for full reference.
+
+---
+
+## Acknowledgements
+
+Inspired by [OpenClaw](https://github.com/openclaw) — the idea that AI tools should be modular, agent-based, and actually useful without constant hand-holding.
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE)
+
+**Built with ❤️ and a lot of Telegram messages**
+
+*[README на русском](README.ru.md)*

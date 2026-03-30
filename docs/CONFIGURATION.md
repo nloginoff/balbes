@@ -16,7 +16,7 @@ AITUNNEL_API_KEY=                           # Не используется, о�
 # =============================================================================
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 # Разрешённые Telegram user ID (через запятую для нескольких пользователей)
-TELEGRAM_USER_ID=125996595
+TELEGRAM_USER_ID=YOUR_TELEGRAM_USER_ID
 
 # =============================================================================
 # Web UI Authentication
@@ -408,7 +408,7 @@ bash scripts/healthcheck.sh prod
 curl http://localhost:18102/health
 
 # Задачи в реестре
-curl "http://localhost:18102/api/v1/tasks?user_id=125996595"
+curl "http://localhost:18102/api/v1/tasks?user_id=YOUR_TELEGRAM_USER_ID"
 ```
 
 ### Логи

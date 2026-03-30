@@ -246,7 +246,7 @@ _background_results → result_text (если завершено)
 
 ```json
 {
-  "user_id": "125996595",
+  "user_id": "YOUR_TELEGRAM_USER_ID",
   "chat_id": "abc123",
   "input": "Посмотри статус git",
   "model_id": "openrouter/minimax/minimax-m2.5",
@@ -263,14 +263,14 @@ _background_results → result_text (если завершено)
   "output": "Текст ответа агента",
   "model_used": "openrouter/minimax/minimax-m2.5",
   "debug_events": [...],
-  "background_tasks_started": [{"agent_id": "coder", "key": "125996595:coder"}]
+  "background_tasks_started": [{"agent_id": "coder", "key": "YOUR_TELEGRAM_USER_ID:coder"}]
 }
 ```
 
 ### GET /api/v1/tasks/bg/events
 
 ```
-GET /api/v1/tasks/bg/events?user_id=125996595&agent_id=coder&consume_result=false
+GET /api/v1/tasks/bg/events?user_id=YOUR_TELEGRAM_USER_ID&agent_id=coder&consume_result=false
 ```
 
 Ответ:

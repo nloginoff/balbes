@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-30
+
+### Added
+- **Yandex Search API v2** — migrated from legacy XML API (user+key in URL, IP whitelist required)
+  to new Yandex Cloud REST API (`searchapi.api.cloud.yandex.net`). Authentication via
+  `Authorization: Api-Key` header. Supports both sync (`/v2/web/search`) and async deferred
+  (`/v2/web/searchAsync` + operations polling) modes. Response `rawData` (base64 XML) decoded
+  and parsed by the existing XML parser.
+- **`YANDEX_FOLDER_ID`** config field — required for Yandex Search API v2 (Yandex Cloud folder ID).
+- **`file_read` / `file_write` tools** — Coder and Orchestrator agents can now read and write
+  project files directly, with path-traversal protection and forbidden-file-type blocklist.
+- **`web_search` provider parameter** — agents can explicitly request a search provider via
+  the `provider` tool argument (e.g. `provider=yandex`); the used provider is shown in the
+  debug trace as `[tavily] 5 result(s):`.
+- **Heartbeat inter-round delay** — configurable `request_delay_seconds` (default 5s) between
+  LLM rounds in heartbeat runs to avoid rate-limit errors on free OpenRouter models.
+- **Coder agent full dev capabilities** — expanded `execute_command` whitelist in `agent` mode
+  to include `grep`, `rg`, `cp`, `mv`, `mkdir`, `touch`, `diff`, `tree`, `which`, `bash`, `sh`,
+  `chmod`; added `file_read`/`file_write` tools and updated `AGENTS.md` documentation.
+
+### Changed
+- `web_search.py`: `search()` now returns `tuple[list[SearchResult], str]` — results plus provider name used.
+- `web_search.py`: DuckDuckGo provider removed; Tavily set as default provider.
+
+### Fixed
+- `tools.py`: `_do_web_search` — fixed `'SearchResult' object is not subscriptable` by switching from
+  dict-style access to dataclass attribute access (`r.title`, `r.url`, `r.snippet`).
+
 ## [0.3.0] - 2026-03-29
 
 ### Added
