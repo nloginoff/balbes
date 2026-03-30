@@ -44,6 +44,13 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                         "description": "Number of results to return (default 5)",
                         "default": 5,
                     },
+                    "provider": {
+                        "type": "string",
+                        "description": (
+                            "Force a specific search provider: tavily | yandex | brave. "
+                            "If omitted, uses the active default from config."
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -605,13 +612,14 @@ class ToolDispatcher:
 
         if self._web_search is None:
             self._web_search = WebSearchSkill(http_client=self.http_client)
-        results = await self._web_search.search(
+        results, provider_used = await self._web_search.search(
             query=args["query"],
             max_results=args.get("max_results", 5),
+            provider_override=args.get("provider"),
         )
         if not results:
-            return "No results found."
-        lines = []
+            return f"[{provider_used}] No results found."
+        lines = [f"[{provider_used}] {len(results)} result(s):"]
         for i, r in enumerate(results, 1):
             lines.append(f"{i}. **{r.title}**\n   {r.url}\n   {r.snippet}")
         return "\n\n".join(lines)
@@ -894,7 +902,9 @@ def _summarize_input(tool_name: str, args: dict) -> str:
     if tool_name == "web_search":
         q = args.get("query", "")
         n = args.get("max_results", 5)
-        return f"query='{q[:60]}' max={n}"
+        p = args.get("provider", "")
+        provider_str = f" via={p}" if p else ""
+        return f"query='{q[:60]}' max={n}{provider_str}"
     if tool_name == "fetch_url":
         return f"url='{args.get('url', '')[:80]}'"
     if tool_name == "execute_command":

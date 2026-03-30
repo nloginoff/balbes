@@ -60,25 +60,39 @@ class WebSearchSkill:
             logger.warning(f"Failed to load providers.yaml: {e}")
         return {}
 
-    async def search(self, query: str, max_results: int = 5) -> list[SearchResult]:
+    async def search(
+        self, query: str, max_results: int = 5, provider_override: str | None = None
+    ) -> tuple[list[SearchResult], str]:
+        """
+        Search and return (results, provider_used).
+
+        provider_override: if set, try this provider first (skipping enabled check).
+        Falls back to the configured order if the override provider fails or returns nothing.
+        """
         cfg = self._load_config()
         default = cfg.get("default_provider", "tavily")
         providers_cfg = cfg.get("providers", {})
 
         all_providers = ["tavily", "yandex", "brave"]
-        order = [default] + [p for p in all_providers if p != default]
+
+        # Build order: override (if given) → default → rest
+        if provider_override and provider_override in all_providers:
+            order = [provider_override] + [p for p in all_providers if p != provider_override]
+        else:
+            order = [default] + [p for p in all_providers if p != default]
 
         for provider in order:
             p_cfg = providers_cfg.get(provider, {})
-            if not p_cfg.get("enabled", False):
+            # Allow override to bypass the enabled flag (user explicitly asked for it)
+            is_override = provider == provider_override
+            if not is_override and not p_cfg.get("enabled", False):
                 continue
             try:
+                results: list[SearchResult] = []
                 if provider == "tavily":
                     key = settings.tavily_api_key
                     if key:
                         results = await self._search_tavily(query, max_results, key)
-                        if results:
-                            return results
                 elif provider == "yandex":
                     key = settings.yandex_search_key
                     user = settings.yandex_search_user
@@ -90,20 +104,21 @@ class WebSearchSkill:
                             )
                         else:
                             results = await self._search_yandex(query, max_results, user, key)
-                        if results:
-                            return results
                 elif provider == "brave":
                     key = settings.brave_search_key
                     if key:
                         results = await self._search_brave(query, max_results, key)
-                        if results:
-                            return results
+
+                if results:
+                    logger.info(f"web_search: used provider={provider}, got {len(results)} results")
+                    return results, provider
+
             except Exception as e:
                 logger.warning(f"Search provider {provider} failed: {e}, trying next")
                 continue
 
         logger.error("All search providers failed or returned no results")
-        return []
+        return [], "none"
 
     # -------------------------------------------------------------------------
     # Tavily
