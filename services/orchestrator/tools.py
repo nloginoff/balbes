@@ -613,7 +613,7 @@ class ToolDispatcher:
             return "No results found."
         lines = []
         for i, r in enumerate(results, 1):
-            lines.append(f"{i}. **{r['title']}**\n   {r['url']}\n   {r['snippet']}")
+            lines.append(f"{i}. **{r.title}**\n   {r.url}\n   {r.snippet}")
         return "\n\n".join(lines)
 
     async def _do_fetch_url(self, args: dict[str, Any]) -> str:
