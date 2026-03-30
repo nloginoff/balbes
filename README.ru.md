@@ -273,7 +273,7 @@ balbes/
 - **`data/agents/{agent}/MEMORY.md`** — постоянный контекст, который агент всегда несёт с собой
 - **`.env.prod`** — секреты и параметры инфраструктуры
 
-Полный справочник: [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
+Полный справочник: [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md)
 
 ---
 
@@ -288,5 +288,17 @@ balbes/
 MIT — см. [LICENSE](LICENSE)
 
 **Сделано с ❤️ и большим количеством сообщений в Telegram**
+
+---
+
+## Документация
+
+| | English | Русский |
+|--|---------|---------|
+| Установка | [docs/en/GETTING_STARTED.md](docs/en/GETTING_STARTED.md) | [docs/ru/GETTING_STARTED.md](docs/ru/GETTING_STARTED.md) |
+| Конфигурация | [docs/en/CONFIGURATION.md](docs/en/CONFIGURATION.md) | [docs/ru/CONFIGURATION.md](docs/ru/CONFIGURATION.md) |
+| Руководство по агентам | [docs/en/AGENTS_GUIDE.md](docs/en/AGENTS_GUIDE.md) | [docs/ru/AGENTS_GUIDE.md](docs/ru/AGENTS_GUIDE.md) |
+| Деплой | [docs/en/DEPLOYMENT.md](docs/en/DEPLOYMENT.md) | [docs/ru/DEPLOYMENT.md](docs/ru/DEPLOYMENT.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) | — |
 
 *[README in English](README.md)*

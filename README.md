@@ -279,7 +279,7 @@ All agent behavior is controlled through:
 - **`data/agents/{agent}/MEMORY.md`** — persistent context the agent always carries
 - **`.env.prod`** — secrets and infrastructure settings
 
-See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for full reference.
+See [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md) for full reference.
 
 ---
 
@@ -294,5 +294,17 @@ Inspired by [OpenClaw](https://github.com/openclaw) — the idea that AI tools s
 MIT — see [LICENSE](LICENSE)
 
 **Built with ❤️ and a lot of Telegram messages**
+
+---
+
+## Documentation
+
+| | English | Русский |
+|--|---------|---------|
+| Getting Started | [docs/en/GETTING_STARTED.md](docs/en/GETTING_STARTED.md) | [docs/ru/GETTING_STARTED.md](docs/ru/GETTING_STARTED.md) |
+| Configuration | [docs/en/CONFIGURATION.md](docs/en/CONFIGURATION.md) | [docs/ru/CONFIGURATION.md](docs/ru/CONFIGURATION.md) |
+| Agents Guide | [docs/en/AGENTS_GUIDE.md](docs/en/AGENTS_GUIDE.md) | [docs/ru/AGENTS_GUIDE.md](docs/ru/AGENTS_GUIDE.md) |
+| Deployment | [docs/en/DEPLOYMENT.md](docs/en/DEPLOYMENT.md) | [docs/ru/DEPLOYMENT.md](docs/ru/DEPLOYMENT.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) | — |
 
 *[README на русском](README.ru.md)*
