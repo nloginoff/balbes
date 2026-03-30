@@ -397,6 +397,12 @@ class OrchestratorAgent:
             debug: bool = ctx.get("debug", False)
             mode: str = ctx.get("mode", "agent")
 
+            # For heartbeat: read inter-round delay from config (guards against rate limits)
+            between_rounds_delay: float = 0.0
+            if is_heartbeat:
+                hb_cfg = get_providers_config().get("heartbeat", {})
+                between_rounds_delay = float(hb_cfg.get("request_delay_seconds", 0))
+
             # Attach debug collector to tool dispatcher for this task
             debug_events: list[dict] = []
             if self.tool_dispatcher:
@@ -418,6 +424,7 @@ class OrchestratorAgent:
                 mode=mode,
                 # Heartbeat uses only workspace_read — all other tools add tokens with no benefit
                 override_tools=HEARTBEAT_TOOLS if is_heartbeat else None,
+                between_rounds_delay=between_rounds_delay,
             )
 
             # Detect newly started background tasks during this execution
@@ -498,6 +505,7 @@ class OrchestratorAgent:
         mode: str = "agent",
         override_tools: list[dict] | None = None,
         dispatcher: "ToolDispatcher | None" = None,
+        between_rounds_delay: float = 0.0,
     ) -> tuple[str, str]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
@@ -530,6 +538,13 @@ class OrchestratorAgent:
         available_tools = override_tools if override_tools is not None else get_tools_for_mode(mode)
 
         for round_num in range(MAX_TOOL_CALL_ROUNDS):
+            # Delay between rounds (e.g. heartbeat uses free models with strict rate limits)
+            if round_num > 0 and between_rounds_delay > 0:
+                logger.debug(
+                    f"[{task_id}] Waiting {between_rounds_delay}s before round {round_num + 1} (rate limit guard)"
+                )
+                await asyncio.sleep(between_rounds_delay)
+
             # Check if user issued /stop between rounds
             if self._is_cancelled(user_id):
                 logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
