@@ -142,9 +142,16 @@ def build_messages_for_llm(
 
 # Matches any namespaced XML wrapper: <prefix:anytag>...</prefix:anytag>
 # Uses backreference so the closing tag must match the opening tag.
-# Handles both <model:tool_call> and <model:toolcall> variants.
+# Handles both <model:tool_call> and <model:toolcall> variants (namespaced, XML invoke format).
 _XML_TOOL_CALL_RE = re.compile(
     r"<([a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)>(.*?)</\1>",
+    re.DOTALL,
+)
+
+# Handles plain <tool_call>{...}</tool_call> with JSON content.
+# Used by many OSS models (Qwen, Llama-instruct, arcee-ai, trinity-mini, etc.).
+_PLAIN_TOOL_CALL_RE = re.compile(
+    r"<tool_calls?>\s*(\{.*?\})\s*</tool_calls?>",
     re.DOTALL,
 )
 
@@ -177,23 +184,20 @@ def _normalize_tool_name(name: str) -> str:
 
 def _parse_xml_tool_calls(content: str) -> list[dict] | None:
     """
-    Parse XML-format tool calls that some models (e.g. minimax) embed in message text
-    instead of using the standard tool_calls field.
+    Parse non-standard tool calls that some models embed in message text.
 
-    Handles multiple wrapper tag formats:
-      <model:tool_call>  — with underscore
-      <model:toolcall>   — without underscore (minimax variant)
+    Supported formats:
+      1. Namespaced XML invoke:  <model:tool_call><invoke name="..."><parameter name="k">v</parameter></invoke></model:tool_call>
+      2. Plain JSON tag:         <tool_call>{"name": "workspace_read", "arguments": {"filename": "HEARTBEAT.md"}}</tool_call>
 
     Tool names are normalized: readagentlogs → read_agent_logs, etc.
 
     Returns a list of OpenAI-style tool call dicts, or None if nothing parseable found.
     """
-    matches = _XML_TOOL_CALL_RE.findall(content)
-    if not matches:
-        return None
-
     tool_calls: list[dict] = []
-    for _tag, block in matches:
+
+    # --- Format 1: namespaced XML invoke (minimax, etc.) ---
+    for _tag, block in _XML_TOOL_CALL_RE.findall(content):
         try:
             root = ET.fromstring(f"<root>{block}</root>")
         except ET.ParseError:
@@ -207,7 +211,6 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
             for param in invoke.findall("parameter"):
                 pname = param.get("name", "").strip()
                 if pname:
-                    # Also normalize parameter names
                     params[_normalize_tool_name(pname)] = (param.text or "").strip()
             tool_calls.append(
                 {
@@ -219,6 +222,33 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
                     },
                 }
             )
+
+    # --- Format 2: plain <tool_call>{...}</tool_call> JSON (OSS models: Qwen, Llama, arcee, etc.) ---
+    for json_str in _PLAIN_TOOL_CALL_RE.findall(content):
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            continue
+        raw_name = data.get("name", "").strip()
+        if not raw_name:
+            continue
+        name = _normalize_tool_name(raw_name)
+        args = data.get("arguments", data.get("parameters", {}))
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        tool_calls.append(
+            {
+                "id": f"call_{uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args or {}, ensure_ascii=False),
+                },
+            }
+        )
 
     return tool_calls if tool_calls else None
 
@@ -619,9 +649,9 @@ class OrchestratorAgent:
                     logger.debug(
                         f"[{task_id}] Parsed {len(tool_calls)} XML tool call(s) from message content"
                     )
-                    # Strip the XML markup from the visible content so it isn't
-                    # echoed back to the LLM on the next round.
-                    content_text = _XML_TOOL_CALL_RE.sub("", content_text).strip()
+                    # Strip all XML tool-call markup so it isn't echoed back to the LLM.
+                    content_text = _XML_TOOL_CALL_RE.sub("", content_text)
+                    content_text = _PLAIN_TOOL_CALL_RE.sub("", content_text).strip()
 
             if not tool_calls:
                 # Final text response

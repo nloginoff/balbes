@@ -11,7 +11,9 @@ PyYAML>=6.0
 tiktoken>=0.5.0
 # Voice transcription (requires: sudo apt install ffmpeg)
 faster-whisper>=1.0.0
-# Web search (free, no API key)
+# Web search
 duckduckgo-search>=6.0.0
 # URL content extraction
 html2text>=2020.1.16
+# Cron-like scheduler
+apscheduler>=3.10.0

@@ -22,6 +22,10 @@ import asyncio
 import contextlib
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import httpx
 from telegram import (
@@ -206,6 +210,9 @@ class BalbesTelegramBot:
         # Maps monitor key → Telegram chat_id (int) so the monitor knows where to write
         self._bg_monitor_chat: dict[str, int] = {}
 
+        # APScheduler instance (started lazily in start_scheduler)
+        self._scheduler: AsyncIOScheduler | None = None
+
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
@@ -213,6 +220,7 @@ class BalbesTelegramBot:
         async def _post_init(app: Application) -> None:
             await self._set_commands(app)
             await self.start_heartbeat()
+            await self.start_scheduler()
 
         self.app = (
             Application.builder()
@@ -264,6 +272,173 @@ class BalbesTelegramBot:
             self._heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._heartbeat_task
+
+    # -------------------------------------------------------------------------
+    # Cron Scheduler (APScheduler)
+    # -------------------------------------------------------------------------
+
+    async def start_scheduler(self) -> None:
+        """Load schedules.yaml and start APScheduler jobs."""
+        try:
+            from apscheduler.schedulers.asyncio import AsyncIOScheduler
+        except ImportError:
+            logger.warning(
+                "apscheduler not installed — scheduler disabled. Run: pip install apscheduler"
+            )
+            return
+
+        schedules_path = Path(__file__).parent.parent.parent / "config" / "schedules.yaml"
+        if not schedules_path.exists():
+            logger.info("config/schedules.yaml not found — scheduler disabled")
+            return
+
+        try:
+            import yaml
+
+            with open(schedules_path, encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception as e:
+            logger.error(f"Failed to load schedules.yaml: {e}")
+            return
+
+        jobs: list[dict] = raw.get("jobs") or []
+        enabled_jobs = [j for j in jobs if j.get("enabled", False)]
+        if not enabled_jobs:
+            logger.info("Scheduler: no enabled jobs in schedules.yaml")
+            return
+
+        self._scheduler = AsyncIOScheduler(timezone="UTC")
+
+        for job in enabled_jobs:
+            job_id = job.get("id", "unnamed")
+            trigger = job.get("trigger", "cron")
+            agent_id = job.get("agent_id", "orchestrator")
+            user_id = str(job.get("user_id", "0"))
+            prompt = job.get("prompt", "")
+            debug = job.get("debug", False)
+
+            if not prompt:
+                logger.warning(f"Scheduler: job '{job_id}' has no prompt — skipping")
+                continue
+
+            if trigger == "cron":
+                trigger_kwargs: dict = {}
+                for field in ("year", "month", "day", "day_of_week", "hour", "minute", "second"):
+                    if field in job:
+                        trigger_kwargs[field] = job[field]
+                self._scheduler.add_job(
+                    self._run_scheduled_task,
+                    "cron",
+                    id=job_id,
+                    kwargs={
+                        "job_id": job_id,
+                        "agent_id": agent_id,
+                        "user_id": user_id,
+                        "prompt": prompt,
+                        "debug": debug,
+                    },
+                    **trigger_kwargs,
+                )
+            elif trigger == "interval":
+                interval_kwargs: dict = {}
+                for field in ("weeks", "days", "hours", "minutes", "seconds"):
+                    if field in job:
+                        interval_kwargs[field] = job[field]
+                self._scheduler.add_job(
+                    self._run_scheduled_task,
+                    "interval",
+                    id=job_id,
+                    kwargs={
+                        "job_id": job_id,
+                        "agent_id": agent_id,
+                        "user_id": user_id,
+                        "prompt": prompt,
+                        "debug": debug,
+                    },
+                    **interval_kwargs,
+                )
+            else:
+                logger.warning(f"Scheduler: job '{job_id}' unknown trigger '{trigger}' — skipping")
+                continue
+
+            logger.info(
+                f"Scheduler: registered job '{job_id}' ({trigger}) agent={agent_id} user={user_id}"
+            )
+
+        self._scheduler.start()
+        logger.info(f"Scheduler started with {len(enabled_jobs)} job(s)")
+
+    async def stop_scheduler(self) -> None:
+        if self._scheduler and self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
+
+    async def _run_scheduled_task(
+        self, job_id: str, agent_id: str, user_id: str, prompt: str, debug: bool = False
+    ) -> None:
+        """Execute a scheduled task by calling the orchestrator API."""
+        logger.info(f"Scheduler: running job '{job_id}' agent={agent_id} user={user_id}")
+        try:
+            params: dict = {
+                "user_id": user_id,
+                "description": prompt,
+                "agent_id": agent_id,
+                "source": f"scheduler:{job_id}",
+                "debug": str(debug).lower(),
+            }
+            response = await self._get_http().post(
+                f"{self.orchestrator_url}/api/v1/tasks",
+                params=params,
+                timeout=120.0,
+            )
+        except Exception as e:
+            logger.error(f"Scheduler: job '{job_id}' request failed: {e}")
+            return
+
+        if response.status_code != 200:
+            logger.error(f"Scheduler: job '{job_id}' HTTP {response.status_code}")
+            return
+
+        result = response.json()
+        if result.get("status") != "success":
+            logger.warning(f"Scheduler: job '{job_id}' task failed: {result.get('error', '?')}")
+            return
+
+        payload_out = result.get("result", {})
+        out_text = str(payload_out.get("output") or payload_out.get("result") or "").strip()
+
+        if not out_text or out_text == "✅":
+            logger.info(f"Scheduler: job '{job_id}' completed (no output)")
+            return
+
+        # Send result to the user if there's meaningful output and user_id is valid
+        if user_id and user_id != "0" and self.app:
+            try:
+                msg = f"🕐 *Задача по расписанию* `{job_id}`\n\n{out_text}"
+                await self.app.bot.send_message(
+                    chat_id=int(user_id),
+                    text=msg,
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Scheduler: could not send result of job '{job_id}' to user {user_id}: {e}"
+                )
+        elif user_id == "0" and self.app:
+            # user_id=0 means "bot owner" — try to find from heartbeat config
+            hb_cfg = _load_heartbeat_config()
+            owner_id = hb_cfg.get("target_user_id")
+            if owner_id:
+                try:
+                    msg = f"🕐 *Задача по расписанию* `{job_id}`\n\n{out_text}"
+                    await self.app.bot.send_message(
+                        chat_id=int(owner_id),
+                        text=msg,
+                        parse_mode="Markdown",
+                    )
+                except Exception as e:
+                    logger.warning(f"Scheduler: could not send to owner {owner_id}: {e}")
+
+        logger.info(f"Scheduler: job '{job_id}' done, output sent ({len(out_text)} chars)")
 
     async def _heartbeat_loop(self, interval_sec: int, cfg: dict) -> None:
         """Background loop: sleep, then fire heartbeat check."""
@@ -343,8 +518,10 @@ class BalbesTelegramBot:
             _INTERNAL_ERRORS = [
                 "Не смог обработать запрос",
                 "Error: 'filename' parameter is required",
+                "<tool_call>",
+                "<tool_calls>",
             ]
-            if any(out_text.startswith(e) for e in _INTERNAL_ERRORS):
+            if any(out_text.strip().startswith(e) for e in _INTERNAL_ERRORS):
                 last_error = f"internal model error: {out_text[:80]}"
                 logger.warning(
                     f"Heartbeat: suppressed internal error from model={model_id}: {out_text[:80]}"
@@ -389,6 +566,8 @@ class BalbesTelegramBot:
             "❌",
             "Не смог обработать запрос",
             "Error: 'filename'",
+            "<tool_call>",
+            "<tool_calls>",
         ]
         if any(text.startswith(p) for p in _SUPPRESS_PREFIXES):
             logger.warning(f"Heartbeat: suppressed output — {text[:120]}")
