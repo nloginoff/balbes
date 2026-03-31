@@ -274,11 +274,86 @@ class BalbesTelegramBot:
                 await self._heartbeat_task
 
     # -------------------------------------------------------------------------
-    # Cron Scheduler (APScheduler)
+    # Cron Scheduler (APScheduler) with hot-reload
     # -------------------------------------------------------------------------
 
+    _SCHEDULES_PATH = Path(__file__).parent.parent.parent / "config" / "schedules.yaml"
+
+    def _load_schedules_raw(self) -> list[dict]:
+        """Read schedules.yaml and return all job dicts (regardless of enabled flag)."""
+        import yaml
+
+        if not self._SCHEDULES_PATH.exists():
+            return []
+        try:
+            with open(self._SCHEDULES_PATH, encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            return raw.get("jobs") or []
+        except Exception as e:
+            logger.error(f"Scheduler: failed to read schedules.yaml: {e}")
+            return []
+
+    def _register_job(self, job: dict) -> bool:
+        """Add or replace one enabled job in self._scheduler. Returns True on success."""
+        if not self._scheduler:
+            return False
+        job_id = job.get("id", "unnamed")
+        trigger = job.get("trigger", "cron")
+        agent_id = job.get("agent_id", "orchestrator")
+        user_id = str(job.get("user_id", "0"))
+        prompt = job.get("prompt", "")
+        debug = job.get("debug", False)
+
+        if not prompt:
+            logger.warning(f"Scheduler: job '{job_id}' has no prompt — skipping")
+            return False
+
+        job_kwargs = {
+            "job_id": job_id,
+            "agent_id": agent_id,
+            "user_id": user_id,
+            "prompt": prompt,
+            "debug": debug,
+        }
+        try:
+            if trigger == "cron":
+                trigger_kwargs: dict = {
+                    k: job[k]
+                    for k in ("year", "month", "day", "day_of_week", "hour", "minute", "second")
+                    if k in job
+                }
+                self._scheduler.add_job(
+                    self._run_scheduled_task,
+                    "cron",
+                    id=job_id,
+                    kwargs=job_kwargs,
+                    replace_existing=True,
+                    **trigger_kwargs,
+                )
+            elif trigger == "interval":
+                interval_kwargs: dict = {
+                    k: job[k] for k in ("weeks", "days", "hours", "minutes", "seconds") if k in job
+                }
+                self._scheduler.add_job(
+                    self._run_scheduled_task,
+                    "interval",
+                    id=job_id,
+                    kwargs=job_kwargs,
+                    replace_existing=True,
+                    **interval_kwargs,
+                )
+            else:
+                logger.warning(f"Scheduler: job '{job_id}' unknown trigger '{trigger}' — skipping")
+                return False
+        except Exception as e:
+            logger.error(f"Scheduler: failed to register job '{job_id}': {e}")
+            return False
+
+        logger.info(f"Scheduler: registered '{job_id}' ({trigger}) agent={agent_id} user={user_id}")
+        return True
+
     async def start_scheduler(self) -> None:
-        """Load schedules.yaml and start APScheduler jobs."""
+        """Load schedules.yaml, start APScheduler and launch the hot-reload watcher."""
         try:
             from apscheduler.schedulers.asyncio import AsyncIOScheduler
         except ImportError:
@@ -287,90 +362,69 @@ class BalbesTelegramBot:
             )
             return
 
-        schedules_path = Path(__file__).parent.parent.parent / "config" / "schedules.yaml"
-        if not schedules_path.exists():
-            logger.info("config/schedules.yaml not found — scheduler disabled")
-            return
-
-        try:
-            import yaml
-
-            with open(schedules_path, encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-        except Exception as e:
-            logger.error(f"Failed to load schedules.yaml: {e}")
-            return
-
-        jobs: list[dict] = raw.get("jobs") or []
-        enabled_jobs = [j for j in jobs if j.get("enabled", False)]
-        if not enabled_jobs:
-            logger.info("Scheduler: no enabled jobs in schedules.yaml")
-            return
-
         self._scheduler = AsyncIOScheduler(timezone="UTC")
 
-        for job in enabled_jobs:
-            job_id = job.get("id", "unnamed")
-            trigger = job.get("trigger", "cron")
-            agent_id = job.get("agent_id", "orchestrator")
-            user_id = str(job.get("user_id", "0"))
-            prompt = job.get("prompt", "")
-            debug = job.get("debug", False)
-
-            if not prompt:
-                logger.warning(f"Scheduler: job '{job_id}' has no prompt — skipping")
-                continue
-
-            if trigger == "cron":
-                trigger_kwargs: dict = {}
-                for field in ("year", "month", "day", "day_of_week", "hour", "minute", "second"):
-                    if field in job:
-                        trigger_kwargs[field] = job[field]
-                self._scheduler.add_job(
-                    self._run_scheduled_task,
-                    "cron",
-                    id=job_id,
-                    kwargs={
-                        "job_id": job_id,
-                        "agent_id": agent_id,
-                        "user_id": user_id,
-                        "prompt": prompt,
-                        "debug": debug,
-                    },
-                    **trigger_kwargs,
-                )
-            elif trigger == "interval":
-                interval_kwargs: dict = {}
-                for field in ("weeks", "days", "hours", "minutes", "seconds"):
-                    if field in job:
-                        interval_kwargs[field] = job[field]
-                self._scheduler.add_job(
-                    self._run_scheduled_task,
-                    "interval",
-                    id=job_id,
-                    kwargs={
-                        "job_id": job_id,
-                        "agent_id": agent_id,
-                        "user_id": user_id,
-                        "prompt": prompt,
-                        "debug": debug,
-                    },
-                    **interval_kwargs,
-                )
-            else:
-                logger.warning(f"Scheduler: job '{job_id}' unknown trigger '{trigger}' — skipping")
-                continue
-
-            logger.info(
-                f"Scheduler: registered job '{job_id}' ({trigger}) agent={agent_id} user={user_id}"
-            )
+        jobs = self._load_schedules_raw()
+        enabled = [j for j in jobs if j.get("enabled", False)]
+        if not enabled:
+            logger.info("Scheduler: no enabled jobs in schedules.yaml")
+        else:
+            for job in enabled:
+                self._register_job(job)
 
         self._scheduler.start()
-        logger.info(f"Scheduler started with {len(enabled_jobs)} job(s)")
+        logger.info(f"Scheduler started ({len(enabled)} enabled job(s))")
+
+        # Hot-reload watcher — detects file changes every 30 s
+        asyncio.create_task(self._schedule_watcher())
 
     async def stop_scheduler(self) -> None:
         if self._scheduler and self._scheduler.running:
             self._scheduler.shutdown(wait=False)
+
+    async def reload_schedules(self) -> str:
+        """Re-read schedules.yaml and sync running jobs without a restart."""
+        if not self._scheduler:
+            return "Планировщик не запущен."
+
+        jobs = self._load_schedules_raw()
+        enabled_ids = {j["id"] for j in jobs if j.get("enabled", False) and j.get("id")}
+
+        # Remove jobs no longer present or disabled
+        removed = 0
+        for running_job in self._scheduler.get_jobs():
+            if running_job.id not in enabled_ids:
+                running_job.remove()
+                removed += 1
+                logger.info(f"Scheduler: removed job '{running_job.id}'")
+
+        # Add / replace enabled jobs
+        added = 0
+        for job in jobs:
+            if job.get("enabled", False) and job.get("id"):
+                if self._register_job(job):
+                    added += 1
+
+        logger.info(f"Scheduler reloaded: +{added} registered, -{removed} removed")
+        return f"Планировщик обновлён: добавлено {added}, удалено {removed} задач."
+
+    async def _schedule_watcher(self) -> None:
+        """Poll schedules.yaml every 30 s; hot-reload when the file changes."""
+        last_mtime: float = (
+            self._SCHEDULES_PATH.stat().st_mtime if self._SCHEDULES_PATH.exists() else 0.0
+        )
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if not self._SCHEDULES_PATH.exists():
+                    continue
+                mtime = self._SCHEDULES_PATH.stat().st_mtime
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    logger.info("Scheduler: schedules.yaml changed — hot-reloading")
+                    await self.reload_schedules()
+            except Exception as e:
+                logger.warning(f"Scheduler watcher error: {e}")
 
     async def _run_scheduled_task(
         self, job_id: str, agent_id: str, user_id: str, prompt: str, debug: bool = False

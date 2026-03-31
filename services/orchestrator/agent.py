@@ -174,6 +174,8 @@ _TOOL_NAME_CANONICAL: dict[str, str] = {
     "readagentlogs": "read_agent_logs",
     "fileread": "file_read",
     "filewrite": "file_write",
+    "manageschedule": "manage_schedule",
+    "scheduletask": "manage_schedule",
 }
 
 

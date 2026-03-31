@@ -401,6 +401,74 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "manage_schedule",
+            "description": (
+                "Manage scheduled tasks (cron/interval jobs). "
+                "Use to list current jobs, add new recurring tasks, or remove/enable/disable existing ones. "
+                "Changes take effect within ~30 seconds without a restart."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["list", "add", "remove", "enable", "disable"],
+                        "description": (
+                            "list — show all scheduled jobs; "
+                            "add — create a new job (requires job_id, trigger, prompt); "
+                            "remove — delete a job by job_id; "
+                            "enable/disable — toggle a job on or off."
+                        ),
+                    },
+                    "job_id": {
+                        "type": "string",
+                        "description": "Unique job identifier (snake_case). Required for add/remove/enable/disable.",
+                    },
+                    "trigger": {
+                        "type": "string",
+                        "enum": ["cron", "interval"],
+                        "description": "Trigger type. 'cron' = at specific time; 'interval' = every N minutes/hours.",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Task description sent to the agent when the job fires. Required for 'add'.",
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Agent to run the task (default: orchestrator).",
+                    },
+                    "hour": {
+                        "type": "integer",
+                        "description": "Hour (0–23) for cron trigger.",
+                    },
+                    "minute": {
+                        "type": "integer",
+                        "description": "Minute (0–59) for cron trigger (default: 0).",
+                    },
+                    "day_of_week": {
+                        "type": "string",
+                        "description": "Days for cron trigger: mon,tue,wed,thu,fri,sat,sun (or * for every day).",
+                    },
+                    "minutes": {
+                        "type": "integer",
+                        "description": "Repeat every N minutes (interval trigger).",
+                    },
+                    "hours": {
+                        "type": "integer",
+                        "description": "Repeat every N hours (interval trigger).",
+                    },
+                    "debug": {
+                        "type": "boolean",
+                        "description": "Send debug trace when this job runs (default: false).",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
 ]
 
 
@@ -548,6 +616,9 @@ class ToolDispatcher:
 
             elif tool_name == "file_write":
                 result = self._do_file_write(tool_args)
+
+            elif tool_name == "manage_schedule":
+                result = self._do_manage_schedule(tool_args)
 
             else:
                 result = f"Unknown tool: {tool_name}"
@@ -900,6 +971,142 @@ class ToolDispatcher:
             result += f"\n\n_Доступные даты: {', '.join(available[:10])}_"
         return result
 
+    # ------------------------------------------------------------------
+    # Schedule management
+    # ------------------------------------------------------------------
+
+    _SCHEDULES_PATH = _PROJECT_ROOT / "config" / "schedules.yaml"
+
+    def _load_schedules_yaml(self) -> dict:
+        import yaml
+
+        if not self._SCHEDULES_PATH.exists():
+            return {"jobs": []}
+        with open(self._SCHEDULES_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {"jobs": []}
+
+    def _save_schedules_yaml(self, data: dict) -> None:
+        import yaml
+
+        self._SCHEDULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._SCHEDULES_PATH, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    def _do_manage_schedule(self, args: dict[str, Any]) -> str:
+        action = args.get("action", "").strip().lower()
+
+        if action == "list":
+            data = self._load_schedules_yaml()
+            jobs: list[dict] = data.get("jobs") or []
+            if not jobs:
+                return "Расписание пустое — задач нет."
+            lines = ["Запланированные задачи:\n"]
+            for j in jobs:
+                status = "✅" if j.get("enabled", False) else "⏸"
+                jid = j.get("id", "?")
+                trigger = j.get("trigger", "?")
+                agent = j.get("agent_id", "orchestrator")
+                prompt_preview = str(j.get("prompt", ""))[:80].replace("\n", " ")
+
+                if trigger == "cron":
+                    dow = j.get("day_of_week", "*")
+                    h = j.get("hour", "*")
+                    m = j.get("minute", 0)
+                    schedule_str = f"cron {dow} {h}:{m:02d}"
+                elif trigger == "interval":
+                    parts = []
+                    if j.get("hours"):
+                        parts.append(f"{j['hours']}ч")
+                    if j.get("minutes"):
+                        parts.append(f"{j['minutes']}мин")
+                    schedule_str = f"каждые {' '.join(parts)}" if parts else "interval"
+                else:
+                    schedule_str = trigger
+
+                lines.append(f"{status} [{jid}] {schedule_str} → {agent}\n   {prompt_preview}")
+            return "\n".join(lines)
+
+        elif action == "add":
+            job_id = (args.get("job_id") or "").strip()
+            trigger = (args.get("trigger") or "").strip()
+            prompt = (args.get("prompt") or "").strip()
+            if not job_id:
+                return "Ошибка: укажи job_id (уникальный идентификатор задачи)."
+            if not trigger:
+                return "Ошибка: укажи trigger — 'cron' или 'interval'."
+            if not prompt:
+                return "Ошибка: укажи prompt — что агент должен сделать."
+
+            data = self._load_schedules_yaml()
+            jobs = data.setdefault("jobs", [])
+
+            # Check for duplicates
+            if any(j.get("id") == job_id for j in jobs):
+                return f"Ошибка: задача с id='{job_id}' уже существует. Используй enable/disable или сначала remove."
+
+            new_job: dict[str, Any] = {
+                "id": job_id,
+                "enabled": True,
+                "trigger": trigger,
+                "agent_id": args.get("agent_id") or "orchestrator",
+                "user_id": str(args.get("user_id", "0")),
+                "prompt": prompt,
+                "debug": bool(args.get("debug", False)),
+            }
+            # Add trigger-specific fields
+            if trigger == "cron":
+                for field in ("year", "month", "day", "day_of_week", "hour", "minute", "second"):
+                    if args.get(field) is not None:
+                        new_job[field] = args[field]
+                if "minute" not in new_job:
+                    new_job["minute"] = 0
+            elif trigger == "interval":
+                for field in ("weeks", "days", "hours", "minutes", "seconds"):
+                    if args.get(field) is not None:
+                        new_job[field] = args[field]
+
+            jobs.append(new_job)
+            self._save_schedules_yaml(data)
+            return (
+                f"Задача '{job_id}' добавлена и включена.\n"
+                f"Триггер: {trigger}, агент: {new_job['agent_id']}.\n"
+                "Планировщик применит изменения в течение ~30 секунд."
+            )
+
+        elif action == "remove":
+            job_id = (args.get("job_id") or "").strip()
+            if not job_id:
+                return "Ошибка: укажи job_id задачи для удаления."
+            data = self._load_schedules_yaml()
+            jobs = data.get("jobs") or []
+            before = len(jobs)
+            data["jobs"] = [j for j in jobs if j.get("id") != job_id]
+            if len(data["jobs"]) == before:
+                return f"Задача '{job_id}' не найдена."
+            self._save_schedules_yaml(data)
+            return f"Задача '{job_id}' удалена. Планировщик обновится в течение ~30 секунд."
+
+        elif action in ("enable", "disable"):
+            job_id = (args.get("job_id") or "").strip()
+            if not job_id:
+                return f"Ошибка: укажи job_id задачи для {action}."
+            data = self._load_schedules_yaml()
+            jobs = data.get("jobs") or []
+            found = False
+            for j in jobs:
+                if j.get("id") == job_id:
+                    j["enabled"] = action == "enable"
+                    found = True
+                    break
+            if not found:
+                return f"Задача '{job_id}' не найдена."
+            self._save_schedules_yaml(data)
+            word = "включена" if action == "enable" else "выключена"
+            return f"Задача '{job_id}' {word}. Планировщик обновится в течение ~30 секунд."
+
+        else:
+            return f"Неизвестное действие '{action}'. Доступно: list, add, remove, enable, disable."
+
 
 # ---------------------------------------------------------------------------
 # Input / result summary helpers (for compact log lines)
@@ -938,6 +1145,10 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         return f"agent='{args.get('agent_id', '?')}'"
     if tool_name == "list_agent_tasks":
         return f"limit={args.get('limit', 10)}"
+    if tool_name == "manage_schedule":
+        action = args.get("action", "?")
+        jid = args.get("job_id", "")
+        return f"action={action}" + (f" job_id='{jid}'" if jid else "")
     return str(args)[:80]
 
 
