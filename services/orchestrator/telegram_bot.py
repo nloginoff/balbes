@@ -182,6 +182,31 @@ HEARTBEAT_PROMPT = (
     "If you have something important to tell the user, write the message (without HEARTBEAT_OK)."
 )
 
+# Prefixes / patterns that indicate the model leaked a tool-call JSON instead of real output.
+_TOOL_CALL_LEAK_PREFIXES = (
+    "<tool_call>",
+    "<tool_calls>",
+    "Не смог обработать запрос",
+    "Error: 'filename'",
+)
+
+
+def _is_leaked_tool_call(text: str) -> bool:
+    """Return True when the text is an un-executed tool call leaked as message content."""
+    t = text.strip()
+    if any(t.startswith(p) for p in _TOOL_CALL_LEAK_PREFIXES):
+        return True
+    # Bare JSON object whose first key is "name" — a tool-call dict printed as text.
+    if t.startswith("{") and t.endswith("}") and '"name"' in t[:120]:
+        try:
+            import json as _json
+
+            data = _json.loads(t)
+            return bool(data.get("name"))
+        except Exception:
+            return False
+    return False
+
 
 class BalbesTelegramBot:
     """
@@ -569,21 +594,15 @@ class BalbesTelegramBot:
             # Success — but check if the LLM returned an internal error text
             payload_out = candidate.get("result", {})
             out_text = str(payload_out.get("output") or payload_out.get("result") or "").strip()
-            _INTERNAL_ERRORS = [
-                "Не смог обработать запрос",
-                "Error: 'filename' parameter is required",
-                "<tool_call>",
-                "<tool_calls>",
-            ]
-            if any(out_text.strip().startswith(e) for e in _INTERNAL_ERRORS):
-                last_error = f"internal model error: {out_text[:80]}"
+            if _is_leaked_tool_call(out_text):
+                last_error = f"leaked tool call: {out_text[:80]}"
                 logger.warning(
-                    f"Heartbeat: suppressed internal error from model={model_id}: {out_text[:80]}"
+                    f"Heartbeat: suppressed leaked tool call from model={model_id}: {out_text[:80]}"
                 )
                 if attempt < len(models_to_try) - 1:
                     await asyncio.sleep(1.5)
                     continue
-                return  # all models failed internally — don't notify user
+                return  # all models leaked — don't notify user
 
             result = candidate
             if attempt > 0:
@@ -616,14 +635,8 @@ class BalbesTelegramBot:
         text = str(payload.get("output") or payload.get("result") or "").strip()
 
         # Suppress error messages — LLM unavailability or internal errors must not reach the user
-        _SUPPRESS_PREFIXES = [
-            "❌",
-            "Не смог обработать запрос",
-            "Error: 'filename'",
-            "<tool_call>",
-            "<tool_calls>",
-        ]
-        if any(text.startswith(p) for p in _SUPPRESS_PREFIXES):
+        _SUPPRESS_PREFIXES = ["❌", "Не смог обработать запрос", "Error: 'filename'"]
+        if any(text.startswith(p) for p in _SUPPRESS_PREFIXES) or _is_leaked_tool_call(text):
             logger.warning(f"Heartbeat: suppressed output — {text[:120]}")
             return
 

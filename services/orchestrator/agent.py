@@ -184,17 +184,39 @@ def _normalize_tool_name(name: str) -> str:
     return _TOOL_NAME_CANONICAL.get(name.replace("_", "").lower(), name)
 
 
-def _parse_xml_tool_calls(content: str) -> list[dict] | None:
+def _make_tool_call(raw_name: str, args: Any) -> dict:
+    """Build a single OpenAI-style tool_call dict from a raw name and args."""
+    name = _normalize_tool_name(raw_name)
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except json.JSONDecodeError:
+            args = {}
+    return {
+        "id": f"call_{uuid4().hex[:8]}",
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": json.dumps(args or {}, ensure_ascii=False),
+        },
+    }
+
+
+def _parse_embedded_tool_calls(content: str) -> tuple[list[dict], bool]:
     """
     Parse non-standard tool calls that some models embed in message text.
 
     Supported formats:
-      1. Namespaced XML invoke:  <model:tool_call><invoke name="..."><parameter name="k">v</parameter></invoke></model:tool_call>
-      2. Plain JSON tag:         <tool_call>{"name": "workspace_read", "arguments": {"filename": "HEARTBEAT.md"}}</tool_call>
+      1. Namespaced XML invoke:
+           <model:tool_call><invoke name="fn"><parameter name="k">v</parameter></invoke></model:tool_call>
+      2. JSON inside <tool_call> tags (Qwen, Llama, arcee, etc.):
+           <tool_call>{"name": "workspace_read", "arguments": {"filename": "HEARTBEAT.md"}}</tool_call>
+      3. Bare JSON — entire message content is a single tool-call JSON object:
+           {"name": "workspace_read", "arguments": {"filename": "HEARTBEAT.md"}}
+           {"type": "function", "name": "read_agent_logs", "parameters": {...}}
 
-    Tool names are normalized: readagentlogs → read_agent_logs, etc.
-
-    Returns a list of OpenAI-style tool call dicts, or None if nothing parseable found.
+    Returns (list_of_tool_calls, content_consumed_entirely).
+    content_consumed_entirely is True for format 3 so the caller can blank content_text.
     """
     tool_calls: list[dict] = []
 
@@ -208,51 +230,46 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
             raw_name = invoke.get("name", "").strip()
             if not raw_name:
                 continue
-            name = _normalize_tool_name(raw_name)
-            params: dict[str, Any] = {}
-            for param in invoke.findall("parameter"):
-                pname = param.get("name", "").strip()
-                if pname:
-                    params[_normalize_tool_name(pname)] = (param.text or "").strip()
-            tool_calls.append(
-                {
-                    "id": f"call_{uuid4().hex[:8]}",
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": json.dumps(params, ensure_ascii=False),
-                    },
-                }
-            )
+            params: dict[str, Any] = {
+                _normalize_tool_name(p.get("name", "").strip()): (p.text or "").strip()
+                for p in invoke.findall("parameter")
+                if p.get("name", "").strip()
+            }
+            tool_calls.append(_make_tool_call(raw_name, params))
 
-    # --- Format 2: plain <tool_call>{...}</tool_call> JSON (OSS models: Qwen, Llama, arcee, etc.) ---
+    # --- Format 2: <tool_call>{json}</tool_call> ---
     for json_str in _PLAIN_TOOL_CALL_RE.findall(content):
         try:
             data = json.loads(json_str)
         except json.JSONDecodeError:
             continue
         raw_name = data.get("name", "").strip()
-        if not raw_name:
-            continue
-        name = _normalize_tool_name(raw_name)
-        args = data.get("arguments", data.get("parameters", {}))
-        if isinstance(args, str):
-            try:
-                args = json.loads(args)
-            except json.JSONDecodeError:
-                args = {}
-        tool_calls.append(
-            {
-                "id": f"call_{uuid4().hex[:8]}",
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "arguments": json.dumps(args or {}, ensure_ascii=False),
-                },
-            }
-        )
+        if raw_name:
+            args = data.get("arguments", data.get("parameters", {}))
+            tool_calls.append(_make_tool_call(raw_name, args))
 
-    return tool_calls if tool_calls else None
+    if tool_calls:
+        return tool_calls, False
+
+    # --- Format 3: bare JSON object as entire message (no wrapper tags) ---
+    stripped = content.strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        try:
+            data = json.loads(stripped)
+            raw_name = data.get("name", "").strip()
+            if raw_name:
+                args = data.get("arguments", data.get("parameters", {}))
+                return [_make_tool_call(raw_name, args)], True
+        except json.JSONDecodeError:
+            pass
+
+    return [], False
+
+
+# Keep old name as alias so existing call-sites don't break.
+def _parse_xml_tool_calls(content: str) -> list[dict] | None:
+    calls, _ = _parse_embedded_tool_calls(content)
+    return calls or None
 
 
 class OrchestratorAgent:
@@ -642,18 +659,22 @@ class OrchestratorAgent:
             message = choice.get("message", {})
             tool_calls = message.get("tool_calls")
 
-            # Some models (e.g. minimax) embed XML tool calls in message text
-            # instead of using the standard tool_calls field — parse them as a fallback.
+            # Fallback: some models embed tool calls in message text instead of tool_calls field.
+            # Handles: namespaced XML, <tool_call>{json}</tool_call>, and bare JSON objects.
             content_text: str = message.get("content") or ""
             if not tool_calls and content_text:
-                tool_calls = _parse_xml_tool_calls(content_text)
+                tool_calls, content_consumed = _parse_embedded_tool_calls(content_text)
                 if tool_calls:
                     logger.debug(
-                        f"[{task_id}] Parsed {len(tool_calls)} XML tool call(s) from message content"
+                        f"[{task_id}] Parsed {len(tool_calls)} embedded tool call(s) from message content"
                     )
-                    # Strip all XML tool-call markup so it isn't echoed back to the LLM.
-                    content_text = _XML_TOOL_CALL_RE.sub("", content_text)
-                    content_text = _PLAIN_TOOL_CALL_RE.sub("", content_text).strip()
+                    if content_consumed:
+                        # Entire content was a bare JSON tool call — blank it out
+                        content_text = ""
+                    else:
+                        # Strip tag-wrapped markup only
+                        content_text = _XML_TOOL_CALL_RE.sub("", content_text)
+                        content_text = _PLAIN_TOOL_CALL_RE.sub("", content_text).strip()
 
             if not tool_calls:
                 # Final text response
