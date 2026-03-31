@@ -482,6 +482,12 @@ active_models:
     provider: openrouter
     context_window: 128000
 
+  - id: "openrouter/anthropic/claude-haiku-4.5"
+    display_name: "⚡ Claude Haiku 4.5"
+    tier: premium
+    provider: openrouter
+    context_window: 200000
+
   - id: "openrouter/anthropic/claude-sonnet-4.6"
     display_name: "🎯 Claude Sonnet 4.6"
     tier: premium
