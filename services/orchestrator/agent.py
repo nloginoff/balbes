@@ -32,6 +32,22 @@ class LLMUnavailableError(RuntimeError):
     """Raised when the LLM API is unreachable or returns a non-retryable error."""
 
 
+class _LiveDebugList(list):
+    """A list that mirrors every append() to a secondary live-streaming buffer.
+
+    Used to give the Telegram bot live access to debug events while a foreground
+    task is still running — without disrupting the final debug_events collection.
+    """
+
+    def __init__(self, live_buf: list) -> None:
+        super().__init__()
+        self._live: list = live_buf
+
+    def append(self, event: Any) -> None:  # type: ignore[override]
+        super().append(event)
+        self._live.append(event)
+
+
 from shared.config import get_settings
 
 settings = get_settings()
@@ -248,6 +264,11 @@ class OrchestratorAgent:
         # Events are appended by the sub-agent's _run_llm_with_tools; drained by poll_bg_task.
         self._bg_debug_buffer: dict[str, list[dict[str, Any]]] = {}
 
+        # Live debug buffer for FOREGROUND tasks: key = f"{user_id}:{agent_id}:fg"
+        # Filled via _LiveDebugList; drained by drain_fg_debug().
+        # Allows the Telegram bot to stream trace events while the task is still running.
+        self._fg_debug_buffer: dict[str, list[dict[str, Any]]] = {}
+
         # Tool dispatcher
         self.tool_dispatcher: ToolDispatcher | None = None
 
@@ -405,8 +426,16 @@ class OrchestratorAgent:
                 hb_cfg = get_providers_config().get("heartbeat", {})
                 between_rounds_delay = float(hb_cfg.get("request_delay_seconds", 0))
 
-            # Attach debug collector to tool dispatcher for this task
-            debug_events: list[dict] = []
+            # Attach debug collector to tool dispatcher for this task.
+            # For foreground tasks with debug=True: use _LiveDebugList so the bot can
+            # poll live events every 5 s via /api/v1/tasks/fg/events while waiting.
+            fg_debug_key = f"{user_id}:{effective_agent_id}:fg"
+            if debug and not is_heartbeat:
+                live_buf: list[dict[str, Any]] = []
+                self._fg_debug_buffer[fg_debug_key] = live_buf
+                debug_events: list[dict] = _LiveDebugList(live_buf)
+            else:
+                debug_events = []
             if self.tool_dispatcher:
                 self.tool_dispatcher.set_debug_collector(debug_events if debug else None)
 
@@ -438,9 +467,10 @@ class OrchestratorAgent:
                 if ":" in k and k.split(":", 1)[0] == user_id
             ]
 
-            # Detach debug collector
+            # Detach debug collector and clean up fg live buffer
             if self.tool_dispatcher:
                 self.tool_dispatcher.set_debug_collector(None)
+            self._fg_debug_buffer.pop(fg_debug_key, None)
 
             # Save assistant response to history (skip for heartbeat)
             if not is_heartbeat:
@@ -468,6 +498,7 @@ class OrchestratorAgent:
         except LLMUnavailableError as e:
             logger.warning(f"[{task_id}] LLM unavailable: {e}")
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            self._fg_debug_buffer.pop(f"{user_id}:{effective_agent_id}:fg", None)
             self._finish_task(task_id, "error")
             return {
                 "task_id": task_id,
@@ -481,6 +512,7 @@ class OrchestratorAgent:
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             err_detail = str(e) or "(нет описания)"
+            self._fg_debug_buffer.pop(f"{user_id}:{effective_agent_id}:fg", None)
             self._finish_task(task_id, "error")
             return {
                 "task_id": task_id,
@@ -876,6 +908,21 @@ class OrchestratorAgent:
         events = buf[:]
         buf.clear()
         return events
+
+    def drain_fg_debug(self, user_id: str, agent_id: str) -> dict[str, Any]:
+        """
+        Return and clear live debug events for a foreground task.
+        Returns {"events": [...], "running": bool}
+        running=True means the task is still executing (buffer still registered).
+        """
+        key = f"{user_id}:{agent_id}:fg"
+        buf = self._fg_debug_buffer.get(key)
+        running = key in self._fg_debug_buffer
+        if not buf:
+            return {"events": [], "running": running}
+        events = buf[:]
+        buf.clear()
+        return {"events": events, "running": running}
 
     def poll_bg_task(
         self, user_id: str, agent_id: str, consume_result: bool = False

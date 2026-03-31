@@ -656,9 +656,17 @@ class ToolDispatcher:
     def _do_workspace_read(self, args: dict[str, Any]) -> str:
         if not self.workspace:
             return "Workspace not available."
-        content = self.workspace.read_file(args["filename"])
+        filename = args.get("filename") or args.get("file") or args.get("path") or args.get("name")
+        if not filename:
+            available = "AGENTS.md, SOUL.md, MEMORY.md, HEARTBEAT.md, TOOLS.md, IDENTITY.md"
+            return (
+                "Error: 'filename' parameter is required. "
+                f"Available files: {available}. "
+                "Example: workspace_read(filename='HEARTBEAT.md')"
+            )
+        content = self.workspace.read_file(filename)
         if not content:
-            return f"File '{args['filename']}' not found or empty."
+            return f"File '{filename}' not found or empty."
         return content
 
     def _do_workspace_write(self, args: dict[str, Any]) -> str:

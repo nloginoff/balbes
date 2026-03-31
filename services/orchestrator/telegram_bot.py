@@ -328,14 +328,32 @@ class BalbesTelegramBot:
                 # Retry only on model unavailability / rate limit
                 retriable = any(
                     kw in last_error.lower()
-                    for kw in ("429", "unavailable", "недоступна", "rate limit")
+                    for kw in ("429", "unavailable", "недоступна", "rate limit", "403", "forbidden")
                 )
                 if retriable:
+                    if attempt < len(models_to_try) - 1:
+                        await asyncio.sleep(1.5)  # brief pause before trying next model
                     continue
                 # Non-retriable failure (e.g. internal error) → stop without error message
                 return
 
-            # Success
+            # Success — but check if the LLM returned an internal error text
+            payload_out = candidate.get("result", {})
+            out_text = str(payload_out.get("output") or payload_out.get("result") or "").strip()
+            _INTERNAL_ERRORS = [
+                "Не смог обработать запрос",
+                "Error: 'filename' parameter is required",
+            ]
+            if any(out_text.startswith(e) for e in _INTERNAL_ERRORS):
+                last_error = f"internal model error: {out_text[:80]}"
+                logger.warning(
+                    f"Heartbeat: suppressed internal error from model={model_id}: {out_text[:80]}"
+                )
+                if attempt < len(models_to_try) - 1:
+                    await asyncio.sleep(1.5)
+                    continue
+                return  # all models failed internally — don't notify user
+
             result = candidate
             if attempt > 0:
                 logger.info(
@@ -366,9 +384,14 @@ class BalbesTelegramBot:
         payload = result.get("result", {})
         text = str(payload.get("output") or payload.get("result") or "").strip()
 
-        # Suppress error messages — LLM unavailability should not reach the user
-        if text.startswith("❌"):
-            logger.warning(f"Heartbeat: suppressed error output — {text[:120]}")
+        # Suppress error messages — LLM unavailability or internal errors must not reach the user
+        _SUPPRESS_PREFIXES = [
+            "❌",
+            "Не смог обработать запрос",
+            "Error: 'filename'",
+        ]
+        if any(text.startswith(p) for p in _SUPPRESS_PREFIXES):
+            logger.warning(f"Heartbeat: suppressed output — {text[:120]}")
             return
 
         # Suppress HEARTBEAT_OK responses
@@ -1236,6 +1259,62 @@ class BalbesTelegramBot:
                     logger.info(f"[ensure_bg_monitors] starting missed monitor for {key}")
                     self._start_bg_monitor(tg_chat_id, user_id, agent_id, debug)
 
+    def _start_fg_monitor(
+        self,
+        tg_chat_id: int,
+        user_id: str,
+        agent_id: str,
+    ) -> asyncio.Task:
+        """
+        Spawn a lightweight monitor for a FOREGROUND task.
+        Polls /api/v1/tasks/fg/events every 5s and sends debug trace batches to Telegram.
+        Returns the asyncio.Task so the caller can cancel it when the main POST returns.
+        """
+
+        async def _fg_monitor_loop() -> None:
+            batch_num = 0
+            poll_interval = 5
+            while True:
+                await asyncio.sleep(poll_interval)
+                try:
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        resp = await client.get(
+                            f"{self.orchestrator_url}/api/v1/tasks/fg/events",
+                            params={"user_id": user_id, "agent_id": agent_id},
+                        )
+                        if resp.status_code != 200:
+                            continue
+                        data = resp.json()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"[fgmon] poll error: {e}")
+                    continue
+
+                events = data.get("events", [])
+                if events:
+                    batch_num += 1
+                    trace = self._format_debug_trace(
+                        events,
+                        elapsed_ms=None,
+                        agent_prefix=agent_id,
+                        batch=batch_num,
+                    )
+                    if trace:
+                        try:
+                            if self.app:
+                                await self.app.bot.send_message(
+                                    tg_chat_id, trace, parse_mode="HTML"
+                                )
+                        except Exception as e:
+                            logger.debug(f"[fgmon] send failed: {e}")
+
+                if not data.get("running", True):
+                    break  # task finished, main POST will handle final result
+
+        task = asyncio.create_task(_fg_monitor_loop(), name=f"fgmon-{user_id}:{agent_id}")
+        return task
+
     def _start_bg_monitor(
         self,
         tg_chat_id: int,
@@ -1673,11 +1752,27 @@ class BalbesTelegramBot:
                     if agent_id:
                         params["agent_id"] = agent_id
 
+                # Start live trace monitor for foreground tasks when debug is on
+                fg_monitor: asyncio.Task | None = None
+                _active_agent_id = params.get("agent_id", "orchestrator")
+                if chat_settings.get("debug") and chat_tg:
+                    fg_monitor = self._start_fg_monitor(
+                        tg_chat_id=chat_tg.id,
+                        user_id=str(user.id),
+                        agent_id=_active_agent_id,
+                    )
+
                 response = await self._get_http().post(
                     f"{self.orchestrator_url}/api/v1/tasks",
                     params=params,
                     timeout=120.0,
                 )
+
+                # Stop fg monitor — task is done, final trace comes from the response
+                if fg_monitor and not fg_monitor.done():
+                    fg_monitor.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await fg_monitor
 
                 if response.status_code == 200:
                     result = response.json()

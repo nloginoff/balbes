@@ -96,6 +96,26 @@ async def list_tasks(user_id: str | None = None, limit: int = 20) -> dict:
     return {"tasks": tasks, "count": len(tasks)}
 
 
+@router.get("/fg/events")
+async def fg_events(
+    user_id: str,
+    agent_id: str,
+) -> dict:
+    """
+    Poll live debug events for a FOREGROUND task that is currently executing.
+    Returns accumulated events (drains the buffer) and whether the task is still running.
+    Use this while waiting for POST /api/v1/tasks to return — poll every 5s.
+    """
+    import main as orchestrator_main
+
+    if not orchestrator_main.orchestrator_agent:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Orchestrator not initialized",
+        )
+    return orchestrator_main.orchestrator_agent.drain_fg_debug(user_id, agent_id)
+
+
 @router.get("/bg/events")
 async def bg_events(
     user_id: str,
