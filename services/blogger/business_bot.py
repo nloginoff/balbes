@@ -12,9 +12,11 @@ SECURITY:
 """
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import asyncpg
+import yaml
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -27,6 +29,22 @@ from telegram.ext import (
 )
 
 from .anonymizer import AnonymizationEngine
+
+_PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+
+
+def _load_active_models() -> list[dict]:
+    """Load active_models from config/providers.yaml (same list as orchestrator)."""
+    cfg_path = _PROJECT_ROOT / "config" / "providers.yaml"
+    try:
+        with cfg_path.open(encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("active_models", [])
+    except Exception as exc:
+        logger_mod = logging.getLogger("blogger.business_bot")
+        logger_mod.warning("Could not load active_models from providers.yaml: %s", exc)
+        return []
+
 
 if TYPE_CHECKING:
     from .agent import BloggerAgent
@@ -98,6 +116,8 @@ class BusinessBot:
         )
         app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
         app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
+        app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
+        app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
 
         # Inline callbacks
         app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
@@ -130,14 +150,20 @@ class BusinessBot:
         self._app = app
         return app
 
-    # ── MODELS available for selection ──────────────────────────────────────
-    MODELS = [
-        ("minimax/minimax-m2.5:free", "MiniMax M2.5 (free)"),
-        ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B (cheap)"),
-        ("moonshotai/kimi-k2.5", "Kimi K2.5 (medium)"),
-        ("google/gemini-flash-1.5", "Gemini Flash (medium)"),
-        ("anthropic/claude-sonnet-4-5", "Claude Sonnet (premium)"),
-    ]
+    # ── MODELS: loaded from providers.yaml (same list as orchestrator) ──────
+    @staticmethod
+    def _get_models() -> list[tuple[str, str]]:
+        """Return list of (id_without_openrouter_prefix, display_name) from providers.yaml."""
+        raw = _load_active_models()
+        result = []
+        for m in raw:
+            mid = m.get("id", "")
+            # Strip "openrouter/" prefix — we add it back on save
+            short_id = mid.removeprefix("openrouter/")
+            label = m.get("display_name", short_id)
+            if short_id:
+                result.append((short_id, label))
+        return result
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
@@ -160,7 +186,9 @@ class BusinessBot:
             "🤖 *Модель*\n"
             "/model — выбрать LLM модель для текущего чата\n\n"
             "📝 *Посты*\n"
-            "/drafts — черновики постов\n\n"
+            "/drafts — черновики постов\n"
+            "/published — опубликованные посты\n"
+            "/queue — очередь на публикацию\n\n"
             "⚙️ *Бизнес-наблюдение*\n"
             "/list\\_chats — зарегистрированные группы\n"
             "/register\\_business\\_chat — добавить группу\n\n"
@@ -178,6 +206,7 @@ class BusinessBot:
         current = (await self.agent.bbot_get_chat_model(owner_id, chat_id)).removeprefix(
             "openrouter/"
         )
+        models = self._get_models()
         buttons = [
             [
                 InlineKeyboardButton(
@@ -185,7 +214,7 @@ class BusinessBot:
                     callback_data=f"bbot_model:{model_id}",
                 )
             ]
-            for model_id, label in self.MODELS
+            for model_id, label in models
         ]
         await update.message.reply_text(
             "Выбери модель для текущего чата:",
@@ -200,7 +229,7 @@ class BusinessBot:
         full_id = f"openrouter/{model_id}"
         chat_id = await self.agent.bbot_get_active_chat(owner_id)
         await self.agent.bbot_set_chat_model(owner_id, chat_id, full_id)
-        label = next((lbl for mid, lbl in self.MODELS if mid == model_id), model_id)
+        label = next((lbl for mid, lbl in self._get_models() if mid == model_id), model_id)
         await query.edit_message_text(f"✅ Модель чата: *{label}*", parse_mode="Markdown")
 
     async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -209,6 +238,35 @@ class BusinessBot:
             await update.message.reply_text("Нет черновиков.")
             return
         lines = ["*Черновики:*\n"]
+        for p in posts:
+            lines.append(
+                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
+                f"[{p.get('post_type', '')}]"
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_published(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        posts = await self.agent.queue.list_posts(status="published", limit=10)
+        if not posts:
+            await update.message.reply_text("Пока нет опубликованных постов.")
+            return
+        lines = ["*Опубликованные посты:*\n"]
+        for p in posts:
+            ts = p.get("published_at") or p.get("created_at", "")
+            date_str = str(ts)[:10] if ts else "?"
+            lines.append(
+                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
+                f"[{p.get('post_type', '')}] {date_str}"
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show approved posts waiting to be published."""
+        posts = await self.agent.queue.list_posts(status="approved", limit=10)
+        if not posts:
+            await update.message.reply_text("Очередь пуста — нет одобренных постов.")
+            return
+        lines = ["*В очереди на публикацию:*\n"]
         for p in posts:
             lines.append(
                 f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
