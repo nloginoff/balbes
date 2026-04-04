@@ -59,6 +59,7 @@ class BloggerAgent:
         self.db = db
         self.queue = post_queue
         self.publisher = publisher
+        self.memory_url = memory_url.rstrip("/")
         self.owner_tg_id = owner_tg_id
         self.owner_private_chat_id = owner_private_chat_id or owner_tg_id
         self.model = model or _DEFAULT_MODEL
@@ -71,10 +72,7 @@ class BloggerAgent:
         # Pending check-in interview state
         self._checkin_questions: list[str] = []
 
-        # Per-owner free-form conversation history {owner_id: [messages]}
-        self._owner_history: dict[int, list[dict]] = {}
-
-        # Model used for owner conversations (can be changed via /model)
+        # Default model for new bbot chats (overridden per-chat via memory service)
         self._conversation_model: str = model or _DEFAULT_MODEL
 
         # business_bot reference (set after construction)
@@ -128,23 +126,34 @@ class BloggerAgent:
         from_hours: int = 48,
     ) -> dict | None:
         """
-        Generate a new post from agent chats and Cursor files.
+        Generate a new post from owner's chat history and Cursor files.
         Returns {title, content_ru, content_en, source_refs} or None.
+
+        Args:
+            agents:       Ignored (kept for API compatibility). History is read
+                          from the owner's Telegram chats via Memory Service.
+            cursor_files: Number of most recent Cursor AI markdown files to include.
+            from_hours:   How far back to read chat history.
         """
         from_ts = datetime.now(timezone.utc) - timedelta(hours=from_hours)
 
         sources = []
         source_refs: list[str] = []
 
-        # Agent chat history
-        if self._chat_reader and agents:
-            msgs = await self._chat_reader.read(agents=agents, from_ts=from_ts, limit=80)
+        # Owner's chat history (all chats from Memory Service)
+        if self._chat_reader:
+            msgs = await self._chat_reader.read(
+                user_id=str(self.owner_tg_id),
+                from_ts=from_ts,
+                limit=60,
+            )
             if msgs:
                 chat_text = "\n".join(
-                    f"[{m['agent_id']}|{m['role']}]: {m['content'][:300]}" for m in msgs[:50]
+                    f"[{m.get('chat_name', '?')}|{m['role']}]: {m['content'][:400]}"
+                    for m in msgs[:60]
                 )
-                sources.append(f"=== Чаты агентов ===\n{chat_text}")
-                source_refs.append(f"agent_chats:{from_ts.date().isoformat()}")
+                sources.append(f"=== История чатов (последние {from_hours}ч) ===\n{chat_text}")
+                source_refs.append(f"chat_history:{from_ts.date().isoformat()}")
 
         # Cursor files
         cursor_data = self._cursor_reader.read_latest(cursor_files)
@@ -500,8 +509,113 @@ class BloggerAgent:
             if new_msg_id:
                 await self.queue.set_approval_message_id(post_id, new_msg_id)
 
+    # ── Memory-Service backed multi-chat helpers ─────────────────────────────
+
+    def _bbot_uid(self, owner_id: int) -> str:
+        """Unique Memory Service user_id for business bot chats (isolated from main bot)."""
+        return f"bbot_{owner_id}"
+
+    async def bbot_get_chats(self, owner_id: int) -> list[dict]:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}"
+            )
+            return r.json().get("chats", []) if r.is_success else []
+        except Exception as exc:
+            logger.warning("bbot_get_chats: %s", exc)
+            return []
+
+    async def bbot_get_active_chat(self, owner_id: int) -> str:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/active"
+            )
+            return r.json().get("chat_id", "default") if r.is_success else "default"
+        except Exception as exc:
+            logger.warning("bbot_get_active_chat: %s", exc)
+            return "default"
+
+    async def bbot_set_active_chat(self, owner_id: int, chat_id: str) -> None:
+        try:
+            await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/active",
+                params={"chat_id": chat_id},
+            )
+        except Exception as exc:
+            logger.warning("bbot_set_active_chat: %s", exc)
+
+    async def bbot_create_chat(self, owner_id: int, name: str) -> str:
+        try:
+            r = await self._get_http().post(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}",
+                json={"name": name},
+            )
+            return r.json().get("chat_id", "default") if r.is_success else "default"
+        except Exception as exc:
+            logger.warning("bbot_create_chat: %s", exc)
+            return "default"
+
+    async def bbot_rename_chat(self, owner_id: int, chat_id: str, name: str) -> None:
+        try:
+            await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/name",
+                json={"name": name},
+            )
+        except Exception as exc:
+            logger.warning("bbot_rename_chat: %s", exc)
+
+    async def bbot_clear_history(self, owner_id: int, chat_id: str) -> None:
+        try:
+            await self._get_http().delete(
+                f"{self.memory_url}/api/v1/history/{self._bbot_uid(owner_id)}/{chat_id}"
+            )
+        except Exception as exc:
+            logger.warning("bbot_clear_history: %s", exc)
+
+    async def bbot_get_history(self, owner_id: int, chat_id: str) -> list[dict]:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/history/{self._bbot_uid(owner_id)}/{chat_id}",
+                params={"limit": 40},
+            )
+            return r.json().get("messages", []) if r.is_success else []
+        except Exception as exc:
+            logger.warning("bbot_get_history: %s", exc)
+            return []
+
+    async def bbot_save_message(self, owner_id: int, chat_id: str, role: str, content: str) -> None:
+        try:
+            await self._get_http().post(
+                f"{self.memory_url}/api/v1/history/{self._bbot_uid(owner_id)}/{chat_id}",
+                json={"role": role, "content": content},
+            )
+        except Exception as exc:
+            logger.warning("bbot_save_message: %s", exc)
+
+    async def bbot_get_chat_model(self, owner_id: int, chat_id: str) -> str:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/model"
+            )
+            return (
+                r.json().get("model_id") or self._conversation_model
+                if r.is_success
+                else self._conversation_model
+            )
+        except Exception:
+            return self._conversation_model
+
+    async def bbot_set_chat_model(self, owner_id: int, chat_id: str, model: str) -> None:
+        try:
+            await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/model",
+                json={"model_id": model},
+            )
+        except Exception as exc:
+            logger.warning("bbot_set_chat_model: %s", exc)
+
     def set_conversation_model(self, model: str) -> None:
-        """Set the LLM model used for owner free-form conversations."""
+        """Set the default LLM model for new bbot conversations."""
         self._conversation_model = model
         logger.info("Conversation model set to: %s", model)
 

@@ -1818,14 +1818,16 @@ class ToolDispatcher:
     # =========================================================================
 
     async def _do_read_chat_history(self, args: dict[str, Any], context: dict[str, Any]) -> str:
-        """Read agent chat history from memory service."""
+        """Read owner's chat history from memory service (all chats, all agents)."""
         from datetime import datetime
 
-        agents = args.get("agents") or ["orchestrator"]
         from_ts_str = args.get("from_ts")
-        limit = int(args.get("limit") or 100)
+        limit = int(args.get("limit") or 60)
         memory_url = context.get("memory_service_url") or "http://localhost:8100"
-        user_id = context.get("user_id", "0")
+        user_id = context.get("user_id", "")
+
+        if not user_id:
+            return "Ошибка: не задан user_id в контексте."
 
         from_ts = None
         if from_ts_str:
@@ -1834,34 +1836,54 @@ class ToolDispatcher:
             except ValueError:
                 pass
 
+        # Step 1: list all chats for this user
+        try:
+            chats_resp = await self.http_client.get(
+                f"{memory_url}/api/v1/chats/{user_id}", timeout=10.0
+            )
+            chats = chats_resp.json().get("chats", []) if chats_resp.status_code == 200 else []
+        except Exception as exc:
+            return f"Ошибка при получении списка чатов: {exc}"
+
+        if not chats:
+            return "Нет чатов для этого пользователя."
+
+        # Step 2: read history from each chat
         results: list[str] = []
-        for agent_id in agents:
+        for chat in chats:
+            chat_id = chat.get("chat_id") or chat.get("id", "")
+            chat_name = chat.get("name", chat_id)
+            if not chat_id:
+                continue
             try:
                 resp = await self.http_client.get(
-                    f"{memory_url}/api/v1/history/{user_id}",
+                    f"{memory_url}/api/v1/history/{user_id}/{chat_id}",
                     params={"limit": limit},
                     timeout=15.0,
                 )
-                if resp.status_code == 200:
-                    messages = resp.json().get("messages", [])
-                    for m in messages:
-                        ts_str = m.get("timestamp") or m.get("created_at", "")
-                        if from_ts and ts_str:
-                            try:
-                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                if ts < from_ts:
-                                    continue
-                            except ValueError:
-                                pass
-                        role = m.get("role", "")
-                        content = (m.get("content") or "")[:300]
-                        results.append(f"[{agent_id}|{role}] {content}")
+                if resp.status_code != 200:
+                    continue
+                messages = resp.json().get("messages", [])
+                for m in messages:
+                    ts_str = m.get("timestamp") or m.get("created_at", "")
+                    if from_ts and ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts < from_ts:
+                                continue
+                        except ValueError:
+                            pass
+                    role = m.get("role", "")
+                    content = (m.get("content") or "")[:400]
+                    results.append(f"[{chat_name}|{role}] {content}")
             except Exception as exc:
-                results.append(f"[{agent_id}] Error: {exc}")
+                results.append(f"[{chat_name}] Error: {exc}")
 
         if not results:
             return "Нет сообщений за указанный период."
-        return f"Найдено {len(results)} сообщений:\n\n" + "\n".join(results[:80])
+        return f"Найдено {len(results)} сообщений из {len(chats)} чатов:\n\n" + "\n".join(
+            results[:80]
+        )
 
     def _do_read_cursor_file(self, args: dict[str, Any]) -> str:
         """Read a Cursor AI Markdown export file."""

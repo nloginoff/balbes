@@ -20,55 +20,97 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 
 
 class ChatReader:
-    """Reads agent chat history from the memory service."""
+    """Reads chat history from the memory service.
+
+    History is stored under /history/{user_id}/{chat_id} where user_id is
+    the owner's Telegram user_id. Reads all chats for that user and merges
+    the messages.
+    """
 
     def __init__(self, memory_url: str, http: httpx.AsyncClient):
         self.memory_url = memory_url.rstrip("/")
         self.http = http
 
+    async def _list_chats(self, user_id: str) -> list[dict]:
+        """Return all chats for a user from the memory service."""
+        try:
+            resp = await self.http.get(
+                f"{self.memory_url}/api/v1/chats/{user_id}",
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("chats", [])
+            logger.warning("list_chats user=%s → %s", user_id, resp.status_code)
+        except Exception as exc:
+            logger.warning("ChatReader._list_chats error: %s", exc)
+        return []
+
     async def read(
         self,
-        agents: list[str],
+        user_id: str,
         from_ts: datetime | None = None,
         limit: int = 100,
-        user_id: str = "0",
     ) -> list[dict]:
         """
-        Fetch recent chat messages for the specified agents.
-        Returns list of {role, content, agent_id, timestamp} dicts.
+        Fetch recent messages for the owner across all their chats.
+
+        Args:
+            user_id:  Owner's Telegram user_id (string).
+            from_ts:  Only return messages newer than this timestamp.
+            limit:    Max messages to fetch per chat.
+
+        Returns list of {chat_id, chat_name, role, content, timestamp}.
         """
+        chats = await self._list_chats(user_id)
+        if not chats:
+            logger.info("ChatReader: no chats found for user %s", user_id)
+            return []
+
         results: list[dict] = []
-        for agent_id in agents:
+        for chat in chats:
+            chat_id = chat.get("chat_id") or chat.get("id", "")
+            chat_name = chat.get("name", chat_id)
+            if not chat_id:
+                continue
             try:
-                params: dict = {"limit": limit}
                 resp = await self.http.get(
-                    f"{self.memory_url}/api/v1/history/{user_id}",
-                    params=params,
+                    f"{self.memory_url}/api/v1/history/{user_id}/{chat_id}",
+                    params={"limit": limit},
                     timeout=15.0,
                 )
-                if resp.status_code == 200:
-                    messages = resp.json().get("messages", [])
-                    for m in messages:
-                        ts_str = m.get("timestamp") or m.get("created_at", "")
-                        if from_ts and ts_str:
-                            try:
-                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-                                if ts < from_ts:
-                                    continue
-                            except ValueError:
-                                pass
-                        results.append(
-                            {
-                                "agent_id": agent_id,
-                                "role": m.get("role", ""),
-                                "content": m.get("content", ""),
-                                "timestamp": ts_str,
-                            }
-                        )
-                else:
-                    logger.warning("Memory API %s → %s", agent_id, resp.status_code)
+                if resp.status_code != 200:
+                    logger.warning(
+                        "ChatReader: history %s/%s → %s", user_id, chat_id, resp.status_code
+                    )
+                    continue
+                messages = resp.json().get("messages", [])
+                for m in messages:
+                    ts_str = m.get("timestamp") or m.get("created_at", "")
+                    if from_ts and ts_str:
+                        try:
+                            ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                            if ts < from_ts:
+                                continue
+                        except ValueError:
+                            pass
+                    results.append(
+                        {
+                            "chat_id": chat_id,
+                            "chat_name": chat_name,
+                            "role": m.get("role", ""),
+                            "content": m.get("content", ""),
+                            "timestamp": ts_str,
+                        }
+                    )
             except Exception as exc:
-                logger.warning("ChatReader error for %s: %s", agent_id, exc)
+                logger.warning("ChatReader error for chat %s: %s", chat_id, exc)
+
+        logger.info(
+            "ChatReader: read %d messages from %d chats for user %s",
+            len(results),
+            len(chats),
+            user_id,
+        )
         return results
 
 
