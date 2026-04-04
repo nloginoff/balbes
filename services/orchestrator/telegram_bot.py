@@ -40,6 +40,7 @@ from telegram.ext import (
     Application,
     ApplicationHandlerStop,
     CallbackQueryHandler,
+    ChatJoinRequestHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -749,6 +750,9 @@ class BalbesTelegramBot:
         # Blog post approval callbacks
         self.app.add_handler(CallbackQueryHandler(self.cb_blog_approval, pattern="^blog_"))
 
+        # Auto-approve join requests for all channels where bot is admin
+        self.app.add_handler(ChatJoinRequestHandler(self.handle_join_request))
+
         # Voice messages
         self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice))
 
@@ -1397,6 +1401,31 @@ class BalbesTelegramBot:
         labels = {"agent": "🤖 Agent — команды разрешены", "ask": "📝 Ask — только чтение"}
         label = labels.get(new_mode, new_mode)
         await query.edit_message_text(f"✅ Режим переключён: {label}")
+
+    async def handle_join_request(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Auto-approve all join requests for channels where this bot is admin."""
+        request = update.chat_join_request
+        if not request:
+            return
+        try:
+            await context.bot.approve_chat_join_request(
+                chat_id=request.chat.id,
+                user_id=request.from_user.id,
+            )
+            logger.info(
+                "Auto-approved join request: user_id=%s username=%s chat=%s (%s)",
+                request.from_user.id,
+                request.from_user.username,
+                request.chat.title,
+                request.chat.id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to approve join request user_id=%s chat=%s: %s",
+                request.from_user.id,
+                request.chat.id,
+                exc,
+            )
 
     async def cb_blog_approval(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle blog post approval inline button callbacks (blog_approve/reject/edit)."""
