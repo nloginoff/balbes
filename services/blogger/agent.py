@@ -94,7 +94,7 @@ class BloggerAgent:
     async def _call_llm(self, messages: list[dict], model: str | None = None) -> str:
         """Call OpenRouter LLM. Returns text content."""
         http = self._get_http()
-        used_model = model or self.model
+        used_model = (model or self.model).removeprefix("openrouter/")
         try:
             resp = await http.post(
                 "https://openrouter.ai/api/v1/chat/completions",
