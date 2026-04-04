@@ -1510,16 +1510,21 @@ class BalbesTelegramBot:
         tg_chat_id: int,
         user_id: str,
         agent_id: str,
+        progress_only: bool = False,
     ) -> asyncio.Task:
         """
         Spawn a lightweight monitor for a FOREGROUND task.
-        Polls /api/v1/tasks/fg/events every 5s and sends debug trace batches to Telegram.
-        Returns the asyncio.Task so the caller can cancel it when the main POST returns.
+
+        progress_only=False (debug mode): polls events every 5s, sends full debug trace batches.
+        progress_only=True  (normal mode): edits a single status message with compact tool activity,
+                                           then deletes it when the task finishes.
         """
 
         async def _fg_monitor_loop() -> None:
-            batch_num = 0
             poll_interval = 5
+            batch_num = 0
+            status_msg_id: int | None = None  # used only in progress_only mode
+
             while True:
                 await asyncio.sleep(poll_interval)
                 try:
@@ -1538,25 +1543,66 @@ class BalbesTelegramBot:
                     continue
 
                 events = data.get("events", [])
-                if events:
-                    batch_num += 1
-                    trace = self._format_debug_trace(
-                        events,
-                        elapsed_ms=None,
-                        agent_prefix=agent_id,
-                        batch=batch_num,
-                    )
-                    if trace:
-                        try:
-                            if self.app:
-                                await self.app.bot.send_message(
-                                    tg_chat_id, trace, parse_mode="HTML"
-                                )
-                        except Exception as e:
-                            logger.debug(f"[fgmon] send failed: {e}")
+                task_done = not data.get("running", True)
 
-                if not data.get("running", True):
-                    break  # task finished, main POST will handle final result
+                if events:
+                    if progress_only:
+                        # Compact progress: collect unique tool names from this batch
+                        tool_names = [
+                            e.get("name", "?") for e in events if e.get("type") == "tool_start"
+                        ]
+                        llm_rounds = [e.get("round", 0) for e in events if e.get("type") == "llm"]
+                        if tool_names or llm_rounds:
+                            round_str = f"раунд {llm_rounds[-1]}" if llm_rounds else ""
+                            tools_str = (
+                                " · ".join(f"<code>{t}</code>" for t in tool_names[:6])
+                                if tool_names
+                                else ""
+                            )
+                            parts = [p for p in [round_str, tools_str] if p]
+                            text = f"⚙️ Работаю… {' | '.join(parts)}" if parts else "⚙️ Работаю…"
+                            try:
+                                if self.app:
+                                    if status_msg_id:
+                                        await self.app.bot.edit_message_text(
+                                            chat_id=tg_chat_id,
+                                            message_id=status_msg_id,
+                                            text=text,
+                                            parse_mode="HTML",
+                                        )
+                                    else:
+                                        sent = await self.app.bot.send_message(
+                                            tg_chat_id, text, parse_mode="HTML"
+                                        )
+                                        status_msg_id = sent.message_id
+                            except Exception as e:
+                                logger.debug(f"[fgmon] progress update failed: {e}")
+                    else:
+                        # Full debug trace (debug mode)
+                        batch_num += 1
+                        trace = self._format_debug_trace(
+                            events,
+                            elapsed_ms=None,
+                            agent_prefix=agent_id,
+                            batch=batch_num,
+                        )
+                        if trace:
+                            try:
+                                if self.app:
+                                    await self.app.bot.send_message(
+                                        tg_chat_id, trace, parse_mode="HTML"
+                                    )
+                            except Exception as e:
+                                logger.debug(f"[fgmon] send failed: {e}")
+
+                if task_done:
+                    # Clean up progress status message
+                    if progress_only and status_msg_id and self.app:
+                        try:
+                            await self.app.bot.delete_message(tg_chat_id, status_msg_id)
+                        except Exception:
+                            pass
+                    break  # main POST will handle final result
 
         task = asyncio.create_task(_fg_monitor_loop(), name=f"fgmon-{user_id}:{agent_id}")
         return task
@@ -1998,14 +2044,19 @@ class BalbesTelegramBot:
                     if agent_id:
                         params["agent_id"] = agent_id
 
-                # Start live trace monitor for foreground tasks when debug is on
+                # Start live monitor for foreground tasks:
+                #   debug=True  → full debug trace (existing behaviour)
+                #   agent mode  → compact progress indicator (new)
                 fg_monitor: asyncio.Task | None = None
                 _active_agent_id = params.get("agent_id", "orchestrator")
-                if chat_settings.get("debug") and chat_tg:
+                _is_debug = chat_settings.get("debug", False)
+                _is_agent_mode = params.get("mode", "ask") == "agent"
+                if chat_tg and (_is_debug or _is_agent_mode):
                     fg_monitor = self._start_fg_monitor(
                         tg_chat_id=chat_tg.id,
                         user_id=str(user.id),
                         agent_id=_active_agent_id,
+                        progress_only=not _is_debug,
                     )
 
                 response = await self._get_http().post(

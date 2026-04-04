@@ -22,6 +22,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import redis.asyncio as aioredis
 import tiktoken
 from agent_logger import AgentActivityLogger
 from tools import AGENT_TOOLS, AVAILABLE_TOOLS, HEARTBEAT_TOOLS, ToolDispatcher, get_tools_for_mode
@@ -54,6 +55,11 @@ settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
 
 MAX_TOOL_CALL_ROUNDS = 15  # prevent infinite tool-call loops
+
+# Redis key helpers for persisted task registry
+_REDIS_TASK_PREFIX = "balbes:task:"
+_REDIS_TASK_INDEX = "balbes:task_ids"
+_REDIS_TASK_TTL = 86400  # 24 h
 
 
 def _count_tokens(text: str) -> int:
@@ -289,6 +295,7 @@ class OrchestratorAgent:
         self.memory_service_url = f"http://localhost:{settings.memory_service_port}"
         self.skills_registry_url = f"http://localhost:{settings.skills_registry_port}"
         self.http_client: httpx.AsyncClient | None = None
+        self._redis: aioredis.Redis | None = None
 
         # Workspace cache: agent_id → AgentWorkspace (lazy-loaded per agent)
         self._workspaces: dict[str, AgentWorkspace] = {}
@@ -351,8 +358,23 @@ class OrchestratorAgent:
         self._cancel_flags.pop(user_id, None)
 
     async def connect(self) -> None:
-        """Initialize HTTP client, load default workspace, warm up tools."""
+        """Initialize HTTP client, Redis, load default workspace, warm up tools."""
         self.http_client = httpx.AsyncClient(timeout=60.0)
+
+        # Connect to Redis and restore persisted task registry
+        try:
+            self._redis = aioredis.from_url(
+                settings.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                socket_connect_timeout=3,
+            )
+            await self._redis.ping()
+            await self._restore_task_registry()
+            logger.info("Redis connected — task registry restored")
+        except Exception as e:
+            logger.warning(f"Redis unavailable, task registry will be in-memory only: {e}")
+            self._redis = None
 
         # Eagerly load the default orchestrator workspace
         ws = self._get_workspace(self.agent_id)
@@ -376,6 +398,8 @@ class OrchestratorAgent:
     async def close(self) -> None:
         if self.http_client:
             await self.http_client.aclose()
+        if self._redis:
+            await self._redis.aclose()
         logger.info("Orchestrator Agent closed")
 
     # -------------------------------------------------------------------------
@@ -476,17 +500,18 @@ class OrchestratorAgent:
                 between_rounds_delay = float(hb_cfg.get("request_delay_seconds", 0))
 
             # Attach debug collector to tool dispatcher for this task.
-            # For foreground tasks with debug=True: use _LiveDebugList so the bot can
-            # poll live events every 5 s via /api/v1/tasks/fg/events while waiting.
+            # Always populate _fg_debug_buffer for foreground tasks (not heartbeat) so:
+            #   debug=True  → bot streams full debug trace
+            #   debug=False → bot streams compact progress status (tool names only)
             fg_debug_key = f"{user_id}:{effective_agent_id}:fg"
-            if debug and not is_heartbeat:
+            if not is_heartbeat:
                 live_buf: list[dict[str, Any]] = []
                 self._fg_debug_buffer[fg_debug_key] = live_buf
                 debug_events: list[dict] = _LiveDebugList(live_buf)
             else:
                 debug_events = []
             if self.tool_dispatcher:
-                self.tool_dispatcher.set_debug_collector(debug_events if debug else None)
+                self.tool_dispatcher.set_debug_collector(debug_events if not is_heartbeat else None)
 
             # Snapshot background task keys before LLM run to detect new delegations
             _bg_keys_before = set(self._background_tasks.keys())
@@ -917,13 +942,13 @@ class OrchestratorAgent:
         source: str = "user",
         is_background: bool = False,
     ) -> None:
-        """Record a task in the global registry."""
+        """Record a task in the global registry and persist to Redis."""
         # Evict oldest entries if we exceed the cap
         if len(self._task_registry) >= self._TASK_REGISTRY_MAX:
             oldest_key = next(iter(self._task_registry))
             del self._task_registry[oldest_key]
 
-        self._task_registry[task_id] = {
+        entry: dict[str, Any] = {
             "task_id": task_id,
             "agent_id": agent_id,
             "user_id": user_id,
@@ -935,9 +960,11 @@ class OrchestratorAgent:
             "finished_at": None,
             "duration_ms": None,
         }
+        self._task_registry[task_id] = entry
+        asyncio.create_task(self._redis_save_task(task_id, entry))
 
     def _finish_task(self, task_id: str, status: str = "completed") -> None:
-        """Mark a task as finished in the registry."""
+        """Mark a task as finished in the registry and update Redis."""
         if task_id not in self._task_registry:
             return
         entry = self._task_registry[task_id]
@@ -950,6 +977,40 @@ class OrchestratorAgent:
             )
         except Exception:
             pass
+        asyncio.create_task(self._redis_save_task(task_id, entry))
+
+    async def _redis_save_task(self, task_id: str, entry: dict[str, Any]) -> None:
+        """Persist a single task entry to Redis (fire-and-forget)."""
+        if not self._redis:
+            return
+        try:
+            key = f"{_REDIS_TASK_PREFIX}{task_id}"
+            await self._redis.setex(key, _REDIS_TASK_TTL, json.dumps(entry))
+            # Keep ordered index: push to front, trim to 2× cap
+            await self._redis.lpush(_REDIS_TASK_INDEX, task_id)
+            await self._redis.ltrim(_REDIS_TASK_INDEX, 0, self._TASK_REGISTRY_MAX * 2 - 1)
+        except Exception as e:
+            logger.debug(f"Redis task persist failed: {e}")
+
+    async def _restore_task_registry(self) -> None:
+        """Load recent task entries from Redis into in-memory registry on startup."""
+        if not self._redis:
+            return
+        try:
+            task_ids = await self._redis.lrange(_REDIS_TASK_INDEX, 0, self._TASK_REGISTRY_MAX - 1)
+            loaded = 0
+            for tid in reversed(task_ids):  # oldest-first so dict order is chronological
+                key = f"{_REDIS_TASK_PREFIX}{tid}"
+                raw = await self._redis.get(key)
+                if raw:
+                    try:
+                        self._task_registry[tid] = json.loads(raw)
+                        loaded += 1
+                    except Exception:
+                        pass
+            logger.info(f"Restored {loaded} tasks from Redis")
+        except Exception as e:
+            logger.warning(f"Failed to restore task registry from Redis: {e}")
 
     def list_tasks(self, user_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
         """

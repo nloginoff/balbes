@@ -404,6 +404,39 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "file_patch",
+            "description": (
+                "Replace an exact string in a project file (targeted edit). "
+                "Finds the FIRST occurrence of old_string and replaces it with new_string. "
+                "Fails if old_string is not found or appears more than once. "
+                "Prefer this over file_write for editing large files — only send the changed block."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path relative to project root or absolute within it.",
+                    },
+                    "old_string": {
+                        "type": "string",
+                        "description": (
+                            "Exact text to find and replace. Must be unique in the file. "
+                            "Include enough surrounding lines for uniqueness."
+                        ),
+                    },
+                    "new_string": {
+                        "type": "string",
+                        "description": "Replacement text (can be empty string to delete).",
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_schedule",
             "description": (
                 "Manage scheduled tasks (cron/interval jobs). "
@@ -617,6 +650,9 @@ class ToolDispatcher:
             elif tool_name == "file_write":
                 result = self._do_file_write(tool_args)
 
+            elif tool_name == "file_patch":
+                result = self._do_file_patch(tool_args)
+
             elif tool_name == "manage_schedule":
                 result = self._do_manage_schedule(tool_args)
 
@@ -814,6 +850,65 @@ class ToolDispatcher:
             resolved.write_text(content, encoding="utf-8")
             rel = resolved.relative_to(_PROJECT_ROOT)
             return f"Written {len(content)} chars to {rel} ({len(content.splitlines())} lines)."
+        except Exception as e:
+            return f"Error writing '{raw_path}': {e}"
+
+    def _do_file_patch(self, args: dict[str, Any]) -> str:
+        """Replace an exact string in a project file (targeted edit)."""
+        raw_path = args.get("path", "")
+        old_string = args.get("old_string", "")
+        new_string = args.get("new_string", "")
+        if not raw_path:
+            return "Error: 'path' parameter is required."
+        if not old_string:
+            return "Error: 'old_string' parameter is required."
+
+        forbidden = (".env", ".key", ".pem", ".p12", "secret", "credential", "password")
+        name_lower = Path(raw_path).name.lower()
+        if any(name_lower.startswith(pat) or name_lower.endswith(pat) for pat in forbidden):
+            return f"Write denied: '{raw_path}' matches a forbidden filename pattern."
+
+        try:
+            p = Path(raw_path)
+            resolved = (_PROJECT_ROOT / p).resolve() if not p.is_absolute() else p.resolve()
+            if not str(resolved).startswith(str(_PROJECT_ROOT)):
+                return f"Access denied: path '{raw_path}' is outside project root."
+            if not resolved.exists():
+                return f"File not found: {raw_path}"
+            if not resolved.is_file():
+                return f"Not a file: {raw_path}"
+        except Exception as e:
+            return f"Invalid path '{raw_path}': {e}"
+
+        try:
+            content = resolved.read_text(encoding="utf-8")
+        except Exception as e:
+            return f"Error reading '{raw_path}': {e}"
+
+        count = content.count(old_string)
+        if count == 0:
+            # Show a snippet near the expected location to help the model debug
+            first_line = old_string.splitlines()[0][:60] if old_string else ""
+            hint = f" (first line of old_string: {first_line!r})" if first_line else ""
+            return (
+                f"Error: old_string not found in {raw_path}{hint}. "
+                "Check that the text matches exactly, including whitespace and indentation."
+            )
+        if count > 1:
+            return (
+                f"Error: old_string appears {count} times in {raw_path} — it must be unique. "
+                "Add more surrounding lines to make it unambiguous."
+            )
+
+        new_content = content.replace(old_string, new_string, 1)
+        try:
+            resolved.write_text(new_content, encoding="utf-8")
+            rel = resolved.relative_to(_PROJECT_ROOT)
+            lines_before = content.count("\n") + 1
+            lines_after = new_content.count("\n") + 1
+            delta = lines_after - lines_before
+            sign = "+" if delta >= 0 else ""
+            return f"Patched {rel}: {lines_before} → {lines_after} lines ({sign}{delta})."
         except Exception as e:
             return f"Error writing '{raw_path}': {e}"
 
