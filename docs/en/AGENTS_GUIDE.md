@@ -187,6 +187,8 @@ A separate Telegram bot (`BUSINESS_BOT_TOKEN`) runs inside the Blogger service w
 
 **Security**: the bot only responds to the owner's `OWNER_TELEGRAM_ID`. All other private messages are silently ignored — the bot does not reveal its existence to strangers.
 
+**Commands vs free text**: private messages starting with `/` are handled only by `CommandHandler` (e.g. `/drafts`). Plain-text replies use the LLM path. List commands like `/drafts` render post titles with HTML escaping so special characters in titles cannot break Telegram delivery (legacy Markdown used to fail silently).
+
 **Anonymization strategies:**
 | Strategy | Result |
 |----------|--------|

@@ -75,9 +75,11 @@ class PostQueue:
     ) -> list[dict]:
         """List posts filtered by status.
 
-        ``status='draft'`` matches both ``draft`` and ``pending_approval`` — the latter is what
-        :meth:`create_draft` inserts; older callers used ``draft`` only and saw empty lists.
+        ``status='draft'`` matches both ``draft`` and ``pending_approval`` (what :meth:`create_draft`
+        inserts). ``pending`` is an alias for ``pending_approval`` (LLM / users say «pending»).
         """
+        if status == "pending":
+            status = "pending_approval"
         if status:
             if status == "draft":
                 rows = await self.db.fetch(

@@ -12,6 +12,7 @@ SECURITY:
 """
 
 import logging
+from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -155,10 +156,10 @@ class BusinessBot:
             )
         )
 
-        # Private messages — ONLY from owner, all others silently ignored
+        # Private messages — ONLY from owner (skip lines starting with / so commands go to CommandHandler)
         app.add_handler(
             MessageHandler(
-                filters.TEXT & filters.ChatType.PRIVATE & owner,
+                filters.TEXT & filters.Regex(r"^(?!/).") & filters.ChatType.PRIVATE & owner,
                 self._handle_private_message,
             )
         )
@@ -259,46 +260,71 @@ class BusinessBot:
         await query.edit_message_text(f"✅ Модель чата: *{label}*", parse_mode="Markdown")
 
     async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        posts = await self.agent.queue.list_posts(status="draft", limit=10)
-        if not posts:
-            await update.message.reply_text("Нет черновиков.")
+        """List drafts (draft + pending_approval). HTML escape — Markdown broke on titles."""
+        msg = update.effective_message
+        if not msg:
             return
-        lines = ["*Черновики (ожидают решения):*\n"]
-        for p in posts:
-            lines.append(
-                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
-                f"[{p.get('post_type', '')}] — `{p.get('status', '')}`"
-            )
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        try:
+            posts = await self.agent.queue.list_posts(status="draft", limit=15)
+            if not posts:
+                await msg.reply_text("Нет черновиков.")
+                return
+            lines = ["Черновики (draft / pending_approval):\n"]
+            for p in posts:
+                lines.append(
+                    f"• {str(p.get('id', ''))[:8]} — "
+                    f"{escape(str(p.get('title') or '(без названия)'))} — "
+                    f"{escape(str(p.get('post_type', '')))} — {escape(str(p.get('status', '')))}"
+                )
+            await msg.reply_text("\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            logger.exception("_cmd_drafts: %s", exc)
+            await msg.reply_text(f"Не удалось загрузить черновики: {exc!s:.300}")
 
     async def _cmd_published(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        posts = await self.agent.queue.list_posts(status="published", limit=10)
-        if not posts:
-            await update.message.reply_text("Пока нет опубликованных постов.")
+        msg = update.effective_message
+        if not msg:
             return
-        lines = ["*Опубликованные посты:*\n"]
-        for p in posts:
-            ts = p.get("published_at") or p.get("created_at", "")
-            date_str = str(ts)[:10] if ts else "?"
-            lines.append(
-                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
-                f"[{p.get('post_type', '')}] {date_str}"
-            )
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        try:
+            posts = await self.agent.queue.list_posts(status="published", limit=10)
+            if not posts:
+                await msg.reply_text("Пока нет опубликованных постов.")
+                return
+            lines = ["Опубликованные посты:\n"]
+            for p in posts:
+                ts = p.get("published_at") or p.get("created_at", "")
+                date_str = str(ts)[:10] if ts else "?"
+                lines.append(
+                    f"• {str(p.get('id', ''))[:8]} — "
+                    f"{escape(str(p.get('title') or '(без названия)'))} — "
+                    f"{escape(str(p.get('post_type', '')))} {escape(date_str)}"
+                )
+            await msg.reply_text("\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            logger.exception("_cmd_published: %s", exc)
+            await msg.reply_text(f"Ошибка: {exc!s:.300}")
 
     async def _cmd_queue(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show approved posts waiting to be published."""
-        posts = await self.agent.queue.list_posts(status="approved", limit=10)
-        if not posts:
-            await update.message.reply_text("Очередь пуста — нет одобренных постов.")
+        msg = update.effective_message
+        if not msg:
             return
-        lines = ["*В очереди на публикацию:*\n"]
-        for p in posts:
-            lines.append(
-                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
-                f"[{p.get('post_type', '')}]"
-            )
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        try:
+            posts = await self.agent.queue.list_posts(status="approved", limit=10)
+            if not posts:
+                await msg.reply_text("Очередь пуста — нет одобренных постов.")
+                return
+            lines = ["В очереди на публикацию (approved):\n"]
+            for p in posts:
+                lines.append(
+                    f"• {str(p.get('id', ''))[:8]} — "
+                    f"{escape(str(p.get('title') or '(без названия)'))} — "
+                    f"{escape(str(p.get('post_type', '')))}"
+                )
+            await msg.reply_text("\n".join(lines), parse_mode="HTML")
+        except Exception as exc:
+            logger.exception("_cmd_queue: %s", exc)
+            await msg.reply_text(f"Ошибка: {exc!s:.300}")
 
     async def _cmd_generate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Generate a new post immediately from recent chats and files."""
@@ -319,21 +345,20 @@ class BusinessBot:
                     "Не удалось сгенерировать пост." + extra + "\n\n"
                     "Попробуй:\n"
                     "— /model — другая модель\n"
-                    "— Написать тему текстом — сделаю черновик\n"
+                    "— написать тему текстом — черновик\n"
                     "— /summary — бизнес-саммари"
                 )
                 return
             draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
             if draft_id:
                 await msg.reply_text(
-                    f"✅ Черновик сохранён (статус pending_approval).\n"
-                    f"ID: `{draft_id[:8]}` — смотри /drafts\n"
-                    f"Превью с кнопками уходит в личку (основной или бизнес-бот).",
-                    parse_mode="Markdown",
+                    f"✅ Черновик сохранён (pending_approval).\n"
+                    f"ID: {draft_id[:8]} — смотри /drafts\n"
+                    f"Превью с кнопками — в личке (основной или бизнес-бот)."
                 )
             else:
                 await msg.reply_text(
-                    "Не удалось сохранить черновик в БД. Проверь логи blogger и подключение к PostgreSQL."
+                    "Не удалось записать черновик в БД. Проверь PostgreSQL и логи blogger."
                 )
         except Exception as exc:
             logger.exception("_cmd_generate: %s", exc)

@@ -350,8 +350,8 @@ class BloggerAgent:
         Save draft to DB and send approval preview to owner.
         Returns post_id or None only if DB insert fails.
 
-        ``blog_channels`` rows are targets for *publishing*; drafts must be saved even when
-        no channel rows exist yet (e.g. prod not seeded).
+        ``blog_channels`` rows are targets for publishing; drafts must persist even when
+        none are configured yet.
         """
         post_id = await self.queue.create_draft(
             content_ru=post["content_ru"],
