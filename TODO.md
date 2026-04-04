@@ -10,16 +10,17 @@
 
 ## Идеи / Backlog
 
+- **Blogger: CRM интеграция** — читать сделки, воронку, статистику из CRM для бизнес-саммари
+- **Blogger: анализ звонков** — Whisper → расшифровка звонков с клиентами → саммари → пост в блог
+- **Blogger: авто-индексация Cursor** — re-index cursor_chats при добавлении нового файла (fsnotify)
+- **Blogger: авто-публикация** — включить `auto_publish: true` для RU/EN каналов после тестирования
 - **RabbitMQ интеграция** — использовать RabbitMQ для асинхронной передачи задач между агентами (сейчас in-process callbacks)
 - **Веб-интерфейс для агентов** — дашборд с историей задач, токенами, логами (частично реализован в web-backend)
 - **Multi-user support** — сейчас один пользователь, но архитектура готова к расширению
 - **Голосовой ответ** — TTS для голосовых сообщений (в ответ на голос — голос)
-- **Scheduled tasks UI** — управление расписанием через Telegram команды (/schedule list/add/remove)
 - **Agent marketplace** — регистрировать новых агентов через skills-registry без перезапуска
 - **Code review agent** — специализированный агент для code review PR
 - **Автоматический деплой** — агент-деплойер: git pull + docker compose up при новых коммитах
-- **Алерты по метрикам** — мониторинг сервисов и отправка уведомлений при проблемах
-- **Экспорт истории** — /export для выгрузки чата в markdown/json
 - **Токен-бюджет в ответе** — показывать `_Токены: N | model_` в конце ответа в debug mode
 - **Автоиндексация кода по git hook** — re-index при `git push` через post-receive hook
 - **Инструмент `diff_files`** — показывать diff между двумя файлами без execute_command
@@ -45,3 +46,4 @@
 - ✅ `code_search(query)` + `index_codebase()` — файловая индексация в Qdrant `code_index`
 - ✅ `_maybe_summarize_history()` — LLM суммаризация при переполнении контекста (`history_strategy: summarize`)
 - ✅ `manage_todo(action, section, item)` — агенты могут читать и обновлять TODO.md
+- ✅ **Blogger agent service** — `services/blogger/`: агент-блогер, бизнес-бот (тихий наблюдатель + DM check-in), очередь постов, approval flow через inline-кнопки, вечерний check-in 20:00, бизнес-саммари, публикация в 3 Telegram-канала (RU/EN/personal)

@@ -704,3 +704,27 @@ timeouts:
   skill_execution: 30
   database_query: 10
   http_request: 30
+
+
+# Blogger agent configuration
+blogger:
+  enabled: true
+  post_quota_per_day: 3
+  channels:
+    ru:
+      id: "${BLOGGER_CHANNEL_RU}"
+      auto_publish: false   # Set to true after testing to enable auto-publishing
+    en:
+      id: "${BLOGGER_CHANNEL_EN}"
+      auto_publish: false
+    personal:
+      id: "${BLOGGER_CHANNEL_PERSONAL}"
+      auto_publish: false   # Personal blog always requires approval — never change to true
+  evening_checkin_hour: 20   # 20:00 Moscow time
+  source_agents:
+    - orchestrator
+    - coder
+  cursor_files_dir: "data/cursor_chats"   # Drop Cursor AI .md exports here
+  business:
+    summary_hours: 24          # Hours of business messages to include in summary
+    min_messages_for_summary: 10  # Minimum messages before generating summary

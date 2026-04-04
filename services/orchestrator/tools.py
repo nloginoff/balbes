@@ -548,6 +548,264 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    # ── Blogger tools ────────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "read_chat_history",
+            "description": (
+                "Read recent chat history with system agents (orchestrator, coder) from memory service. "
+                "Use to gather material for blog posts. Available only for blogger agent."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agents": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of agent IDs to read history from (e.g. ['orchestrator', 'coder']).",
+                    },
+                    "from_ts": {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp — read messages after this time.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max messages to return (default: 100).",
+                    },
+                },
+                "required": ["agents"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_cursor_file",
+            "description": (
+                "Read a Markdown file exported from Cursor AI session. "
+                "Use to extract context from coding sessions for blog posts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the Markdown file (relative to project root or absolute).",
+                    },
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_cursor_files",
+            "description": "List Markdown files in the cursor_chats directory, newest first.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "directory": {
+                        "type": "string",
+                        "description": "Directory to scan (default: data/cursor_chats).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_business_chats",
+            "description": (
+                "Read anonymized messages from registered business Telegram groups. "
+                "Messages are pre-anonymized — no real names or sensitive data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "List of business_chats DB IDs to read from. Omit for all.",
+                    },
+                    "from_ts": {
+                        "type": "string",
+                        "description": "ISO 8601 timestamp — read messages after this time.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max messages (default: 200).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_business_summary",
+            "description": (
+                "Generate an LLM summary of business chat activity for the given period. "
+                "Returns a structured digest of topics, decisions, and issues. "
+                "Sent privately to the owner — not published."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_ids": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Business chat IDs to summarize. Omit for all.",
+                    },
+                    "period_hours": {
+                        "type": "integer",
+                        "description": "Summarize messages from the last N hours (default: 24).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_draft",
+            "description": (
+                "Create a blog post draft and send it to the owner for approval. "
+                "Always provide both content_ru and content_en. "
+                "post_type='agent' → RU+EN channels; post_type='user' → personal blog (always requires approval)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content_ru": {
+                        "type": "string",
+                        "description": "Post text in Russian.",
+                    },
+                    "content_en": {
+                        "type": "string",
+                        "description": "Post text in English.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Post title or headline.",
+                    },
+                    "post_type": {
+                        "type": "string",
+                        "enum": ["agent", "user"],
+                        "description": "agent = from AI perspective (RU+EN); user = from owner perspective (personal).",
+                    },
+                    "source_refs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of source references (e.g. 'cursor:session.md', 'chat:2026-04-04').",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Internal notes about this draft.",
+                    },
+                },
+                "required": ["content_ru", "content_en"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_drafts",
+            "description": "List blog post drafts with optional status filter.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "draft",
+                            "pending_approval",
+                            "approved",
+                            "scheduled",
+                            "published",
+                            "rejected",
+                        ],
+                        "description": "Filter by status. Omit to list all.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results (default: 20).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_published_posts",
+            "description": "Get recent published posts for context — use to avoid repeating topics.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of recent posts to return (default: 10).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "schedule_post",
+            "description": "Schedule an approved post for publishing at a specific time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "post_id": {
+                        "type": "string",
+                        "description": "UUID of the approved post.",
+                    },
+                    "publish_at": {
+                        "type": "string",
+                        "description": "ISO 8601 datetime for publishing (e.g. '2026-04-05T10:00:00Z').",
+                    },
+                },
+                "required": ["post_id", "publish_at"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_business_role",
+            "description": "Map a Telegram user_id to a role label for anonymization in a specific business group.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "string",
+                        "description": "Telegram group ID (e.g. '-1001234567890').",
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "Telegram user_id to map.",
+                    },
+                    "role": {
+                        "type": "string",
+                        "description": "Role label (e.g. 'менеджер', 'разработчик', 'клиент').",
+                    },
+                },
+                "required": ["group_id", "user_id", "role"],
+            },
+        },
+    },
+    # ── End blogger tools ────────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
@@ -811,6 +1069,37 @@ class ToolDispatcher:
 
             elif tool_name == "manage_schedule":
                 result = self._do_manage_schedule(tool_args)
+
+            # ── Blogger tools (only meaningful when agent_id == "blogger") ──
+            elif tool_name == "read_chat_history":
+                result = await self._do_read_chat_history(tool_args, context)
+
+            elif tool_name == "read_cursor_file":
+                result = self._do_read_cursor_file(tool_args)
+
+            elif tool_name == "list_cursor_files":
+                result = self._do_list_cursor_files(tool_args)
+
+            elif tool_name == "read_business_chats":
+                result = await self._do_read_business_chats(tool_args, context)
+
+            elif tool_name == "get_business_summary":
+                result = await self._do_get_business_summary(tool_args, context)
+
+            elif tool_name == "create_draft":
+                result = await self._do_create_draft(tool_args, context)
+
+            elif tool_name == "list_drafts":
+                result = await self._do_list_drafts(tool_args, context)
+
+            elif tool_name == "get_published_posts":
+                result = await self._do_get_published_posts(tool_args, context)
+
+            elif tool_name == "schedule_post":
+                result = await self._do_schedule_post(tool_args, context)
+
+            elif tool_name == "set_business_role":
+                result = await self._do_set_business_role(tool_args, context)
 
             else:
                 result = f"Unknown tool: {tool_name}"
@@ -1523,6 +1812,262 @@ class ToolDispatcher:
 
         else:
             return f"Неизвестное действие '{action}'. Доступно: list, add, remove, enable, disable."
+
+    # =========================================================================
+    # Blogger tools implementation
+    # =========================================================================
+
+    async def _do_read_chat_history(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Read agent chat history from memory service."""
+        from datetime import datetime
+
+        agents = args.get("agents") or ["orchestrator"]
+        from_ts_str = args.get("from_ts")
+        limit = int(args.get("limit") or 100)
+        memory_url = context.get("memory_service_url") or "http://localhost:8100"
+        user_id = context.get("user_id", "0")
+
+        from_ts = None
+        if from_ts_str:
+            try:
+                from_ts = datetime.fromisoformat(from_ts_str.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        results: list[str] = []
+        for agent_id in agents:
+            try:
+                resp = await self.http_client.get(
+                    f"{memory_url}/api/v1/history/{user_id}",
+                    params={"limit": limit},
+                    timeout=15.0,
+                )
+                if resp.status_code == 200:
+                    messages = resp.json().get("messages", [])
+                    for m in messages:
+                        ts_str = m.get("timestamp") or m.get("created_at", "")
+                        if from_ts and ts_str:
+                            try:
+                                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                                if ts < from_ts:
+                                    continue
+                            except ValueError:
+                                pass
+                        role = m.get("role", "")
+                        content = (m.get("content") or "")[:300]
+                        results.append(f"[{agent_id}|{role}] {content}")
+            except Exception as exc:
+                results.append(f"[{agent_id}] Error: {exc}")
+
+        if not results:
+            return "Нет сообщений за указанный период."
+        return f"Найдено {len(results)} сообщений:\n\n" + "\n".join(results[:80])
+
+    def _do_read_cursor_file(self, args: dict[str, Any]) -> str:
+        """Read a Cursor AI Markdown export file."""
+        path = (args.get("path") or "").strip()
+        if not path:
+            return "Error: укажи path к файлу."
+        from pathlib import Path
+
+        p = Path(path)
+        if not p.is_absolute():
+            p = _PROJECT_ROOT / p
+        if not p.exists():
+            return f"Файл не найден: {path}"
+        try:
+            content = p.read_text(encoding="utf-8", errors="replace")
+            return f"=== {path} ===\n{content[:8000]}"
+        except Exception as exc:
+            return f"Error reading {path}: {exc}"
+
+    def _do_list_cursor_files(self, args: dict[str, Any]) -> str:
+        """List Markdown files in cursor_chats directory."""
+        from pathlib import Path
+
+        directory = args.get("directory") or "data/cursor_chats"
+        d = Path(directory)
+        if not d.is_absolute():
+            d = _PROJECT_ROOT / d
+        if not d.exists():
+            return f"Директория не найдена: {directory}"
+        files = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+        if not files:
+            return "Нет файлов в директории."
+        lines = [f"Найдено {len(files)} файлов:"]
+        for f in files[:20]:
+            size = f.stat().st_size
+            rel = f.relative_to(_PROJECT_ROOT)
+            lines.append(f"  {rel} ({size} bytes)")
+        return "\n".join(lines)
+
+    async def _do_read_business_chats(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Read anonymized business messages from PostgreSQL."""
+        from_ts_str = args.get("from_ts")
+        limit = int(args.get("limit") or 200)
+
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        try:
+            params: dict = {"limit": limit}
+            if from_ts_str:
+                params["from_ts"] = from_ts_str
+            resp = await self.http_client.get(
+                f"{blogger_url}/api/v1/business-messages",
+                params=params,
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                messages = resp.json().get("messages", [])
+                if not messages:
+                    return "Нет бизнес-сообщений за указанный период."
+                lines = [f"Найдено {len(messages)} сообщений из бизнес-чатов:"]
+                for m in messages[:100]:
+                    sender = m.get("anon_sender") or ""
+                    chat_name = m.get("chat_name", "?")
+                    content = m.get("content", "")[:200]
+                    prefix = f"[{chat_name}] {sender}: " if sender else f"[{chat_name}] "
+                    lines.append(prefix + content)
+                return "\n".join(lines)
+            return f"Blogger service error: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Error reading business chats: {exc}"
+
+    async def _do_get_business_summary(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Generate LLM summary of business chats via blogger service."""
+        period_hours = int(args.get("period_hours") or 24)
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        try:
+            resp = await self.http_client.post(
+                f"{blogger_url}/api/v1/business-summary",
+                json={"period_hours": period_hours, "chat_ids": args.get("chat_ids")},
+                timeout=60.0,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("summary") or "Саммари не удалось сгенерировать."
+            return f"Blogger service error: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Error getting business summary: {exc}"
+
+    async def _do_create_draft(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Create a blog post draft and send for approval via blogger service."""
+        content_ru = (args.get("content_ru") or "").strip()
+        content_en = (args.get("content_en") or "").strip()
+        if not content_ru:
+            return "Error: content_ru is required."
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        payload = {
+            "content_ru": content_ru,
+            "content_en": content_en,
+            "title": args.get("title") or "",
+            "post_type": args.get("post_type") or "agent",
+            "source_refs": args.get("source_refs") or [],
+            "notes": args.get("notes") or "",
+        }
+        try:
+            resp = await self.http_client.post(
+                f"{blogger_url}/api/v1/posts/create",
+                json=payload,
+                timeout=30.0,
+            )
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                post_id = data.get("post_id", "?")
+                return f"✅ Черновик создан (ID: {post_id}). Отправлен владельцу на согласование."
+            return f"Blogger service error: HTTP {resp.status_code} — {resp.text[:200]}"
+        except Exception as exc:
+            return f"Error creating draft: {exc}"
+
+    async def _do_list_drafts(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """List blog post drafts."""
+        status = args.get("status")
+        limit = int(args.get("limit") or 20)
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        params: dict = {"limit": limit}
+        if status:
+            params["status"] = status
+        try:
+            resp = await self.http_client.get(
+                f"{blogger_url}/api/v1/posts/",
+                params=params,
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                posts = resp.json().get("posts", [])
+                if not posts:
+                    return "Нет черновиков."
+                lines = [f"Найдено {len(posts)} постов:"]
+                for p in posts:
+                    title = p.get("title") or "(без заголовка)"
+                    st = p.get("status", "?")
+                    created = p.get("created_at", "")[:10]
+                    lines.append(f"  [{st}] {title} ({created}) — ID: {p.get('id', '?')}")
+                return "\n".join(lines)
+            return f"Error: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Error listing drafts: {exc}"
+
+    async def _do_get_published_posts(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Get recent published posts for context."""
+        limit = int(args.get("limit") or 10)
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        try:
+            resp = await self.http_client.get(
+                f"{blogger_url}/api/v1/posts/",
+                params={"status": "published", "limit": limit},
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                posts = resp.json().get("posts", [])
+                if not posts:
+                    return "Ещё нет опубликованных постов."
+                lines = [f"Последние {len(posts)} опубликованных постов:"]
+                for p in posts:
+                    title = p.get("title") or "(без заголовка)"
+                    pub = p.get("published_at", "")[:10]
+                    lines.append(f"  {title} ({pub})")
+                return "\n".join(lines)
+            return f"Error: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    async def _do_schedule_post(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Schedule a post for publishing."""
+        post_id = (args.get("post_id") or "").strip()
+        publish_at = (args.get("publish_at") or "").strip()
+        if not post_id or not publish_at:
+            return "Error: укажи post_id и publish_at."
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        try:
+            resp = await self.http_client.post(
+                f"{blogger_url}/api/v1/posts/{post_id}/schedule",
+                json={"publish_at": publish_at},
+                timeout=15.0,
+            )
+            if resp.status_code == 200:
+                return f"✅ Пост {post_id} запланирован на {publish_at}."
+            return f"Error: HTTP {resp.status_code} — {resp.text[:200]}"
+        except Exception as exc:
+            return f"Error: {exc}"
+
+    async def _do_set_business_role(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Set anonymization role mapping for a business chat."""
+        group_id = (args.get("group_id") or "").strip()
+        user_id = (args.get("user_id") or "").strip()
+        role = (args.get("role") or "").strip()
+        if not group_id or not user_id or not role:
+            return "Error: укажи group_id, user_id и role."
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        try:
+            resp = await self.http_client.post(
+                f"{blogger_url}/api/v1/business-chats/set-role",
+                json={"group_id": group_id, "user_id": user_id, "role": role},
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                return f"✅ Роль установлена: user {user_id} → '{role}' в группе {group_id}."
+            return f"Error: HTTP {resp.status_code} — {resp.text[:200]}"
+        except Exception as exc:
+            return f"Error: {exc}"
 
 
 # ---------------------------------------------------------------------------

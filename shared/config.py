@@ -223,6 +223,23 @@ class Settings(BaseSettings):
     )
 
     # =============================================================================
+    # Blogger service
+    # =============================================================================
+    blogger_service_port: int = Field(default=8103)
+    business_bot_token: str | None = Field(
+        default=None, description="Telegram bot token for silent business chat watcher + check-in"
+    )
+    blogger_channel_ru: str | None = Field(
+        default=None, description="Telegram channel ID for RU posts"
+    )
+    blogger_channel_en: str | None = Field(
+        default=None, description="Telegram channel ID for EN posts"
+    )
+    blogger_channel_personal: str | None = Field(
+        default=None, description="Telegram channel ID for personal blog posts"
+    )
+
+    # =============================================================================
     # Optional
     # =============================================================================
     domain: str | None = Field(default=None, description="Production domain")
@@ -234,6 +251,10 @@ class Settings(BaseSettings):
         "openrouter_api_key",
         "aitunnel_api_key",
         "telegram_bot_token",
+        "business_bot_token",
+        "blogger_channel_ru",
+        "blogger_channel_en",
+        "blogger_channel_personal",
         "brave_search_key",
         "tavily_api_key",
         "yandex_search_key",

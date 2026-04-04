@@ -188,6 +188,117 @@ async def create_schema(conn: asyncpg.Connection):
     """)
     print("  ✅ Created view: v_task_stats")
 
+    # =========================================================================
+    # Blogger service tables
+    # =========================================================================
+    print("\nCreating blogger tables...")
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS blog_channels (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            tg_channel_id VARCHAR(50) NOT NULL UNIQUE,
+            language VARCHAR(20) NOT NULL,
+            auto_publish BOOLEAN NOT NULL DEFAULT FALSE,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT language_check CHECK (language IN ('ru', 'en', 'personal'))
+        );
+    """)
+    print("  ✅ Created table: blog_channels")
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS blog_posts (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            title VARCHAR(500),
+            content JSONB NOT NULL DEFAULT '{}',
+            channel_id INTEGER REFERENCES blog_channels(id),
+            post_type VARCHAR(20) NOT NULL DEFAULT 'agent',
+            status VARCHAR(30) NOT NULL DEFAULT 'draft',
+            source_refs JSONB NOT NULL DEFAULT '[]',
+            scheduled_at TIMESTAMP WITH TIME ZONE,
+            published_at TIMESTAMP WITH TIME ZONE,
+            approval_message_id BIGINT,
+            notes TEXT,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT post_type_check CHECK (post_type IN ('agent', 'user')),
+            CONSTRAINT status_check CHECK (status IN (
+                'draft', 'pending_approval', 'approved',
+                'scheduled', 'published', 'rejected'
+            ))
+        );
+    """)
+    print("  ✅ Created table: blog_posts")
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS blog_interviews (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id VARCHAR(50) NOT NULL,
+            interview_type VARCHAR(20) NOT NULL DEFAULT 'evening',
+            questions JSONB NOT NULL DEFAULT '[]',
+            answers JSONB NOT NULL DEFAULT '[]',
+            date DATE NOT NULL DEFAULT CURRENT_DATE,
+            used_in_post_id UUID REFERENCES blog_posts(id),
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT interview_type_check CHECK (interview_type IN ('morning', 'evening'))
+        );
+    """)
+    print("  ✅ Created table: blog_interviews")
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS business_chats (
+            id SERIAL PRIMARY KEY,
+            tg_group_id VARCHAR(50) NOT NULL UNIQUE,
+            name VARCHAR(200) NOT NULL,
+            anon_strategy VARCHAR(20) NOT NULL DEFAULT 'initials',
+            role_map JSONB NOT NULL DEFAULT '{}',
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+
+            CONSTRAINT anon_strategy_check CHECK (anon_strategy IN ('roles', 'initials', 'full'))
+        );
+    """)
+    print("  ✅ Created table: business_chats")
+
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS business_messages (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            chat_id INTEGER NOT NULL REFERENCES business_chats(id),
+            anon_sender VARCHAR(100),
+            content TEXT NOT NULL,
+            ts TIMESTAMP WITH TIME ZONE NOT NULL,
+            processed BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        );
+    """)
+    print("  ✅ Created table: business_messages")
+
+    # Blogger indexes
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_blog_posts_status ON blog_posts(status);")
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_blog_posts_channel ON blog_posts(channel_id);"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_blog_posts_scheduled ON blog_posts(scheduled_at) WHERE scheduled_at IS NOT NULL;"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_blog_posts_created ON blog_posts(created_at DESC);"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_business_messages_chat ON business_messages(chat_id);"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_business_messages_ts ON business_messages(ts DESC);"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_business_messages_processed ON business_messages(processed) WHERE NOT processed;"
+    )
+    print("  ✅ Created blogger indexes")
+
     # Table: skills (for Skills Registry)
     print("\nCreating skills table...")
     await conn.execute("""
@@ -296,6 +407,23 @@ async def seed_initial_agents(conn: asyncpg.Connection):
     """)
     print("  ✅ Seeded agent: coder")
 
+    # Blogger
+    await conn.execute("""
+        INSERT INTO agents (agent_id, name, status, current_model, config)
+        VALUES (
+            'blogger',
+            'Blogger Agent',
+            'idle',
+            'openrouter/stepfun/step-3.5-flash:free',
+            '{
+                "agent_id": "blogger",
+                "token_limits": {"daily": 150000, "hourly": 20000}
+            }'::jsonb
+        )
+        ON CONFLICT (agent_id) DO NOTHING;
+    """)
+    print("  ✅ Seeded agent: blogger")
+
 
 async def verify_schema(conn: asyncpg.Connection):
     """Verify that schema was created correctly"""
@@ -310,7 +438,18 @@ async def verify_schema(conn: asyncpg.Connection):
         ORDER BY tablename;
     """)
 
-    expected_tables = {"agents", "tasks", "action_logs", "token_usage", "skills"}
+    expected_tables = {
+        "agents",
+        "tasks",
+        "action_logs",
+        "token_usage",
+        "skills",
+        "blog_channels",
+        "blog_posts",
+        "blog_interviews",
+        "business_chats",
+        "business_messages",
+    }
     actual_tables = {row["tablename"] for row in tables}
 
     if expected_tables.issubset(actual_tables):

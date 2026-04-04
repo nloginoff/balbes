@@ -746,6 +746,9 @@ class BalbesTelegramBot:
         self.app.add_handler(CallbackQueryHandler(self.cb_model_unavail, pattern="^model_unavail:"))
         self.app.add_handler(CallbackQueryHandler(self.cb_mode_set, pattern="^mode_set:"))
 
+        # Blog post approval callbacks
+        self.app.add_handler(CallbackQueryHandler(self.cb_blog_approval, pattern="^blog_"))
+
         # Voice messages
         self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice))
 
@@ -1394,6 +1397,67 @@ class BalbesTelegramBot:
         labels = {"agent": "🤖 Agent — команды разрешены", "ask": "📝 Ask — только чтение"}
         label = labels.get(new_mode, new_mode)
         await query.edit_message_text(f"✅ Режим переключён: {label}")
+
+    async def cb_blog_approval(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle blog post approval inline button callbacks (blog_approve/reject/edit)."""
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user:
+            return
+
+        data = query.data or ""  # "blog_approve:uuid", "blog_reject:uuid", "blog_edit:uuid"
+        parts = data.split(":", 1)
+        if len(parts) != 2:
+            return
+        action, post_id = parts[0], parts[1]
+
+        blogger_url = f"http://localhost:{get_settings().blogger_service_port}"
+
+        if action == "blog_approve":
+            try:
+                resp = await self._http.post(
+                    f"{blogger_url}/api/v1/posts/{post_id}/approve", timeout=10.0
+                )
+                if resp.status_code == 200:
+                    await query.edit_message_text(
+                        f"✅ Пост одобрен и добавлен в очередь публикации.\n`{post_id}`",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Ошибка: {resp.status_code}")
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Ошибка связи с blogger: {exc}")
+
+        elif action == "blog_reject":
+            try:
+                resp = await self._http.post(
+                    f"{blogger_url}/api/v1/posts/{post_id}/reject", timeout=10.0
+                )
+                if resp.status_code == 200:
+                    await query.edit_message_text(
+                        f"❌ Пост отклонён.\n`{post_id}`", parse_mode="Markdown"
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Ошибка: {resp.status_code}")
+            except Exception as exc:
+                await query.edit_message_text(f"❌ Ошибка: {exc}")
+
+        elif action == "blog_edit":
+            # Ask the user to describe what to fix; next message will be the instruction
+            try:
+                owner_id = user.id
+                await self._http.post(
+                    f"{blogger_url}/api/v1/posts/edit-mode/{post_id}",
+                    params={"owner_chat_id": owner_id},
+                    timeout=10.0,
+                )
+            except Exception:
+                pass
+            await query.edit_message_text(
+                f"✏️ Напиши в чат, что нужно исправить в посте, и агент перепишет его.\n`{post_id}`",
+                parse_mode="Markdown",
+            )
 
     async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Cancel the currently running agent task for this user."""
