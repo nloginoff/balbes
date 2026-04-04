@@ -269,6 +269,29 @@ async def _run_business_bot(bot_app) -> None:
         await bot_app.start()
         await bot_app.updater.start_polling(drop_pending_updates=True)
         logger.info("Business bot polling started")
+
+        # Register commands menu in Telegram (post_init may not fire in our setup)
+        try:
+            from telegram import BotCommand
+
+            commands = [
+                BotCommand("generate", "Сгенерировать пост по чатам"),
+                BotCommand("drafts", "Черновики постов"),
+                BotCommand("published", "Опубликованные посты"),
+                BotCommand("queue", "Очередь на публикацию"),
+                BotCommand("summary", "Бизнес-саммари за день"),
+                BotCommand("model", "Выбрать LLM модель"),
+                BotCommand("chats", "Список чатов / переключить"),
+                BotCommand("newchat", "Создать новый чат"),
+                BotCommand("rename", "Переименовать чат"),
+                BotCommand("clear", "Очистить историю чата"),
+                BotCommand("list_chats", "Зарегистрированные бизнес-группы"),
+                BotCommand("help", "Справка"),
+            ]
+            await bot_app.bot.set_my_commands(commands)
+            logger.info("Business bot commands menu set (%d commands)", len(commands))
+        except Exception as exc:
+            logger.warning("Could not set bot commands menu: %s", exc)
         # Keep running until cancelled
         while True:
             await asyncio.sleep(3600)
