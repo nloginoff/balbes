@@ -89,14 +89,19 @@ class BusinessBot:
         app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
         app.add_handler(CommandHandler("help", self._cmd_help, filters=owner))
         app.add_handler(CommandHandler("model", self._cmd_model, filters=owner))
+        app.add_handler(CommandHandler("chats", self._cmd_chats, filters=owner))
+        app.add_handler(CommandHandler("newchat", self._cmd_newchat, filters=owner))
+        app.add_handler(CommandHandler("rename", self._cmd_rename, filters=owner))
+        app.add_handler(CommandHandler("clear", self._cmd_clear, filters=owner))
         app.add_handler(
             CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
         )
         app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
         app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
 
-        # Model selection callback
+        # Inline callbacks
         app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
+        app.add_handler(CallbackQueryHandler(self._cb_chat_selected, pattern="^bbot_chat:"))
 
         # Group messages: anonymize and store (all users in registered groups)
         app.add_handler(
@@ -147,22 +152,32 @@ class BusinessBot:
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "*Команды бизнес-бота:*\n\n"
-            "/help — эта справка\n"
-            "/model — выбрать LLM модель\n"
-            "/drafts — показать черновики постов\n"
-            "/list\\_chats — зарегистрированные бизнес-чаты\n"
+            "💬 *Чаты*\n"
+            "/chats — список чатов / переключить\n"
+            "/newchat \\[название\\] — создать новый чат\n"
+            "/rename \\[название\\] — переименовать текущий\n"
+            "/clear — очистить историю текущего чата\n\n"
+            "🤖 *Модель*\n"
+            "/model — выбрать LLM модель для текущего чата\n\n"
+            "📝 *Посты*\n"
+            "/drafts — черновики постов\n\n"
+            "⚙️ *Бизнес-наблюдение*\n"
+            "/list\\_chats — зарегистрированные группы\n"
             "/register\\_business\\_chat — добавить группу\n\n"
-            "*Что можно писать просто текстом:*\n"
-            "— «придумай пост о запуске нового проекта»\n"
-            "— «покажи что в очереди на публикацию»\n"
+            "*Просто пиши текстом:*\n"
+            "— «придумай пост о запуске проекта»\n"
             "— «сделай саммари бизнес-чатов»\n"
             "— «одобри пост abc12345»\n"
-            "— любой вопрос или идея",
+            "— любой вопрос или задача",
             parse_mode="Markdown",
         )
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        current = self.agent._conversation_model.removeprefix("openrouter/")
+        owner_id = update.effective_user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        current = (await self.agent.bbot_get_chat_model(owner_id, chat_id)).removeprefix(
+            "openrouter/"
+        )
         buttons = [
             [
                 InlineKeyboardButton(
@@ -173,18 +188,20 @@ class BusinessBot:
             for model_id, label in self.MODELS
         ]
         await update.message.reply_text(
-            "Выбери модель для общения:",
+            "Выбери модель для текущего чата:",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
 
     async def _cb_model_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
+        owner_id = update.effective_user.id
         model_id = query.data.removeprefix("bbot_model:")
         full_id = f"openrouter/{model_id}"
-        self.agent.set_conversation_model(full_id)
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        await self.agent.bbot_set_chat_model(owner_id, chat_id, full_id)
         label = next((lbl for mid, lbl in self.MODELS if mid == model_id), model_id)
-        await query.edit_message_text(f"✅ Модель выбрана: *{label}*", parse_mode="Markdown")
+        await query.edit_message_text(f"✅ Модель чата: *{label}*", parse_mode="Markdown")
 
     async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         posts = await self.agent.queue.list_posts(status="draft", limit=10)
@@ -198,6 +215,75 @@ class BusinessBot:
                 f"[{p.get('post_type', '')}]"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    # ── Multi-chat commands ───────────────────────────────────────────────────
+
+    async def _cmd_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """List all business-bot chats with inline switch buttons."""
+        owner_id = update.effective_user.id
+        chats = await self.agent.bbot_get_chats(owner_id)
+        active_id = await self.agent.bbot_get_active_chat(owner_id)
+
+        if not chats:
+            await update.message.reply_text("Пока нет чатов. Создай первый: /newchat Название")
+            return
+
+        buttons = []
+        for chat in chats:
+            cid = chat.get("chat_id") or chat.get("id", "")
+            name = chat.get("name", cid)
+            label = f"✅ {name}" if cid == active_id else name
+            buttons.append([InlineKeyboardButton(label, callback_data=f"bbot_chat:{cid}")])
+
+        await update.message.reply_text(
+            "*Твои чаты:*\nНажми чтобы переключиться.",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown",
+        )
+
+    async def _cb_chat_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        owner_id = update.effective_user.id
+        chat_id = query.data.removeprefix("bbot_chat:")
+        await self.agent.bbot_set_active_chat(owner_id, chat_id)
+
+        # get chat name for confirmation
+        chats = await self.agent.bbot_get_chats(owner_id)
+        name = next(
+            (c.get("name", chat_id) for c in chats if (c.get("chat_id") or c.get("id")) == chat_id),
+            chat_id,
+        )
+        await query.edit_message_text(f"✅ Переключился на чат: *{name}*", parse_mode="Markdown")
+
+    async def _cmd_newchat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Create a new chat. Usage: /newchat [name]"""
+        owner_id = update.effective_user.id
+        name = " ".join(context.args) if context.args else "Новый чат"
+        chat_id = await self.agent.bbot_create_chat(owner_id, name)
+        await self.agent.bbot_set_active_chat(owner_id, chat_id)
+        await update.message.reply_text(
+            f"✅ Создан и активирован чат: *{name}*\nID: `{chat_id[:8]}`",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_rename(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Rename the active chat. Usage: /rename New Name"""
+        owner_id = update.effective_user.id
+        if not context.args:
+            await update.message.reply_text("Использование: /rename Новое название")
+            return
+        name = " ".join(context.args)
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        await self.agent.bbot_rename_chat(owner_id, chat_id, name)
+        await update.message.reply_text(f"✅ Чат переименован: *{name}*", parse_mode="Markdown")
+
+    async def _cmd_clear(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Clear history of the active chat."""
+        owner_id = update.effective_user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        await self.agent.bbot_clear_history(owner_id, chat_id)
+        await update.message.reply_text("🗑 История текущего чата очищена.")
 
     async def _cmd_register_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Register a business group chat. Usage: /register_business_chat <group_id> <name> <strategy>"""

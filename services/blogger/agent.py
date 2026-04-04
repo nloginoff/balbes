@@ -744,17 +744,30 @@ class BloggerAgent:
             },
         ]
 
-        # ── history management ───────────────────────────────────────────────
-        history = self._owner_history.setdefault(owner_id, [])
-        history.append({"role": "user", "content": text})
-        # keep last 30 messages to avoid blowing context
-        if len(history) > 30:
-            history[:] = history[-30:]
+        # ── chat context from Memory Service ────────────────────────────────
+        chat_id = await self.bbot_get_active_chat(owner_id)
+        model = await self.bbot_get_chat_model(owner_id, chat_id)
+
+        # save incoming user message to persistent history
+        await self.bbot_save_message(owner_id, chat_id, "user", text)
+
+        # load history (last 40 messages) for context
+        stored = await self.bbot_get_history(owner_id, chat_id)
+        # memory service returns oldest-first; tool messages aren't stored,
+        # so we only have user/assistant roles here
+        history: list[dict] = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in stored
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
 
         # ── agentic tool-call loop (max 5 rounds) ────────────────────────────
         MAX_ROUNDS = 5
+        # working copy for this request (includes in-flight tool messages)
+        working: list[dict] = list(history)
+
         for _round in range(MAX_ROUNDS):
-            messages = [{"role": "system", "content": system}] + history
+            messages = [{"role": "system", "content": system}] + working
 
             http = self._get_http()
             try:
@@ -767,7 +780,7 @@ class BloggerAgent:
                         "X-Title": "Balbes Blogger Agent",
                     },
                     json={
-                        "model": self._conversation_model.removeprefix("openrouter/"),
+                        "model": model.removeprefix("openrouter/"),
                         "messages": messages,
                         "tools": tools,
                         "tool_choice": "auto",
@@ -790,12 +803,14 @@ class BloggerAgent:
             if finish_reason != "tool_calls" or not msg.get("tool_calls"):
                 answer = msg.get("content") or ""
                 if answer:
-                    history.append({"role": "assistant", "content": answer})
+                    working.append({"role": "assistant", "content": answer})
+                    # persist assistant reply
+                    await self.bbot_save_message(owner_id, chat_id, "assistant", answer)
                     await reply_fn(answer)
                 return
 
-            # ── tool calls ────────────────────────────────────────────────
-            history.append(msg)  # assistant message with tool_calls
+            # ── tool calls (not persisted — only in working context) ──────
+            working.append(msg)
 
             for tc in msg.get("tool_calls", []):
                 fn_name = tc.get("function", {}).get("name", "")
@@ -806,7 +821,7 @@ class BloggerAgent:
                     args = {}
 
                 tool_result = await self._dispatch_conversation_tool(fn_name, args)
-                history.append(
+                working.append(
                     {
                         "role": "tool",
                         "tool_call_id": tc.get("id", ""),
