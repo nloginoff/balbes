@@ -173,6 +173,20 @@ async def lifespan(app: FastAPI):
     owner_id = int(settings.telegram_user_id or 0)
     memory_url = settings.memory_service_url
 
+    # Load model from data/agents/blogger/config.yaml
+    _agent_cfg_path = (
+        Path(__file__).parent.parent.parent / "data" / "agents" / "blogger" / "config.yaml"
+    )
+    _agent_cfg: dict = {}
+    if _agent_cfg_path.exists():
+        import yaml
+
+        with _agent_cfg_path.open(encoding="utf-8") as _f:
+            _agent_cfg = yaml.safe_load(_f) or {}
+    agent_model = _agent_cfg.get("default_model") or None
+    agent_cheap_model = _agent_cfg.get("cheap_model") or None
+    logger.info("Blogger model: %s | cheap: %s", agent_model, agent_cheap_model)
+
     _agent = BloggerAgent(
         openrouter_api_key=openrouter_key,
         db=_db,
@@ -181,6 +195,8 @@ async def lifespan(app: FastAPI):
         memory_url=memory_url,
         owner_tg_id=owner_id,
         owner_private_chat_id=owner_id,
+        model=agent_model,
+        cheap_model=agent_cheap_model,
     )
     _agent.set_memory_url(memory_url)
     _agent.set_biz_reader(BusinessChatReader(_db))

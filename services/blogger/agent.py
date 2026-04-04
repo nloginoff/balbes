@@ -23,8 +23,8 @@ logger = logging.getLogger("blogger.agent")
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 _WORKSPACE = _PROJECT_ROOT / "data" / "agents" / "blogger"
 
-_DEFAULT_MODEL = "openrouter/minimax/minimax-m2.5:free"
-_CHEAP_MODEL = "openrouter/meta-llama/llama-3.1-8b-instruct:free"
+_DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.5"
+_CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
 
 
 def _read_workspace_file(name: str) -> str:
@@ -54,6 +54,7 @@ class BloggerAgent:
         owner_tg_id: int,
         owner_private_chat_id: int | None = None,
         model: str | None = None,
+        cheap_model: str | None = None,
     ):
         self.api_key = openrouter_api_key
         self.db = db
@@ -63,6 +64,7 @@ class BloggerAgent:
         self.owner_tg_id = owner_tg_id
         self.owner_private_chat_id = owner_private_chat_id or owner_tg_id
         self.model = model or _DEFAULT_MODEL
+        self.cheap_model = cheap_model or _CHEAP_MODEL
 
         self._http: httpx.AsyncClient | None = None
         self._chat_reader: ChatReader | None = None
@@ -338,7 +340,7 @@ class BloggerAgent:
         )
         summary = await self._call_llm(
             _llm_messages(system, f"Сообщения за последние {period_hours}ч:\n\n{msgs_text}"),
-            model=_CHEAP_MODEL,
+            model=self.cheap_model,
         )
         return summary.strip() if summary else None
 
@@ -368,7 +370,7 @@ class BloggerAgent:
         )
         questions_text = await self._call_llm(
             _llm_messages(system, prompts_text),
-            model=_CHEAP_MODEL,
+            model=self.cheap_model,
         )
 
         if not questions_text:
@@ -407,7 +409,7 @@ class BloggerAgent:
         )
         verdict = await self._call_llm(
             _llm_messages(system, reply_text),
-            model=_CHEAP_MODEL,
+            model=self.cheap_model,
         )
 
         if "YES" in (verdict or "").upper():
