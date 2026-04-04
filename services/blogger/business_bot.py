@@ -263,11 +263,11 @@ class BusinessBot:
         if not posts:
             await update.message.reply_text("Нет черновиков.")
             return
-        lines = ["*Черновики:*\n"]
+        lines = ["*Черновики (ожидают решения):*\n"]
         for p in posts:
             lines.append(
                 f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
-                f"[{p.get('post_type', '')}]"
+                f"[{p.get('post_type', '')}] — `{p.get('status', '')}`"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -339,13 +339,14 @@ class BusinessBot:
         draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
         if draft_id:
             await msg.reply_text(
-                f"✅ Пост сгенерирован и отправлен на согласование.\nID: `{draft_id[:8]}`",
+                f"✅ Черновик сохранён (статус pending_approval).\n"
+                f"ID: `{draft_id[:8]}` — смотри /drafts\n"
+                f"Превью с кнопками уходит в личку (основной или бизнес-бот).",
                 parse_mode="Markdown",
             )
         else:
             await msg.reply_text(
-                "Пост сгенерирован, но черновик не сохранён: нет активных каналов в БД "
-                "(blog_channels) или не удалось отправить превью. Проверь конфиг блогера."
+                "Не удалось сохранить черновик в БД. Проверь логи blogger и подключение к PostgreSQL."
             )
 
     async def _cmd_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

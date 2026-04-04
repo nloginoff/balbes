@@ -296,13 +296,11 @@ class BloggerAgent:
     ) -> str | None:
         """
         Save draft to DB and send approval preview to owner.
-        Returns post_id or None.
-        """
-        channels = await self.queue.get_channels()
-        if not channels:
-            logger.warning("No active blog channels configured")
-            return None
+        Returns post_id or None only if DB insert fails.
 
+        ``blog_channels`` rows are targets for *publishing*; drafts must be saved even when
+        no channel rows exist yet (e.g. prod not seeded).
+        """
         post_id = await self.queue.create_draft(
             content_ru=post["content_ru"],
             content_en=post.get("content_en", ""),
@@ -319,6 +317,13 @@ class BloggerAgent:
         else:
             channel_label = "RU-канал + EN-канал"
             use_biz_bot = False
+
+        channels = await self.queue.get_channels()
+        if not channels:
+            logger.warning(
+                "No blog_channels in DB — draft %s saved; configure channels to publish",
+                post_id[:8],
+            )
 
         msg_id = await self.publisher.send_approval_preview(
             owner_chat_id=self.owner_private_chat_id,

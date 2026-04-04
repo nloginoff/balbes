@@ -73,21 +73,39 @@ class PostQueue:
         status: str | None = None,
         limit: int = 20,
     ) -> list[dict]:
-        """List posts filtered by status."""
+        """List posts filtered by status.
+
+        ``status='draft'`` matches both ``draft`` and ``pending_approval`` — the latter is what
+        :meth:`create_draft` inserts; older callers used ``draft`` only and saw empty lists.
+        """
         if status:
-            rows = await self.db.fetch(
-                """
-                SELECT p.id, p.title, p.post_type, p.status, p.created_at, p.scheduled_at,
-                       p.published_at, p.notes, bc.name as channel_name, bc.language
-                FROM blog_posts p
-                LEFT JOIN blog_channels bc ON bc.id = p.channel_id
-                WHERE p.status = $1
-                ORDER BY p.created_at DESC
-                LIMIT $2
-                """,
-                status,
-                limit,
-            )
+            if status == "draft":
+                rows = await self.db.fetch(
+                    """
+                    SELECT p.id, p.title, p.post_type, p.status, p.created_at, p.scheduled_at,
+                           p.published_at, p.notes, bc.name as channel_name, bc.language
+                    FROM blog_posts p
+                    LEFT JOIN blog_channels bc ON bc.id = p.channel_id
+                    WHERE p.status IN ('draft', 'pending_approval')
+                    ORDER BY p.created_at DESC
+                    LIMIT $1
+                    """,
+                    limit,
+                )
+            else:
+                rows = await self.db.fetch(
+                    """
+                    SELECT p.id, p.title, p.post_type, p.status, p.created_at, p.scheduled_at,
+                           p.published_at, p.notes, bc.name as channel_name, bc.language
+                    FROM blog_posts p
+                    LEFT JOIN blog_channels bc ON bc.id = p.channel_id
+                    WHERE p.status = $1
+                    ORDER BY p.created_at DESC
+                    LIMIT $2
+                    """,
+                    status,
+                    limit,
+                )
         else:
             rows = await self.db.fetch(
                 """
