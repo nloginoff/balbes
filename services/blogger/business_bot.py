@@ -307,22 +307,35 @@ class BusinessBot:
         await msg.reply_text("Генерирую пост по последним чатам…")
 
         owner_id = update.effective_user.id
-        # Use chat's active model
         chat_id = await self.agent.bbot_get_active_chat(owner_id)
         post_model = await self.agent.bbot_get_chat_model(owner_id, chat_id)
 
         post = await self.agent.generate_agent_post(model=post_model)
         if not post:
+            reason = getattr(self.agent, "_last_generate_failure_reason", None)
             detail = getattr(self.agent, "_last_post_gen_error", "") or ""
-            extra = f"\n\n{detail}" if detail else ""
-            await msg.reply_text(
-                "Не удалось сгенерировать пост." + extra + "\n\n"
-                "Попробуй:\n"
-                "— /model — другая модель\n"
-                "— Написать тему текстом — сделаю черновик\n"
-                "— /summary — бизнес-саммари"
-            )
+            if reason == "no_sources":
+                text = (
+                    "В Memory Service нет сообщений за последние 48ч "
+                    "(ни чатов с оркестратором, ни файлов в data/cursor_chats)."
+                )
+            elif detail:
+                text = (
+                    "Не удалось сгенерировать пост.\n\n"
+                    + detail
+                    + "\n\nПопробуй:\n"
+                    "— /model — другая модель\n"
+                    "— Написать тему текстом — сделаю черновик\n"
+                    "— /summary — бизнес-саммари"
+                )
+            else:
+                text = (
+                    "Чаты с оркестратором прочитаны из Memory, но модель не вернула пост.\n\n"
+                    "Попробуй /model или напиши тему текстом."
+                )
+            await msg.reply_text(text)
             return
+
         draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
         if draft_id:
             await msg.reply_text(

@@ -39,14 +39,6 @@ def _llm_messages(system: str, user: str) -> list[dict]:
     ]
 
 
-def _normalize_openrouter_model_id(model: str) -> str:
-    """OpenRouter chat/completions expects `vendor/model`, not `openrouter/vendor/model`."""
-    m = (model or "").strip()
-    while m.startswith("openrouter/"):
-        m = m[11:]
-    return m
-
-
 class BloggerAgent:
     """
     Generates blog posts, handles check-in interviews, and manages approvals.
@@ -87,9 +79,8 @@ class BloggerAgent:
 
         # business_bot reference (set after construction)
         self.business_bot = None
-
-        # Last failure reason for generate_agent_post (for Telegram error messages)
-        self._last_post_gen_error: str = ""
+        # Set by generate_agent_post for user-facing error messages
+        self._last_generate_failure_reason: str | None = None
 
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -155,8 +146,6 @@ class BloggerAgent:
         """
         from_ts = datetime.now(timezone.utc) - timedelta(hours=from_hours)
 
-        self._last_post_gen_error = ""
-
         sources = []
         source_refs: list[str] = []
 
@@ -188,11 +177,8 @@ class BloggerAgent:
             source_refs.append(f"cursor:{cf['path']}")
 
         if not sources:
+            self._last_generate_failure_reason = "no_sources"
             logger.info("No source material for agent post")
-            self._last_post_gen_error = (
-                "В памяти нет сообщений за выбранный период (чаты оркестратора + Cursor). "
-                "Проверь MEMORY_SERVICE_URL и TELEGRAM_USER_ID."
-            )
             return None
 
         identity = _read_workspace_file("IDENTITY.md")
@@ -218,34 +204,34 @@ class BloggerAgent:
         )
 
         user_prompt = "\n\n".join(sources[:5])
+        messages = _llm_messages(system_prompt, user_prompt)
 
-        primary = model or self.model
-        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=primary)
-        if not raw.strip() and _normalize_openrouter_model_id(
-            primary
-        ) != _normalize_openrouter_model_id(self.cheap_model):
+        # Try requested model, then default from config (per-chat model may be invalid for OpenRouter)
+        models_to_try: list[str | None] = []
+        seen_norm: set[str] = set()
+        for m in (model, self.model):
+            if not m:
+                continue
+            norm = _normalize_openrouter_model_id(m)
+            if norm and norm not in seen_norm:
+                seen_norm.add(norm)
+                models_to_try.append(m)
+        if not models_to_try:
+            models_to_try.append(None)
+
+        self._last_generate_failure_reason = None
+        for attempt_model in models_to_try:
+            raw = await self._call_llm(messages, model=attempt_model)
+            parsed = self._parse_post_json(raw, source_refs)
+            if parsed:
+                return parsed
             logger.warning(
-                "generate_agent_post: primary model empty, retrying with cheap_model=%s",
-                self.cheap_model,
-            )
-            raw = await self._call_llm(
-                _llm_messages(system_prompt, user_prompt), model=self.cheap_model
+                "generate_agent_post: parse failed or empty LLM for model=%s",
+                attempt_model or self.model,
             )
 
-        if not raw.strip():
-            self._last_post_gen_error = (
-                "Модель не вернула текст (проверь OPENROUTER_API_KEY, лимиты или модель в /model). "
-                "История чатов с оркестратором при этом прочитана."
-            )
-            return None
-
-        parsed = self._parse_post_json(raw, source_refs)
-        if not parsed:
-            self._last_post_gen_error = (
-                "Модель вернула ответ не в формате JSON. Попробуй ещё раз или смени модель."
-            )
-            return None
-        return parsed
+        self._last_generate_failure_reason = "llm_failed"
+        return None
 
     async def generate_user_post(
         self,
