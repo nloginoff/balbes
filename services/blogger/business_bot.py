@@ -15,8 +15,16 @@ import logging
 from typing import TYPE_CHECKING
 
 import asyncpg
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from .anonymizer import AnonymizationEngine
 
@@ -24,6 +32,24 @@ if TYPE_CHECKING:
     from .agent import BloggerAgent
 
 logger = logging.getLogger("blogger.business_bot")
+
+_TG_LIMIT = 4096
+
+
+def _split_long(text: str, limit: int = _TG_LIMIT) -> list[str]:
+    """Split text into Telegram-safe chunks."""
+    if len(text) <= limit:
+        return [text]
+    chunks, start = [], 0
+    while start < len(text):
+        end = start + limit
+        if end < len(text):
+            cut = text.rfind("\n", start, end)
+            end = cut if cut > start else end
+        chunks.append(text[start:end])
+        start = end
+    return chunks
+
 
 # In-memory state: are we waiting for check-in reply from owner?
 _WAITING_CHECKIN: dict[int, bool] = {}
@@ -61,10 +87,16 @@ class BusinessBot:
 
         # Commands — owner only
         app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
+        app.add_handler(CommandHandler("help", self._cmd_help, filters=owner))
+        app.add_handler(CommandHandler("model", self._cmd_model, filters=owner))
         app.add_handler(
             CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
         )
         app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
+        app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
+
+        # Model selection callback
+        app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
 
         # Group messages: anonymize and store (all users in registered groups)
         app.add_handler(
@@ -93,12 +125,79 @@ class BusinessBot:
         self._app = app
         return app
 
+    # ── MODELS available for selection ──────────────────────────────────────
+    MODELS = [
+        ("minimax/minimax-m2.5:free", "MiniMax M2.5 (free)"),
+        ("meta-llama/llama-3.3-70b-instruct", "Llama 3.3 70B (cheap)"),
+        ("moonshotai/kimi-k2.5", "Kimi K2.5 (medium)"),
+        ("google/gemini-flash-1.5", "Gemini Flash (medium)"),
+        ("anthropic/claude-sonnet-4-5", "Claude Sonnet (premium)"),
+    ]
+
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "Привет! Я бизнес-бот Балбеса.\n\n"
-            "Добавь меня в рабочие Telegram-группы — я буду собирать информацию.\n"
-            "Здесь, в личке, будем проводить вечерние check-in и согласовывать посты."
+            "Пиши мне в любое время — я слушаю и отвечаю через LLM.\n"
+            "Могу создавать посты, показывать черновики, делать бизнес-саммари.\n\n"
+            "Также добавь меня в рабочие Telegram-группы — я буду собирать информацию.\n"
+            "Вечером в 20:00 проведём check-in и подготовим пост для блога.\n\n"
+            "/help — список команд"
         )
+
+    async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text(
+            "*Команды бизнес-бота:*\n\n"
+            "/help — эта справка\n"
+            "/model — выбрать LLM модель\n"
+            "/drafts — показать черновики постов\n"
+            "/list\\_chats — зарегистрированные бизнес-чаты\n"
+            "/register\\_business\\_chat — добавить группу\n\n"
+            "*Что можно писать просто текстом:*\n"
+            "— «придумай пост о запуске нового проекта»\n"
+            "— «покажи что в очереди на публикацию»\n"
+            "— «сделай саммари бизнес-чатов»\n"
+            "— «одобри пост abc12345»\n"
+            "— любой вопрос или идея",
+            parse_mode="Markdown",
+        )
+
+    async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        current = self.agent._conversation_model.removeprefix("openrouter/")
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    f"{'✅ ' if model_id == current else ''}{label}",
+                    callback_data=f"bbot_model:{model_id}",
+                )
+            ]
+            for model_id, label in self.MODELS
+        ]
+        await update.message.reply_text(
+            "Выбери модель для общения:",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+
+    async def _cb_model_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        model_id = query.data.removeprefix("bbot_model:")
+        full_id = f"openrouter/{model_id}"
+        self.agent.set_conversation_model(full_id)
+        label = next((lbl for mid, lbl in self.MODELS if mid == model_id), model_id)
+        await query.edit_message_text(f"✅ Модель выбрана: *{label}*", parse_mode="Markdown")
+
+    async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        posts = await self.agent.queue.list_posts(status="draft", limit=10)
+        if not posts:
+            await update.message.reply_text("Нет черновиков.")
+            return
+        lines = ["*Черновики:*\n"]
+        for p in posts:
+            lines.append(
+                f"• `{p.get('id', '')[:8]}` — {p.get('title', '(без названия)')} "
+                f"[{p.get('post_type', '')}]"
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     async def _cmd_register_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Register a business group chat. Usage: /register_business_chat <group_id> <name> <strategy>"""
@@ -230,10 +329,14 @@ class BusinessBot:
             await self.agent.handle_edit_instruction(owner_id, post_id, text)
             return
 
-        # Default: forward to orchestrator / ignore
-        await msg.reply_text(
-            "Напиши /start для справки. Вечерний check-in начнётся автоматически в 20:00."
-        )
+        # Default: full LLM conversation
+        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+
+        async def reply_fn(text: str) -> None:
+            for chunk in _split_long(text):
+                await msg.reply_text(chunk, parse_mode="Markdown")
+
+        await self.agent.handle_owner_message(owner_id, text, reply_fn)
 
     async def _handle_stranger(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Silently ignore private messages from anyone who is not the owner.

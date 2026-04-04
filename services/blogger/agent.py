@@ -71,6 +71,12 @@ class BloggerAgent:
         # Pending check-in interview state
         self._checkin_questions: list[str] = []
 
+        # Per-owner free-form conversation history {owner_id: [messages]}
+        self._owner_history: dict[int, list[dict]] = {}
+
+        # Model used for owner conversations (can be changed via /model)
+        self._conversation_model: str = model or _DEFAULT_MODEL
+
         # business_bot reference (set after construction)
         self.business_bot = None
 
@@ -493,6 +499,292 @@ class BloggerAgent:
             )
             if new_msg_id:
                 await self.queue.set_approval_message_id(post_id, new_msg_id)
+
+    def set_conversation_model(self, model: str) -> None:
+        """Set the LLM model used for owner free-form conversations."""
+        self._conversation_model = model
+        logger.info("Conversation model set to: %s", model)
+
+    async def handle_owner_message(
+        self,
+        owner_id: int,
+        text: str,
+        reply_fn,
+    ) -> None:
+        """
+        Handle a free-form message from the owner in private business-bot chat.
+
+        Maintains per-owner conversation history, provides LLM access with
+        a set of blogger tools (list drafts, approve/reject, create post, etc.).
+        Calls reply_fn(text) to send a response back.
+        """
+        # ── system prompt ────────────────────────────────────────────────────
+        identity = _read_workspace_file("IDENTITY.md")
+        soul = _read_workspace_file("SOUL.md")
+        system = (
+            f"{identity}\n\n{soul}\n\n"
+            "Ты общаешься с владельцем проекта в приватном чате.\n"
+            "Отвечай кратко, по делу, на русском языке.\n"
+            "Если нужно — используй доступные инструменты."
+        )
+
+        # ── tool definitions ─────────────────────────────────────────────────
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_drafts",
+                    "description": "Показать список постов в черновиках (статус draft/pending).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["draft", "pending", "approved", "published", "rejected"],
+                                "description": "Фильтр по статусу. По умолчанию draft.",
+                            }
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "approve_post",
+                    "description": "Одобрить пост для публикации по его ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"post_id": {"type": "string", "description": "UUID поста"}},
+                        "required": ["post_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "reject_post",
+                    "description": "Отклонить пост по его ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"post_id": {"type": "string", "description": "UUID поста"}},
+                        "required": ["post_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_post_from_idea",
+                    "description": (
+                        "Сгенерировать и сохранить пост-черновик из идеи/темы от владельца."
+                        " Пост будет отправлен на согласование."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "idea": {
+                                "type": "string",
+                                "description": "Тема или идея для поста (от лица владельца)",
+                            },
+                            "post_type": {
+                                "type": "string",
+                                "enum": ["user", "agent"],
+                                "description": "user — от имени Николая, agent — от имени Балбеса",
+                            },
+                        },
+                        "required": ["idea"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_post_now",
+                    "description": "Немедленно сгенерировать новый пост по последним чатам и файлам.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_business_summary",
+                    "description": "Сгенерировать саммари по бизнес-чатам за последние 24 часа.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_published_posts",
+                    "description": "Показать последние опубликованные посты.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {
+                                "type": "integer",
+                                "description": "Количество постов (по умолчанию 5)",
+                            }
+                        },
+                    },
+                },
+            },
+        ]
+
+        # ── history management ───────────────────────────────────────────────
+        history = self._owner_history.setdefault(owner_id, [])
+        history.append({"role": "user", "content": text})
+        # keep last 30 messages to avoid blowing context
+        if len(history) > 30:
+            history[:] = history[-30:]
+
+        # ── agentic tool-call loop (max 5 rounds) ────────────────────────────
+        MAX_ROUNDS = 5
+        for _round in range(MAX_ROUNDS):
+            messages = [{"role": "system", "content": system}] + history
+
+            http = self._get_http()
+            try:
+                resp = await http.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/nloginoff/balbes",
+                        "X-Title": "Balbes Blogger Agent",
+                    },
+                    json={
+                        "model": self._conversation_model.removeprefix("openrouter/"),
+                        "messages": messages,
+                        "tools": tools,
+                        "tool_choice": "auto",
+                        "max_tokens": 1500,
+                        "temperature": 0.7,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as exc:
+                logger.error("handle_owner_message LLM error: %s", exc)
+                await reply_fn("⚠️ Ошибка при обращении к LLM. Попробуй ещё раз.")
+                return
+
+            choice = data.get("choices", [{}])[0]
+            msg = choice.get("message", {})
+            finish_reason = choice.get("finish_reason", "stop")
+
+            # ── text response ─────────────────────────────────────────────
+            if finish_reason != "tool_calls" or not msg.get("tool_calls"):
+                answer = msg.get("content") or ""
+                if answer:
+                    history.append({"role": "assistant", "content": answer})
+                    await reply_fn(answer)
+                return
+
+            # ── tool calls ────────────────────────────────────────────────
+            history.append(msg)  # assistant message with tool_calls
+
+            for tc in msg.get("tool_calls", []):
+                fn_name = tc.get("function", {}).get("name", "")
+                raw_args = tc.get("function", {}).get("arguments", "{}")
+                try:
+                    args = json.loads(raw_args)
+                except Exception:
+                    args = {}
+
+                tool_result = await self._dispatch_conversation_tool(fn_name, args)
+                history.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": str(tool_result),
+                    }
+                )
+
+        # fallback if we exhausted rounds
+        await reply_fn("Не смог завершить задачу за отведённое количество шагов.")
+
+    async def _dispatch_conversation_tool(self, name: str, args: dict) -> str:
+        """Execute a conversation tool and return string result."""
+        try:
+            if name == "list_drafts":
+                status = args.get("status", "draft")
+                posts = await self.queue.list_posts(status=status, limit=10)
+                if not posts:
+                    return f"Нет постов со статусом '{status}'."
+                lines = [f"Посты ({status}):"]
+                for p in posts:
+                    lines.append(
+                        f"• [{p.get('id', '')[:8]}] {p.get('title', '(без названия)')} "
+                        f"— {p.get('post_type', '')} ({p.get('status', '')})"
+                    )
+                return "\n".join(lines)
+
+            elif name == "approve_post":
+                post_id = args.get("post_id", "")
+                ok = await self.queue.approve(post_id)
+                return (
+                    f"Пост {post_id[:8]} одобрен."
+                    if ok
+                    else f"Не удалось одобрить пост {post_id[:8]}."
+                )
+
+            elif name == "reject_post":
+                post_id = args.get("post_id", "")
+                ok = await self.queue.reject(post_id)
+                return (
+                    f"Пост {post_id[:8]} отклонён."
+                    if ok
+                    else f"Не удалось отклонить пост {post_id[:8]}."
+                )
+
+            elif name == "create_post_from_idea":
+                idea = args.get("idea", "")
+                post_type = args.get("post_type", "user")
+                system = (
+                    "Ты — AI-блогер Балбес. Напиши пост на основе идеи от владельца.\n"
+                    "Ответь строго в JSON:\n"
+                    '{"title": "...", "content_ru": "...", "content_en": "..."}\n'
+                    "Без markdown-блоков."
+                )
+                raw = await self._call_llm(
+                    _llm_messages(system, f"Идея для поста:\n{idea}"),
+                    model=self._conversation_model,
+                )
+                parsed = self._parse_post_json(raw, [f"owner_idea: {idea[:60]}"])
+                if not parsed:
+                    return "Не удалось сгенерировать пост из идеи."
+                parsed["post_type"] = post_type
+                draft_id = await self.create_and_send_draft(parsed, post_type=post_type)
+                return f"Черновик создан и отправлен на согласование. ID: {draft_id[:8] if draft_id else '?'}"
+
+            elif name == "generate_post_now":
+                post = await self.generate_agent_post()
+                if not post:
+                    return "Не нашлось новых материалов для генерации поста."
+                draft_id = await self.create_and_send_draft(post, post_type="agent")
+                return f"Пост сгенерирован и отправлен на согласование. ID: {draft_id[:8] if draft_id else '?'}"
+
+            elif name == "get_business_summary":
+                summary = await self.generate_business_summary()
+                return summary or "Недостаточно бизнес-сообщений для саммари."
+
+            elif name == "get_published_posts":
+                limit = args.get("limit", 5)
+                posts = await self.queue.get_published_posts(limit=limit)
+                if not posts:
+                    return "Нет опубликованных постов."
+                lines = [f"Последние {len(posts)} опубликованных постов:"]
+                for p in posts:
+                    ts = p.get("published_at", "")
+                    lines.append(f"• {p.get('title', '(без названия)')} — {ts}")
+                return "\n".join(lines)
+
+            else:
+                return f"Неизвестный инструмент: {name}"
+
+        except Exception as exc:
+            logger.error("_dispatch_conversation_tool %s error: %s", name, exc)
+            return f"Ошибка при выполнении {name}: {exc}"
 
     async def close(self) -> None:
         if self._http:
