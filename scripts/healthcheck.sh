@@ -94,23 +94,29 @@ if [[ "$MODE" == "dev" ]]; then
     check_http "Orchestrator" "http://localhost:8102/health"
     check_http "Coder Agent" "http://localhost:8103/health"
     check_http "Web Backend" "http://localhost:8200/health"
+    check_http "Blogger Service" "http://localhost:8105/health"
 elif [[ "$MODE" == "test" ]]; then
     check_http "Memory Service" "http://localhost:9100/health"
     check_http "Skills Registry" "http://localhost:9101/health"
     check_http "Orchestrator" "http://localhost:9102/health"
     check_http "Coder Agent" "http://localhost:9103/health"
     check_http "Web Backend" "http://localhost:9200/health"
+    check_http "Blogger Service" "http://localhost:9105/health"
 else
     check_http "Memory Service" "http://localhost:18100/health"
     check_http "Skills Registry" "http://localhost:18101/health"
     check_http "Orchestrator" "http://localhost:18102/health"
     check_http "Coder Agent" "http://localhost:18103/health"
     check_http "Web Backend" "http://localhost:18200/health"
+    check_http "Blogger Service" "http://localhost:18105/health"
     if [ -f .env.prod ]; then
         # shellcheck disable=SC2046
         export $(cat .env.prod | grep -v '^#' | xargs)
         if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
             check_process "Telegram Bot Polling" "telegram_bot.py"
+        fi
+        if [ -n "$BUSINESS_BOT_TOKEN" ]; then
+            check_process "Business Bot (Blogger)" "uvicorn.*blogger"
         fi
     fi
 fi

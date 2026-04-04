@@ -4,8 +4,11 @@ Business bot — silent Telegram bot with dual role:
   2. In private chat with owner: handles evening check-in conversation and
      approval replies for personal blog posts.
 
-Separate bot token (BUSINESS_BOT_TOKEN) to keep business monitoring
-cleanly separated from the main orchestrator bot.
+SECURITY:
+  - All private messages from non-owner users are silently ignored.
+  - The bot never responds to strangers in private chats.
+  - Group message processing is restricted to registered business_chats only.
+  - Commands are only accepted from the owner (owner_tg_id check on every handler).
 """
 
 import logging
@@ -46,15 +49,24 @@ class BusinessBot:
         self.agent = agent
         self._app: Application | None = None
 
+    def _owner_filter(self) -> filters.BaseFilter:
+        """Return a filter that passes only messages from the owner."""
+        return filters.User(user_id=self.owner_tg_id)
+
     def build(self) -> Application:
         """Build and configure the Telegram Application."""
         app = Application.builder().token(self.token).build()
 
-        app.add_handler(CommandHandler("start", self._cmd_start))
-        app.add_handler(CommandHandler("register_business_chat", self._cmd_register_chat))
-        app.add_handler(CommandHandler("list_chats", self._cmd_list_chats))
+        owner = self._owner_filter()
 
-        # Group messages: anonymize and store
+        # Commands — owner only
+        app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
+        app.add_handler(
+            CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
+        )
+        app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
+
+        # Group messages: anonymize and store (all users in registered groups)
         app.add_handler(
             MessageHandler(
                 filters.TEXT & filters.ChatType.GROUPS,
@@ -62,11 +74,19 @@ class BusinessBot:
             )
         )
 
-        # Private messages from owner: check-in replies and edit instructions
+        # Private messages — ONLY from owner, all others silently ignored
         app.add_handler(
             MessageHandler(
-                filters.TEXT & filters.ChatType.PRIVATE,
+                filters.TEXT & filters.ChatType.PRIVATE & owner,
                 self._handle_private_message,
+            )
+        )
+
+        # Catch-all for private messages from strangers — log and ignore
+        app.add_handler(
+            MessageHandler(
+                filters.ChatType.PRIVATE & ~owner,
+                self._handle_stranger,
             )
         )
 
@@ -74,20 +94,14 @@ class BusinessBot:
         return app
 
     async def _cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.effective_user and update.effective_user.id == self.owner_tg_id:
-            await update.message.reply_text(
-                "Привет! Я бизнес-бот Балбеса.\n\n"
-                "Добавь меня в рабочие Telegram-группы — я буду собирать информацию.\n"
-                "Здесь, в личке, будем проводить вечерние check-in и согласовывать посты."
-            )
-        else:
-            await update.message.reply_text("Этот бот работает только с владельцем системы.")
+        await update.message.reply_text(
+            "Привет! Я бизнес-бот Балбеса.\n\n"
+            "Добавь меня в рабочие Telegram-группы — я буду собирать информацию.\n"
+            "Здесь, в личке, будем проводить вечерние check-in и согласовывать посты."
+        )
 
     async def _cmd_register_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Register a business group chat. Usage: /register_business_chat <group_id> <name> <strategy>"""
-        if not update.effective_user or update.effective_user.id != self.owner_tg_id:
-            return
-
         args = context.args or []
         if len(args) < 2:
             await update.message.reply_text(
@@ -124,8 +138,6 @@ class BusinessBot:
             await update.message.reply_text(f"❌ Ошибка: {exc}")
 
     async def _cmd_list_chats(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or update.effective_user.id != self.owner_tg_id:
-            return
         try:
             rows = await self.db.fetch(
                 "SELECT tg_group_id, name, anon_strategy, is_active FROM business_chats ORDER BY name"
@@ -199,7 +211,7 @@ class BusinessBot:
         msg = update.effective_message
         user = update.effective_user
 
-        if not msg or not user or user.id != self.owner_tg_id:
+        if not msg or not user:
             return
 
         owner_id = user.id
@@ -222,6 +234,20 @@ class BusinessBot:
         await msg.reply_text(
             "Напиши /start для справки. Вечерний check-in начнётся автоматически в 20:00."
         )
+
+    async def _handle_stranger(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Silently ignore private messages from anyone who is not the owner.
+
+        We intentionally do NOT reply — no error message, no confirmation —
+        to avoid leaking that this bot exists or is active.
+        """
+        user = update.effective_user
+        logger.warning(
+            "Ignored private message from non-owner user_id=%s username=%s",
+            user.id if user else "?",
+            user.username if user else "?",
+        )
+        # No reply — complete silence
 
     def set_waiting_checkin(self, owner_id: int, waiting: bool = True) -> None:
         """Called by scheduler to indicate next message is a check-in reply."""

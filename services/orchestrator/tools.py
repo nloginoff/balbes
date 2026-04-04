@@ -1906,7 +1906,7 @@ class ToolDispatcher:
         from_ts_str = args.get("from_ts")
         limit = int(args.get("limit") or 200)
 
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         try:
             params: dict = {"limit": limit}
             if from_ts_str:
@@ -1935,7 +1935,7 @@ class ToolDispatcher:
     async def _do_get_business_summary(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         """Generate LLM summary of business chats via blogger service."""
         period_hours = int(args.get("period_hours") or 24)
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         try:
             resp = await self.http_client.post(
                 f"{blogger_url}/api/v1/business-summary",
@@ -1954,7 +1954,7 @@ class ToolDispatcher:
         content_en = (args.get("content_en") or "").strip()
         if not content_ru:
             return "Error: content_ru is required."
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         payload = {
             "content_ru": content_ru,
             "content_en": content_en,
@@ -1981,7 +1981,7 @@ class ToolDispatcher:
         """List blog post drafts."""
         status = args.get("status")
         limit = int(args.get("limit") or 20)
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         params: dict = {"limit": limit}
         if status:
             params["status"] = status
@@ -2009,7 +2009,7 @@ class ToolDispatcher:
     async def _do_get_published_posts(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         """Get recent published posts for context."""
         limit = int(args.get("limit") or 10)
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         try:
             resp = await self.http_client.get(
                 f"{blogger_url}/api/v1/posts/",
@@ -2036,7 +2036,7 @@ class ToolDispatcher:
         publish_at = (args.get("publish_at") or "").strip()
         if not post_id or not publish_at:
             return "Error: укажи post_id и publish_at."
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         try:
             resp = await self.http_client.post(
                 f"{blogger_url}/api/v1/posts/{post_id}/schedule",
@@ -2056,7 +2056,7 @@ class ToolDispatcher:
         role = (args.get("role") or "").strip()
         if not group_id or not user_id or not role:
             return "Error: укажи group_id, user_id и role."
-        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8103)}"
+        blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         try:
             resp = await self.http_client.post(
                 f"{blogger_url}/api/v1/business-chats/set-role",

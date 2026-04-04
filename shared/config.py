@@ -225,7 +225,7 @@ class Settings(BaseSettings):
     # =============================================================================
     # Blogger service
     # =============================================================================
-    blogger_service_port: int = Field(default=8103)
+    blogger_service_port: int = Field(default=8105)
     business_bot_token: str | None = Field(
         default=None, description="Telegram bot token for silent business chat watcher + check-in"
     )
