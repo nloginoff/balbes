@@ -1152,8 +1152,8 @@ def _summarize_input(tool_name: str, args: dict) -> str:
     return str(args)[:80]
 
 
-def _summarize_result(result: str) -> str:
-    result = result.strip()
+def _summarize_result(result: str | None) -> str:
+    result = (result or "").strip()
     if not result:
         return "(empty)"
     # First line only, truncated

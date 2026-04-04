@@ -730,8 +730,8 @@ class OrchestratorAgent:
         )
         if response_data:
             text = (
-                response_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            )
+                response_data.get("choices", [{}])[0].get("message", {}).get("content") or ""
+            ).strip()
             return text or self._fallback_text(), model_used
         raise LLMUnavailableError(llm_error)
 

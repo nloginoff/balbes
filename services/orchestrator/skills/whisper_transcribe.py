@@ -127,7 +127,7 @@ async def transcribe_voice(
             ),
         )
 
-        text = " ".join(seg.text.strip() for seg in segments).strip()
+        text = " ".join((seg.text or "").strip() for seg in segments).strip()
         logger.info(
             f"Transcription done: {len(text)} chars, "
             f"lang={info.language}, prob={info.language_probability:.2f}"
@@ -193,12 +193,8 @@ async def correct_transcription(text: str, http_client=None) -> str:
         )
         if response.status_code == 200:
             corrected = (
-                response.json()
-                .get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", text)
-                .strip()
-            )
+                response.json().get("choices", [{}])[0].get("message", {}).get("content") or text
+            ).strip()
             return corrected if corrected else text
     except Exception as e:
         logger.warning(f"Transcription correction failed: {e}")
