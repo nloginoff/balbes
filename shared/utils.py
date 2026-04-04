@@ -533,3 +533,34 @@ def save_yaml_safe(data: dict[str, Any], file_path: Path | str) -> None:
 
     with path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, default_flow_style=False, allow_unicode=True)
+
+
+_providers_config_cache: dict[str, Any] = {}
+
+
+def get_providers_config() -> dict[str, Any]:
+    """Load and cache config/providers.yaml from the project root.
+
+    Searches upward from this file's location to find the project root
+    (directory containing config/providers.yaml). Result is cached in-process.
+    """
+    global _providers_config_cache
+    if _providers_config_cache:
+        return _providers_config_cache
+
+    import yaml
+
+    # Walk up from shared/ to find project root
+    candidate = Path(__file__).parent
+    for _ in range(4):
+        cfg_path = candidate / "config" / "providers.yaml"
+        if cfg_path.exists():
+            try:
+                with cfg_path.open(encoding="utf-8") as f:
+                    _providers_config_cache = yaml.safe_load(f) or {}
+            except Exception:
+                _providers_config_cache = {}
+            return _providers_config_cache
+        candidate = candidate.parent
+
+    return {}

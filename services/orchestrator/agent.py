@@ -71,30 +71,7 @@ def _count_tokens(text: str) -> int:
         return len(text) // 4
 
 
-def _load_providers_config() -> dict[str, Any]:
-    """Load providers.yaml once. Returns empty dict on failure."""
-    try:
-        from pathlib import Path
-
-        import yaml
-
-        cfg_path = Path(__file__).parent.parent.parent / "config" / "providers.yaml"
-        if cfg_path.exists():
-            with open(cfg_path, encoding="utf-8") as f:
-                return yaml.safe_load(f) or {}
-    except Exception as e:
-        logger.warning(f"Failed to load providers.yaml: {e}")
-    return {}
-
-
-_providers_config: dict[str, Any] = {}
-
-
-def get_providers_config() -> dict[str, Any]:
-    global _providers_config
-    if not _providers_config:
-        _providers_config = _load_providers_config()
-    return _providers_config
+from shared.utils import get_providers_config  # noqa: E402  (after local imports)
 
 
 def get_context_window(model_id: str) -> int:
