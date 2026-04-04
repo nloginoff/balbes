@@ -126,6 +126,7 @@ class BloggerAgent:
         agents: list[str] | None = None,
         cursor_files: int = 2,
         from_hours: int = 48,
+        model: str | None = None,
     ) -> dict | None:
         """
         Generate a new post from owner's chat history and Cursor files.
@@ -191,13 +192,14 @@ class BloggerAgent:
 
         user_prompt = "\n\n".join(sources[:5])
 
-        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt))
+        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=model)
         return self._parse_post_json(raw, source_refs)
 
     async def generate_user_post(
         self,
         interview_answers: list[str],
         extra_context: str = "",
+        model: str | None = None,
     ) -> dict | None:
         """
         Generate a personal blog post (from user perspective) based on check-in answers.
@@ -223,7 +225,7 @@ class BloggerAgent:
             f"\n\nДополнительный контекст:\n{extra_context}" if extra_context else ""
         )
 
-        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt))
+        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=model)
         return self._parse_post_json(raw, ["checkin:interview"])
 
     def _parse_post_json(self, raw: str, source_refs: list[str]) -> dict | None:
@@ -822,7 +824,9 @@ class BloggerAgent:
                 except Exception:
                     args = {}
 
-                tool_result = await self._dispatch_conversation_tool(fn_name, args)
+                tool_result = await self._dispatch_conversation_tool(
+                    fn_name, args, chat_model=model
+                )
                 working.append(
                     {
                         "role": "tool",
@@ -834,8 +838,16 @@ class BloggerAgent:
         # fallback if we exhausted rounds
         await reply_fn("Не смог завершить задачу за отведённое количество шагов.")
 
-    async def _dispatch_conversation_tool(self, name: str, args: dict) -> str:
-        """Execute a conversation tool and return string result."""
+    async def _dispatch_conversation_tool(
+        self, name: str, args: dict, chat_model: str | None = None
+    ) -> str:
+        """Execute a conversation tool and return string result.
+
+        chat_model — the LLM model currently active in the owner's chat session.
+        Post-generation tools use it so the post is written by the same model
+        the owner has selected for this conversation.
+        """
+        post_model = chat_model or self.model
         try:
             if name == "list_drafts":
                 status = args.get("status", "draft")
@@ -879,7 +891,7 @@ class BloggerAgent:
                 )
                 raw = await self._call_llm(
                     _llm_messages(system, f"Идея для поста:\n{idea}"),
-                    model=self._conversation_model,
+                    model=post_model,
                 )
                 parsed = self._parse_post_json(raw, [f"owner_idea: {idea[:60]}"])
                 if not parsed:
@@ -889,7 +901,7 @@ class BloggerAgent:
                 return f"Черновик создан и отправлен на согласование. ID: {draft_id[:8] if draft_id else '?'}"
 
             elif name == "generate_post_now":
-                post = await self.generate_agent_post()
+                post = await self.generate_agent_post(model=post_model)
                 if not post:
                     return "Не нашлось новых материалов для генерации поста."
                 draft_id = await self.create_and_send_draft(post, post_type="agent")
