@@ -9,7 +9,7 @@ providers:
   openrouter:
     api_key: ${OPENROUTER_API_KEY}
     base_url: "https://openrouter.ai/api/v1"
-    timeout: 60
+    timeout: 120
     headers:
       HTTP-Referer: "https://github.com/nloginoff/balbes"
       X-Title: "Balbes Multi-Agent System"
@@ -557,6 +557,7 @@ token_limits:
 # History / context window management
 memory:
   history_strategy: "trim"      # trim | summarize
+  # summary_model: "meta-llama/llama-3.1-8b-instruct:free"  # model for summarization (default: llama-3.1-8b free)
   trim_threshold: 0.85          # start trimming at 85% context window fill
   max_messages_in_context: 50   # hard cap regardless of tokens
   system_prompt_reserve: 500    # tokens reserved for system prompt overhead

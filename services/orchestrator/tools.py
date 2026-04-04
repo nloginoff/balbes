@@ -186,6 +186,88 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "recall_from_memory",
+            "description": (
+                "Search long-term memory (Qdrant) for stored facts and notes. "
+                "Use when the user asks about something previously remembered, "
+                "or when you need to recall past context."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language search query",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of results to return (default 5)",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_search",
+            "description": (
+                "Search the project codebase semantically. Returns matching files with previews. "
+                "Use when you need to find code by meaning, e.g. 'where is auth handled', "
+                "'find the database connection code', 'LLM call implementation'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Natural language description of the code you're looking for",
+                    },
+                    "path_filter": {
+                        "type": "string",
+                        "description": "Optional: filter results to paths containing this string",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of results (default 5, max 10)",
+                        "default": 5,
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "index_codebase",
+            "description": (
+                "Re-index the project codebase for semantic search. "
+                "Use when you suspect the index is stale or after large changes. "
+                "Returns indexing statistics."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Optional: sub-path to index (default: entire project)",
+                    },
+                    "force": {
+                        "type": "boolean",
+                        "description": "Force re-index all files, even if unchanged (default: false)",
+                        "default": False,
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "delegate_to_agent",
             "description": (
                 "Delegate a task to a specialist sub-agent and return their response. "
@@ -577,6 +659,26 @@ class ToolDispatcher:
         self._web_search = None
         self._server_commands = None
 
+        # Per-task call counters for rate limiting
+        self._call_counts: dict[str, int] = {}
+
+    # Per-task rate limits (max calls per tool per task)
+    _RATE_LIMITS: dict[str, int] = {
+        "web_search": 10,
+        "fetch_url": 15,
+        "execute_command": 30,
+        "file_read": 40,
+        "file_write": 20,
+        "file_patch": 20,
+        "workspace_read": 40,
+        "workspace_write": 20,
+    }
+    _DEFAULT_RATE_LIMIT = 20
+
+    def reset_call_counts(self) -> None:
+        """Reset per-tool call counters. Call at the start of each new task."""
+        self._call_counts.clear()
+
     def set_debug_collector(self, collector: list[dict] | None) -> None:
         """Attach (or detach) a debug event list for the current task."""
         self._debug_collector = collector
@@ -595,6 +697,16 @@ class ToolDispatcher:
         t0 = time.monotonic()
         success = True
         result = ""
+
+        # Rate limit check
+        limit = self._RATE_LIMITS.get(tool_name, self._DEFAULT_RATE_LIMIT)
+        call_count = self._call_counts.get(tool_name, 0)
+        if call_count >= limit:
+            return (
+                f"Error: инструмент '{tool_name}' вызван {call_count} раз за одну задачу. "
+                f"Лимит: {limit}. Подведи итог по текущим данным."
+            )
+        self._call_counts[tool_name] = call_count + 1
 
         # Emit "tool started" debug event (include agent_id for delegation visibility)
         if self._debug_collector is not None:
@@ -628,6 +740,15 @@ class ToolDispatcher:
 
             elif tool_name == "save_to_memory":
                 result = await self._do_save_to_memory(tool_args, context)
+
+            elif tool_name == "recall_from_memory":
+                result = await self._do_recall_from_memory(tool_args, context)
+
+            elif tool_name == "code_search":
+                result = await self._do_code_search(tool_args, context)
+
+            elif tool_name == "index_codebase":
+                result = await self._do_index_codebase(tool_args, context)
 
             elif tool_name == "delegate_to_agent":
                 result = await self._do_delegate_to_agent(tool_args, context)
@@ -946,6 +1067,87 @@ class ToolDispatcher:
             return f"Saved to long-term memory: {args['text'][:80]}..."
         except Exception as e:
             return f"Failed to save to memory: {e}"
+
+    async def _do_recall_from_memory(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        memory_url = context.get("memory_service_url")
+        user_id = context.get("user_id", "orchestrator")
+        if not all([memory_url, self.http_client]):
+            return "Cannot search memory: missing context."
+        query = args.get("query", "").strip()
+        limit = int(args.get("limit", 5))
+        if not query:
+            return "Cannot search memory: query is required."
+        try:
+            resp = await self.http_client.post(
+                f"{memory_url}/api/v1/memory/search",
+                json={"query": query, "agent_id": user_id, "limit": limit},
+            )
+            if resp.status_code != 200:
+                return f"Memory search failed: HTTP {resp.status_code}"
+            data = resp.json()
+            results = data.get("results", [])
+            if not results:
+                return "Ничего не найдено в долгосрочной памяти."
+            lines = []
+            for i, r in enumerate(results, 1):
+                content = r.get("content", "")
+                score = r.get("score", 0)
+                lines.append(f"{i}. [{score:.2f}] {content}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Failed to search memory: {e}"
+
+    def _get_code_indexer(self, context: dict[str, Any]):
+        """Lazy-load the CodeIndexer, reusing across calls."""
+        if not hasattr(self, "_code_indexer") or self._code_indexer is None:
+            from skills.code_indexer import CodeIndexer
+
+            from shared.config import get_settings
+
+            s = get_settings()
+            self._code_indexer = CodeIndexer(
+                openrouter_api_key=context.get("openrouter_api_key") or s.openrouter_api_key or "",
+                qdrant_host=s.qdrant_host,
+                qdrant_port=s.qdrant_port,
+            )
+        return self._code_indexer
+
+    async def _do_code_search(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        query = args.get("query", "").strip()
+        if not query:
+            return "Error: query is required for code_search."
+        path_filter = args.get("path_filter") or None
+        limit = min(int(args.get("limit", 5)), 10)
+        try:
+            indexer = self._get_code_indexer(context)
+            results = await indexer.search(query=query, path_filter=path_filter, limit=limit)
+            if not results:
+                return "Ничего не найдено в индексе кодовой базы. Возможно, нужно запустить index_codebase."
+            lines = []
+            for r in results:
+                lines.append(
+                    f"[{r['score']:.2f}] {r['path']} ({r['lines']} lines)\n  {r['preview']}"
+                )
+            return "\n\n".join(lines)
+        except Exception as e:
+            return f"Code search failed: {e}"
+
+    async def _do_index_codebase(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        raw_path = args.get("path")
+        force = bool(args.get("force", False))
+        try:
+            indexer = self._get_code_indexer(context)
+            from pathlib import Path as _Path
+
+            path = _Path(raw_path).resolve() if raw_path else None
+            stats = await indexer.index_path(path=path, force=force)
+            return (
+                f"✅ Индексация завершена: {stats['indexed']} файлов проиндексировано, "
+                f"{stats['skipped']} пропущено, {stats['errors']} ошибок "
+                f"(всего найдено: {stats['total_files']})"
+            )
+        except Exception as e:
+            return f"Indexing failed: {e}"
 
     async def _do_delegate_to_agent(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         if not self._delegate_callback and not self._background_runner:

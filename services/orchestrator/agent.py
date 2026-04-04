@@ -116,10 +116,15 @@ def build_messages_for_llm(
     history: list[dict[str, Any]],
     user_input: str,
     model_id: str,
+    history_summary: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build the messages array for LLM, adaptively trimming history to fit context window.
     Preserves the most recent messages.
+
+    If history_summary is provided (a pre-built LLM summary of older messages), it is
+    injected as a system message right after the main system prompt, replacing the
+    trimmed portion of history.
     """
     cfg = get_providers_config().get("memory", {})
     trim_threshold = cfg.get("trim_threshold", 0.85)
@@ -128,6 +133,8 @@ def build_messages_for_llm(
 
     context_window = get_context_window(model_id)
     used = _count_tokens(system_prompt) + _count_tokens(user_input) + reserve
+    if history_summary:
+        used += _count_tokens(history_summary) + 50  # reserve for summary message wrapper
     available = int(context_window * trim_threshold) - used
 
     # Take messages from the end, fitting into available tokens
@@ -140,10 +147,44 @@ def build_messages_for_llm(
         available -= msg_tokens
 
     messages = [{"role": "system", "content": system_prompt}]
+    if history_summary:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Краткое содержание предыдущего диалога:\n{history_summary}",
+            }
+        )
     for m in trimmed:
         messages.append({"role": m["role"], "content": m["content"]})
     messages.append({"role": "user", "content": user_input})
     return messages
+
+
+def _would_trim_history(
+    system_prompt: str,
+    history: list[dict[str, Any]],
+    user_input: str,
+    model_id: str,
+) -> bool:
+    """Return True if build_messages_for_llm would drop any history messages."""
+    cfg = get_providers_config().get("memory", {})
+    trim_threshold = cfg.get("trim_threshold", 0.85)
+    max_msgs = cfg.get("max_messages_in_context", 50)
+    reserve = cfg.get("system_prompt_reserve", 500)
+
+    context_window = get_context_window(model_id)
+    used = _count_tokens(system_prompt) + _count_tokens(user_input) + reserve
+    available = int(context_window * trim_threshold) - used
+
+    trimmed_count = 0
+    for msg in reversed(history[-max_msgs:]):
+        msg_tokens = _count_tokens(msg.get("content", ""))
+        if available - msg_tokens < 0:
+            break
+        trimmed_count += 1
+        available -= msg_tokens
+
+    return trimmed_count < min(len(history), max_msgs)
 
 
 # Matches any namespaced XML wrapper: <prefix:anytag>...</prefix:anytag>
@@ -434,6 +475,10 @@ class OrchestratorAgent:
         # Clear any previous cancel flag for this user at the start of each new task
         self._clear_cancel(user_id)
 
+        # Reset per-tool call counters for rate limiting
+        if self.tool_dispatcher:
+            self.tool_dispatcher.reset_call_counts()
+
         ctx = context or {}
         source_early: str = ctx.get("source", "user")
         if source_early != "heartbeat":
@@ -478,12 +523,25 @@ class OrchestratorAgent:
                 self.tool_dispatcher.workspace = workspace
                 self.tool_dispatcher._logger = activity_log
 
+            # Optionally summarize old history if context window would be exceeded
+            history_summary: str | None = None
+            if not is_heartbeat:
+                history_summary = await self._maybe_summarize_history(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    history=history,
+                    system_prompt=system_prompt,
+                    user_input=description,
+                    model_id=model_id,
+                )
+
             # Build messages array (with adaptive trim)
             messages = build_messages_for_llm(
                 system_prompt=system_prompt,
                 history=history,
                 user_input=description,
                 model_id=model_id,
+                history_summary=history_summary,
             )
 
             # Save user message to history (skip for heartbeat — don't pollute user history)
@@ -517,7 +575,7 @@ class OrchestratorAgent:
             _bg_keys_before = set(self._background_tasks.keys())
 
             # Run LLM with tool call loop
-            response_text, model_used = await self._run_llm_with_tools(
+            response_text, model_used, token_usage = await self._run_llm_with_tools(
                 messages=messages,
                 model_id=model_id,
                 user_id=user_id,
@@ -554,6 +612,17 @@ class OrchestratorAgent:
             logger.info(f"[{task_id}] Done in {duration_ms:.0f}ms using {model_used}")
             self._finish_task(task_id, "completed")
 
+            # Fire-and-forget token usage recording (non-blocking)
+            if token_usage.get("total_tokens", 0) > 0:
+                asyncio.create_task(
+                    self._record_token_usage(
+                        agent_id=effective_agent_id,
+                        model=model_used,
+                        usage=token_usage,
+                        task_id=task_id,
+                    )
+                )
+
             result: dict[str, Any] = {
                 "task_id": task_id,
                 "status": "success",
@@ -562,6 +631,7 @@ class OrchestratorAgent:
                 "model_used": model_used,
                 "chat_id": chat_id,
                 "duration_ms": duration_ms,
+                "token_usage": token_usage,
             }
             if background_tasks_started:
                 result["background_tasks_started"] = background_tasks_started
@@ -614,10 +684,10 @@ class OrchestratorAgent:
         override_tools: list[dict] | None = None,
         dispatcher: "ToolDispatcher | None" = None,
         between_rounds_delay: float = 0.0,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, dict[str, int]]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
-        Returns (response_text, model_id_used).
+        Returns (response_text, model_id_used, total_usage).
 
         dispatcher: if provided, use this instead of self.tool_dispatcher.
                     Pass explicitly for sub-agent calls to avoid state conflicts
@@ -633,6 +703,11 @@ class OrchestratorAgent:
         if debug_events is not None and effective_dispatcher:
             effective_dispatcher.set_debug_collector(debug_events)
         model_used = model_id
+        total_usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
         tool_context = {
             "user_id": user_id,
             "chat_id": chat_id,
@@ -656,7 +731,7 @@ class OrchestratorAgent:
             # Check if user issued /stop between rounds
             if self._is_cancelled(user_id):
                 logger.info(f"[{task_id}] Task cancelled by user (round {round_num})")
-                return "✋ Выполнение остановлено по команде /stop", model_used
+                return "✋ Выполнение остановлено по команде /stop", model_used, total_usage
 
             # Debug: record LLM round (include agent so delegated calls are distinguishable)
             if debug_events is not None:
@@ -669,13 +744,17 @@ class OrchestratorAgent:
                     }
                 )
 
-            response_data, model_used, llm_error = await self._call_llm(
+            response_data, model_used, llm_error, round_usage = await self._call_llm(
                 messages=messages,
                 model_id=model_id,
                 with_tools=True,
                 agent_id=agent_id,
                 available_tools=available_tools,
             )
+
+            # Accumulate token usage across rounds
+            for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                total_usage[k] = total_usage.get(k, 0) + round_usage.get(k, 0)
 
             if response_data is None:
                 raise LLMUnavailableError(llm_error)
@@ -709,7 +788,7 @@ class OrchestratorAgent:
                         f" (round={round_num + 1}, model={model_used},"
                         f" finish_reason={choice.get('finish_reason', '?')})"
                     )
-                return content_text or self._fallback_text(model_used), model_used
+                return content_text or self._fallback_text(model_used), model_used, total_usage
 
             # Process tool calls
             messages.append(
@@ -731,7 +810,7 @@ class OrchestratorAgent:
                 # Check cancel before each tool call
                 if self._is_cancelled(user_id):
                     logger.info(f"[{task_id}] Task cancelled before tool {tool_name}")
-                    return "✋ Выполнение остановлено по команде /stop", model_used
+                    return "✋ Выполнение остановлено по команде /stop", model_used, total_usage
 
                 logger.info(f"[{task_id}] Tool call: {tool_name}({list(args.keys())})")
 
@@ -756,13 +835,15 @@ class OrchestratorAgent:
             f"[{task_id}] Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call rounds,"
             f" requesting final response without tools (model={model_id})"
         )
-        response_data, model_used, llm_error = await self._call_llm(
+        response_data, model_used, llm_error, final_usage = await self._call_llm(
             messages=messages,
             model_id=model_id,
             with_tools=False,
             agent_id=agent_id,
             available_tools=available_tools,
         )
+        for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            total_usage[k] = total_usage.get(k, 0) + final_usage.get(k, 0)
         if response_data:
             text = (
                 response_data.get("choices", [{}])[0].get("message", {}).get("content") or ""
@@ -771,7 +852,7 @@ class OrchestratorAgent:
                 logger.warning(
                     f"[{task_id}] Final no-tools response also empty (model={model_used})"
                 )
-            return text or self._fallback_text(model_used), model_used
+            return text or self._fallback_text(model_used), model_used, total_usage
         raise LLMUnavailableError(llm_error)
 
     def _make_sub_dispatcher(
@@ -829,7 +910,7 @@ class OrchestratorAgent:
             {"role": "user", "content": task},
         ]
         logger.info(f"Delegating to '{agent_id}' (mode={mode}, model={model_id}): {task[:60]}…")
-        response_text, _ = await self._run_llm_with_tools(
+        response_text, _, _usage = await self._run_llm_with_tools(
             messages=messages,
             model_id=model_id,
             user_id=context.get("user_id", "unknown"),
@@ -881,7 +962,7 @@ class OrchestratorAgent:
         async def _run_bg() -> None:
             status, result_text = "completed", ""
             try:
-                result_text, _ = await self._run_llm_with_tools(
+                result_text, _, _bg_usage = await self._run_llm_with_tools(
                     messages=messages,
                     model_id=model_id,
                     user_id=user_id,
@@ -1128,19 +1209,22 @@ class OrchestratorAgent:
         with_tools: bool = True,
         agent_id: str | None = None,
         available_tools: list[dict] | None = None,
-    ) -> tuple[dict[str, Any] | None, str, str]:
+    ) -> tuple[dict[str, Any] | None, str, str, dict[str, int]]:
         """
         Call LLM API, optionally trying a fallback chain.
 
-        Returns (response_json, model_id_used, error_message).
-          - On success: (data, candidate, "")
-          - On failure: (None, model_id, human-readable error from API)
+        Returns (response_json, model_id_used, error_message, usage_dict).
+          - On success: (data, candidate, "", {prompt_tokens, completion_tokens, total_tokens})
+          - On failure: (None, model_id, human-readable error from API, {})
         """
         if not self.http_client or not settings.openrouter_api_key:
-            return None, model_id, "API key not configured"
+            return None, model_id, "API key not configured", {}
 
         candidates = self._get_model_candidates(model_id, agent_id=agent_id)
         last_error = "No response from API"
+
+        cfg = get_providers_config()
+        llm_timeout = float(cfg.get("providers", {}).get("openrouter", {}).get("timeout", 60))
 
         for candidate in candidates:
             openrouter_model = self._to_openrouter_id(candidate)
@@ -1162,10 +1246,18 @@ class OrchestratorAgent:
                         "Content-Type": "application/json",
                     },
                     json=payload,
+                    timeout=llm_timeout,
                 )
 
                 if response.status_code == 200:
-                    return response.json(), candidate, ""
+                    data = response.json()
+                    usage = data.get("usage") or {}
+                    usage_dict = {
+                        "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+                        "completion_tokens": int(usage.get("completion_tokens", 0)),
+                        "total_tokens": int(usage.get("total_tokens", 0)),
+                    }
+                    return data, candidate, "", usage_dict
 
                 # Extract the actual error message from the API response
                 last_error = self._extract_api_error(response, candidate)
@@ -1183,7 +1275,7 @@ class OrchestratorAgent:
                 logger.warning(f"LLM call failed on {candidate}: {last_error}")
                 continue
 
-        return None, model_id, last_error
+        return None, model_id, last_error, {}
 
     @staticmethod
     def _extract_api_error(response, model_id: str) -> str:
@@ -1310,6 +1402,118 @@ class OrchestratorAgent:
             )
         except Exception as e:
             logger.debug(f"Failed to save history: {e}")
+
+    async def _get_history_summary(self, user_id: str, chat_id: str) -> str | None:
+        """Retrieve previously computed history summary from Redis."""
+        if not self._redis:
+            return None
+        key = f"balbes:history_summary:{user_id}:{chat_id}"
+        try:
+            val = await self._redis.get(key)
+            return val.decode() if val else None
+        except Exception as e:
+            logger.debug(f"Failed to get history summary: {e}")
+            return None
+
+    async def _save_history_summary(self, user_id: str, chat_id: str, summary: str) -> None:
+        """Store history summary in Redis (7 day TTL)."""
+        if not self._redis:
+            return
+        key = f"balbes:history_summary:{user_id}:{chat_id}"
+        try:
+            await self._redis.set(key, summary.encode(), ex=604800)
+        except Exception as e:
+            logger.debug(f"Failed to save history summary: {e}")
+
+    async def _maybe_summarize_history(
+        self,
+        user_id: str,
+        chat_id: str,
+        history: list[dict[str, Any]],
+        system_prompt: str,
+        user_input: str,
+        model_id: str,
+    ) -> str | None:
+        """
+        If history would be trimmed and history_strategy=summarize, call cheap LLM
+        to summarize old messages and return the summary string.
+        Otherwise return None.
+        """
+        cfg = get_providers_config().get("memory", {})
+        if cfg.get("history_strategy") != "summarize":
+            return None
+
+        if not _would_trim_history(system_prompt, history, user_input, model_id):
+            return None
+
+        # Use cached summary if available
+        cached = await self._get_history_summary(user_id, chat_id)
+        if cached:
+            return cached
+
+        # Pick cheap model for summarization
+        summary_model = cfg.get("summary_model") or "meta-llama/llama-3.1-8b-instruct:free"
+
+        # Take first half of history as the "old" part to summarize
+        old_msgs = history[: len(history) // 2]
+        if not old_msgs:
+            return None
+
+        conv_text = "\n".join(
+            f"{m['role'].upper()}: {m.get('content', '')[:300]}" for m in old_msgs
+        )
+        summarize_messages = [
+            {
+                "role": "system",
+                "content": "Ты — ассистент для суммаризации диалогов. Сделай краткое содержание (5-10 предложений) следующего разговора. Пиши на том же языке что разговор.",
+            },
+            {"role": "user", "content": f"Разговор для суммаризации:\n\n{conv_text}"},
+        ]
+
+        try:
+            response_data, _, _, _ = await self._call_llm(
+                messages=summarize_messages,
+                model_id=summary_model,
+                with_tools=False,
+                agent_id=None,
+                available_tools=None,
+            )
+            if response_data:
+                summary = (
+                    response_data.get("choices", [{}])[0].get("message", {}).get("content") or ""
+                ).strip()
+                if summary:
+                    await self._save_history_summary(user_id, chat_id, summary)
+                    logger.info(f"History summarized for {user_id}/{chat_id}: {len(summary)} chars")
+                    return summary
+        except Exception as e:
+            logger.warning(f"History summarization failed: {e}")
+
+        return None
+
+    async def _record_token_usage(
+        self, agent_id: str, model: str, usage: dict[str, int], task_id: str
+    ) -> None:
+        """Fire-and-forget: record token usage to memory service."""
+        try:
+            await self.http_client.post(
+                f"{self.memory_service_url}/api/v1/tokens/record",
+                json={
+                    "agent_id": agent_id,
+                    "model": model,
+                    "provider": "openrouter",
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                    "cost_usd": 0.0,
+                    "task_id": task_id,
+                    "fallback_used": False,
+                    "cached": False,
+                },
+                timeout=5.0,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to record token usage: {e}")
 
     @staticmethod
     def _fallback_text(model_id: str = "") -> str:

@@ -68,6 +68,23 @@ def _escape_md2(text: str) -> str:
     return str(text).translate(_MD2_ESCAPE_RE)
 
 
+def _split_message(text: str, limit: int = 4096) -> list[str]:
+    """Split text into chunks of at most `limit` characters, preferring line breaks."""
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        split_at = text.rfind("\n", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
+
+
 def _load_providers_yaml() -> dict:
     """Load providers.yaml once. Returns empty dict on failure."""
     try:
@@ -617,16 +634,18 @@ class BalbesTelegramBot:
                 f"Heartbeat: all {len(models_to_try)} models failed. Last error: {last_error}"
             )
             if self.app:
+                err_text = (
+                    "⚠️ *Heartbeat не смог выполниться*\n"
+                    f"Все доступные модели ({len(models_to_try)}) вернули ошибку.\n"
+                    f"Последняя ошибка: `{last_error[:200]}`"
+                )
                 try:
                     await self.app.bot.send_message(
                         chat_id=int(user_id),
-                        text=(
-                            "⚠️ *Heartbeat не смог выполниться*\n"
-                            f"Все доступные модели ({len(models_to_try)}) вернули ошибку.\n"
-                            f"Последняя ошибка: `{last_error[:200]}`"
-                        ),
+                        text=err_text,
                         parse_mode="Markdown",
                     )
+                    await self._save_message_to_history(user_id, "assistant", err_text)
                 except Exception as e:
                     logger.warning(f"Heartbeat: failed to send error notification: {e}")
             return
@@ -654,12 +673,12 @@ class BalbesTelegramBot:
 
         # Deliver to user
         if self.app:
+            full_text = f"💡 {text}"
             try:
-                await self.app.bot.send_message(
-                    chat_id=int(user_id),
-                    text=f"💡 {text}",
-                )
+                for chunk in _split_message(full_text):
+                    await self.app.bot.send_message(chat_id=int(user_id), text=chunk)
                 logger.info(f"Heartbeat: ✅ delivered message to user {user_id}: {text[:80]}")
+                await self._save_message_to_history(user_id, "assistant", full_text)
             except Exception as e:
                 logger.warning(f"Heartbeat: failed to send message: {e}")
 
@@ -1385,6 +1404,9 @@ class BalbesTelegramBot:
         user_id = str(user.id)
         task = self._active_tasks.get(user_id)
 
+        # Always signal the orchestrator to stop between tool rounds (even for bg tasks)
+        await self._cancel_orchestrator_task(user_id)
+
         # Also cancel all background monitors for this user
         monitor_keys = [k for k in self._bg_monitors if k.startswith(f"{user_id}:")]
         for k in monitor_keys:
@@ -1395,17 +1417,14 @@ class BalbesTelegramBot:
         if not task or task.done():
             if monitor_keys:
                 await update.message.reply_text(
-                    f"✋ Остановлены фоновые мониторы: {', '.join(k.split(':')[1] for k in monitor_keys)}"
+                    f"✋ Сигнал остановки отправлен. Остановлены мониторы: {', '.join(k.split(':')[1] for k in monitor_keys)}"
                 )
             else:
-                await update.message.reply_text("✅ Нет активных задач для остановки")
+                await update.message.reply_text("✋ Сигнал остановки отправлен всем агентам")
             return
 
         # Cancel the bot-side asyncio task (interrupts the HTTP wait immediately)
         task.cancel()
-
-        # Also signal the orchestrator to stop processing between tool rounds
-        await self._cancel_orchestrator_task(user_id)
 
         await update.message.reply_text("✋ Остановлено")
 
@@ -1675,7 +1694,10 @@ class BalbesTelegramBot:
                     )
                     if trace:
                         try:
-                            await self.app.bot.send_message(tg_chat_id, trace, parse_mode="HTML")
+                            for chunk in _split_message(trace):
+                                await self.app.bot.send_message(
+                                    tg_chat_id, chunk, parse_mode="HTML"
+                                )
                         except Exception as e:
                             logger.warning(f"[bgmon] debug send failed: {e}")
 
@@ -1709,9 +1731,10 @@ class BalbesTelegramBot:
                         )
                         if trace:
                             try:
-                                await self.app.bot.send_message(
-                                    tg_chat_id, trace, parse_mode="HTML"
-                                )
+                                for chunk in _split_message(trace):
+                                    await self.app.bot.send_message(
+                                        tg_chat_id, chunk, parse_mode="HTML"
+                                    )
                             except Exception:
                                 pass
 
@@ -1743,15 +1766,16 @@ class BalbesTelegramBot:
                         pass
 
                     if result_text:
-                        try:
-                            await self.app.bot.send_message(
-                                tg_chat_id, result_text, parse_mode="Markdown"
-                            )
-                        except Exception:
+                        for chunk in _split_message(result_text):
                             try:
-                                await self.app.bot.send_message(tg_chat_id, result_text)
+                                await self.app.bot.send_message(
+                                    tg_chat_id, chunk, parse_mode="Markdown"
+                                )
                             except Exception:
-                                pass
+                                try:
+                                    await self.app.bot.send_message(tg_chat_id, chunk)
+                                except Exception:
+                                    pass
                     break
 
         except asyncio.CancelledError:
@@ -1770,6 +1794,20 @@ class BalbesTelegramBot:
             )
         except Exception as e:
             logger.debug(f"Orchestrator cancel signal failed (non-critical): {e}")
+
+    async def _save_message_to_history(self, user_id: str, role: str, text: str) -> None:
+        """Save a message to the user's active chat history via memory service."""
+        try:
+            chat_id = await self._get_active_chat(user_id)
+            if not chat_id:
+                return
+            await self._get_http().post(
+                f"{self.memory_url}/api/v1/history/{user_id}/{chat_id}",
+                json={"role": role, "content": text},
+                timeout=5.0,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to save message to history for user {user_id}: {e}")
 
     # -------------------------------------------------------------------------
     # Callback handlers
@@ -2059,11 +2097,22 @@ class BalbesTelegramBot:
                         progress_only=not _is_debug,
                     )
 
-                response = await self._get_http().post(
-                    f"{self.orchestrator_url}/api/v1/tasks",
-                    params=params,
-                    timeout=120.0,
-                )
+                try:
+                    response = await self._get_http().post(
+                        f"{self.orchestrator_url}/api/v1/tasks",
+                        params=params,
+                        timeout=120.0,
+                    )
+                except httpx.ReadTimeout:
+                    if fg_monitor and not fg_monitor.done():
+                        fg_monitor.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await fg_monitor
+                    await message.reply_text(
+                        "⏳ Задача выполняется дольше 120 с. "
+                        "Результат придёт автоматически — следи через /tasks"
+                    )
+                    return
 
                 # Stop fg monitor — task is done, final trace comes from the response
                 if fg_monitor and not fg_monitor.done():
@@ -2093,10 +2142,11 @@ class BalbesTelegramBot:
                                 elapsed_ms=result.get("duration_ms"),
                             )
                             if trace:
-                                try:
-                                    await message.reply_text(trace, parse_mode="HTML")
-                                except Exception:
-                                    await message.reply_text(trace)
+                                for chunk in _split_message(trace):
+                                    try:
+                                        await message.reply_text(chunk, parse_mode="HTML")
+                                    except Exception:
+                                        await message.reply_text(chunk)
 
                         # Start background monitors for newly delegated agents
                         bg_started = result.get("background_tasks_started", [])
@@ -2134,10 +2184,11 @@ class BalbesTelegramBot:
                         result_text = f"❌ Ошибка агента:\n`{err_msg}`"
 
                     # LLM responses may contain arbitrary Markdown — try V1, fall back to plain
-                    try:
-                        await message.reply_text(result_text, parse_mode="Markdown")
-                    except Exception:
-                        await message.reply_text(result_text)
+                    for chunk in _split_message(result_text):
+                        try:
+                            await message.reply_text(chunk, parse_mode="Markdown")
+                        except Exception:
+                            await message.reply_text(chunk)
 
                 else:
                     # Non-200: try to read the body for details
