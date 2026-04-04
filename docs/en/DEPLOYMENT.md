@@ -16,8 +16,11 @@ Balbes runs as a set of Python services managed by bash scripts (no Kubernetes o
 │  │     Coding agent (receives delegated tasks)     │
 │  ├── memory-service (uvicorn, port 18100)           │
 │  │     Chat history + session state                │
-│  └── skills-registry (uvicorn, port 18101)          │
-│        Skill registry                              │
+│  ├── skills-registry (uvicorn, port 18101)          │
+│  │     Skill registry                              │
+│  └── blogger (uvicorn, port 18105)                  │
+│        Blog post generation + business bot         │
+│        APScheduler: 20:00 check-in, hourly publish │
 │                                                     │
 │  Infrastructure (Docker Compose):                   │
 │  ├── PostgreSQL  (port 5432)                        │
@@ -89,6 +92,9 @@ Expected output:
 ✅ skills-registry (18101)
 ✅ orchestrator (18102)
 ✅ coder (18103)
+✅ blogger (18105)         ← if BLOGGER_SERVICE_PORT is set
+✅ Telegram Bot Polling
+✅ Business Bot (Blogger)  ← if BUSINESS_BOT_TOKEN is set
 ```
 
 ---
@@ -100,9 +106,10 @@ Expected output:
 tail -f logs/prod/orchestrator.log
 tail -f logs/prod/telegram_bot.log
 tail -f logs/prod/coder.log
+tail -f logs/prod/blogger.log
 
 # Last 100 lines
-tail -100 logs/prod/orchestrator.log
+tail -100 logs/prod/blogger.log
 ```
 
 ---
@@ -167,6 +174,7 @@ ps aux | grep uvicorn
 | Coder agent | 18103 | Receives delegated tasks |
 | Memory service | 18100 | Chat history + sessions |
 | Skills registry | 18101 | Skill management |
+| Blogger service | 18105 | Blog generation + business bot |
 | PostgreSQL | 5432 | Via Docker |
 | Redis | 6379 | Via Docker |
 | Qdrant | 6333 | Via Docker |
@@ -181,8 +189,10 @@ Before opening the repo or exposing the server:
 - [ ] `.env.prod` is in `.gitignore` ✅
 - [ ] `.pids-prod.txt` is in `.gitignore` ✅
 - [ ] `TELEGRAM_USER_ID` set to only your user IDs
+- [ ] `OWNER_TELEGRAM_ID` set — business bot silently ignores all other users
 - [ ] `WEB_AUTH_TOKEN` and `JWT_SECRET` are random strings (not defaults)
 - [ ] `POSTGRES_PASSWORD` is a strong password
+- [ ] `BUSINESS_BOT_TOKEN` added directly to `.env.prod` (never committed to git)
 - [ ] Firewall: only ports 80/443 open externally (all service ports internal only)
 - [ ] No API keys committed to git
 

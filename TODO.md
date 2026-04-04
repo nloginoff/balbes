@@ -47,3 +47,5 @@
 - ✅ `_maybe_summarize_history()` — LLM суммаризация при переполнении контекста (`history_strategy: summarize`)
 - ✅ `manage_todo(action, section, item)` — агенты могут читать и обновлять TODO.md
 - ✅ **Blogger agent service** — `services/blogger/`: агент-блогер, бизнес-бот (тихий наблюдатель + DM check-in), очередь постов, approval flow через inline-кнопки, вечерний check-in 20:00, бизнес-саммари, публикация в 3 Telegram-канала (RU/EN/personal)
+- ✅ **Blogger: скрипты запуска/остановки** — blogger (порт 18105) добавлен в `start_prod.sh`, `stop_prod.sh`, `healthcheck.sh`; исправлен конфликт портов с coder (18103)
+- ✅ **Blogger: безопасность бизнес-бота** — `filters.User(owner_tg_id)` на уровне роутинга; незнакомцы получают полное молчание (`_handle_stranger`); добавлен `OWNER_TELEGRAM_ID` с инструкцией в `.env.example`

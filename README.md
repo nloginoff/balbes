@@ -6,7 +6,7 @@
 
 The **Coder agent** acts as your personal [Cursor AI](https://cursor.sh) — it reads your codebase, writes code, runs commands, commits changes, and iterates — all via Telegram messages. You describe what you want, it builds it.
 
-**Version**: 0.4.0 | **Status**: 🟢 Production Running | **License**: MIT
+**Version**: 0.5.0 | **Status**: 🟢 Production Running | **License**: MIT
 
 ---
 
@@ -18,6 +18,7 @@ Most AI assistants are stateless chat windows. Balbes is different:
 - **It acts** — not just answers, but executes commands, reads/writes files, searches the web
 - **It delegates** — the Orchestrator agent hands off coding tasks to the Coder agent in the background
 - **It reaches out** — the Heartbeat system makes the agent proactively message you with updates, ideas, or reminders
+- **It blogs** — the Blogger agent reads your chats, monitors your business groups, and publishes posts to Telegram channels
 - **It runs on your server** — your data, your models, your rules
 
 ---
@@ -57,6 +58,19 @@ Send a voice note, get a text response. Transcription via `faster-whisper` with 
 
 The agent doesn't wait to be asked. Based on your `HEARTBEAT.md` file, it proactively sends you messages — project updates, reminders, interesting finds. Runs on a free model to save costs.
 
+### 📰 Blogger Agent — Your AI Chronicler
+
+A standalone microservice that turns your work into public content:
+
+- **Reads** your Telegram chat history and Cursor AI markdown exports
+- **Generates** blog posts from its own perspective ("AI-blogger Balbes") in Russian and English
+- **Writes** personal posts from your perspective (plans, results, business updates) for your private blog
+- **Monitors** business Telegram groups — silently collects messages, anonymizes them, generates daily business summaries
+- **Evening check-in** at 20:00 — asks what you accomplished, generates a personal blog post draft
+- **Approval workflow** — inline ✅/✏️/❌ buttons in Telegram before any post goes live
+- **Publishing queue** — spreads posts across the day (1–3 per day), respects daily quota
+- **Security** — business bot only responds to your Telegram account; strangers are silently ignored
+
 ### 🔧 Full Control via Telegram
 
 No Web UI needed. Everything — switching models, managing chats, reading logs, controlling agents — happens in one Telegram conversation.
@@ -77,6 +91,10 @@ No Web UI needed. Everything — switching models, managing chats, reading logs,
 | Voice transcription | `faster-whisper` + optional LLM correction |
 | Token limits | Per-agent daily/hourly token budgets with automatic fallback |
 | Multi-chat | Multiple named conversations, each with own history and settings |
+| Blogger agent | AI-driven blog post generation from chats, Cursor exports, and voice check-ins |
+| Business chat monitoring | Silent bot in employee Telegram groups — anonymizes messages, daily summaries |
+| Post approval flow | Inline ✅/✏️/❌ buttons in Telegram, edit instructions via LLM revision |
+| Publishing queue | Scheduled post release (1–3/day) across 3 channels (RU, EN, personal) |
 
 ---
 
@@ -107,33 +125,48 @@ No Web UI needed. Everything — switching models, managing chats, reading logs,
 
 ```
 ┌──────────────────────────────────────────────┐
-│              Telegram Bot                    │
+│           Main Telegram Bot                  │
 │  commands · per-user lock · bg monitor loop  │
+│  blog approval callbacks (✅/✏️/❌)          │
 └────────────────────┬─────────────────────────┘
                      │ HTTP
 ┌────────────────────▼─────────────────────────┐
-│         Orchestrator (FastAPI)               │
+│         Orchestrator (FastAPI :18102)        │
 │  ├── OrchestratorAgent                       │
 │  ├── ToolDispatcher                          │
 │  │     web_search · fetch_url               │
 │  │     execute_command · file_read/write     │
 │  │     workspace_read/write · memory tools  │
 │  │     delegate_to_agent · task management  │
+│  │     blogger tools (read/create/schedule) │
 │  ├── AgentWorkspace (MD files + git)         │
 │  └── Heartbeat loop (proactive messages)     │
-└──────────┬───────────────────────┬───────────┘
-           │                       │
-     ┌─────▼──────┐         ┌──────▼──────┐
-     │   Redis    │         │   Qdrant    │
-     │  history   │         │  long-term  │
-     │  sessions  │         │  memory     │
-     └────────────┘         └─────────────┘
+└──────────┬───────────────┬───────────────────┘
+           │               │ HTTP
+     ┌─────▼──────┐  ┌─────▼────────────────────────────────┐
+     │   Redis    │  │    Coder Agent (FastAPI :18103)      │
+     │  history   │  │  Delegated tasks · file I/O · git    │
+     │  sessions  │  │  grep · diff · shell · full dev ops  │
+     └─────┬──────┘  └──────────────────────────────────────┘
            │
-     ┌─────▼──────────────────────────────────┐
-     │        Coder Agent (FastAPI)           │
-     │  Delegated tasks · file I/O · git      │
-     │  grep · diff · shell · full dev ops    │
-     └────────────────────────────────────────┘
+     ┌─────▼──────┐
+     │   Qdrant   │
+     │  semantic  │
+     │  memory    │
+     └────────────┘
+
+┌──────────────────────────────────────────────┐
+│     Blogger Service (FastAPI :18105)         │
+│  ├── BloggerAgent (LLM post generation)      │
+│  ├── PostQueue (PostgreSQL draft/approve)    │
+│  ├── TelegramPublisher (3 channels)          │
+│  ├── BusinessBot (silent group monitor)      │
+│  │     ├── Anonymizes employee messages      │
+│  │     └── Evening check-in DMs to owner    │
+│  └── APScheduler                            │
+│        ├── 20:00 — evening check-in         │
+│        └── hourly — publish queue           │
+└──────────────────────────────────────────────┘
 ```
 
 ### Background Task Flow
@@ -219,6 +252,17 @@ YANDEX_FOLDER_ID=b1g...         # Yandex Cloud folder ID
 BRAVE_SEARCH_KEY=...            # https://api.search.brave.com
 ```
 
+Optional (for Blogger agent):
+
+```bash
+OWNER_TELEGRAM_ID=123456789     # Your Telegram user_id (@userinfobot)
+BUSINESS_BOT_TOKEN=...          # Separate bot for business group monitoring
+BLOGGER_CHANNEL_RU=-1001...     # Russian-language channel ID
+BLOGGER_CHANNEL_EN=-1001...     # English-language channel ID
+BLOGGER_CHANNEL_PERSONAL=-1001... # Personal blog channel ID
+BLOGGER_SERVICE_PORT=18105
+```
+
 ### 2. Start infrastructure
 
 ```bash
@@ -240,16 +284,22 @@ bash scripts/start_prod.sh
 ```
 balbes/
 ├── config/
-│   └── providers.yaml          # Models, agents, skills, heartbeat config
+│   └── providers.yaml          # Models, agents, skills, heartbeat, blogger config
 ├── data/
-│   └── agents/                 # Per-agent workspace (versioned in private git)
-│       ├── orchestrator/
-│       │   ├── SOUL.md         # Agent personality
-│       │   ├── AGENTS.md       # Behavior instructions
-│       │   ├── MEMORY.md       # Persistent important context
-│       │   ├── HEARTBEAT.md    # Topics for proactive messages
-│       │   └── config.yaml     # Per-agent overrides (highest priority)
-│       └── coder/
+│   ├── agents/                 # Per-agent workspace (versioned in private git)
+│   │   ├── orchestrator/
+│   │   │   ├── SOUL.md         # Agent personality
+│   │   │   ├── AGENTS.md       # Behavior instructions
+│   │   │   ├── MEMORY.md       # Persistent important context
+│   │   │   ├── HEARTBEAT.md    # Topics for proactive messages
+│   │   │   └── config.yaml     # Per-agent overrides (highest priority)
+│   │   ├── coder/
+│   │   └── blogger/
+│   │       ├── IDENTITY.md     # AI-blogger persona
+│   │       ├── SOUL.md         # Writing style guide
+│   │       ├── INTERVIEW_PROMPTS.md  # Evening check-in questions
+│   │       └── config.yaml
+│   └── cursor_chats/           # Drop Cursor AI markdown exports here
 ├── services/
 │   ├── orchestrator/           # Main agent + Telegram bot (port 18102)
 │   │   ├── agent.py
@@ -257,11 +307,20 @@ balbes/
 │   │   ├── tools.py
 │   │   └── skills/             # web_search, server_commands, ...
 │   ├── coder/                  # Coder agent (port 18103)
+│   ├── blogger/                # Blogger agent service (port 18105)
+│   │   ├── agent.py            # LLM post generation
+│   │   ├── business_bot.py     # Silent group monitor + owner DMs
+│   │   ├── post_queue.py       # PostgreSQL draft/approve/publish
+│   │   ├── publisher.py        # Telegram channel publisher
+│   │   ├── reader.py           # Chat history, Cursor files, DB reader
+│   │   ├── anonymizer.py       # Business message anonymization
+│   │   └── api/posts.py        # REST endpoints
 │   └── memory-service/         # Memory + history (port 18100)
 ├── shared/
 │   └── config.py               # Pydantic settings
 ├── scripts/
 │   ├── start_prod.sh
+│   ├── stop_prod.sh
 │   ├── restart_prod.sh
 │   └── healthcheck.sh
 └── docker-compose.prod.yml
