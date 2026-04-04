@@ -307,47 +307,37 @@ class BusinessBot:
         await msg.reply_text("Генерирую пост по последним чатам…")
 
         owner_id = update.effective_user.id
-        chat_id = await self.agent.bbot_get_active_chat(owner_id)
-        post_model = await self.agent.bbot_get_chat_model(owner_id, chat_id)
+        try:
+            chat_id = await self.agent.bbot_get_active_chat(owner_id)
+            post_model = await self.agent.bbot_get_chat_model(owner_id, chat_id)
 
-        post = await self.agent.generate_agent_post(model=post_model)
-        if not post:
-            reason = getattr(self.agent, "_last_generate_failure_reason", None)
-            detail = getattr(self.agent, "_last_post_gen_error", "") or ""
-            if reason == "no_sources":
-                text = (
-                    "В Memory Service нет сообщений за последние 48ч "
-                    "(ни чатов с оркестратором, ни файлов в data/cursor_chats)."
-                )
-            elif detail:
-                text = (
-                    "Не удалось сгенерировать пост.\n\n"
-                    + detail
-                    + "\n\nПопробуй:\n"
+            post = await self.agent.generate_agent_post(model=post_model)
+            if not post:
+                detail = getattr(self.agent, "_last_post_gen_error", "") or ""
+                extra = f"\n\n{detail}" if detail else ""
+                await msg.reply_text(
+                    "Не удалось сгенерировать пост." + extra + "\n\n"
+                    "Попробуй:\n"
                     "— /model — другая модель\n"
                     "— Написать тему текстом — сделаю черновик\n"
                     "— /summary — бизнес-саммари"
                 )
-            else:
-                text = (
-                    "Чаты с оркестратором прочитаны из Memory, но модель не вернула пост.\n\n"
-                    "Попробуй /model или напиши тему текстом."
+                return
+            draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
+            if draft_id:
+                await msg.reply_text(
+                    f"✅ Черновик сохранён (статус pending_approval).\n"
+                    f"ID: `{draft_id[:8]}` — смотри /drafts\n"
+                    f"Превью с кнопками уходит в личку (основной или бизнес-бот).",
+                    parse_mode="Markdown",
                 )
-            await msg.reply_text(text)
-            return
-
-        draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
-        if draft_id:
-            await msg.reply_text(
-                f"✅ Черновик сохранён (статус pending_approval).\n"
-                f"ID: `{draft_id[:8]}` — смотри /drafts\n"
-                f"Превью с кнопками уходит в личку (основной или бизнес-бот).",
-                parse_mode="Markdown",
-            )
-        else:
-            await msg.reply_text(
-                "Не удалось сохранить черновик в БД. Проверь логи blogger и подключение к PostgreSQL."
-            )
+            else:
+                await msg.reply_text(
+                    "Не удалось сохранить черновик в БД. Проверь логи blogger и подключение к PostgreSQL."
+                )
+        except Exception as exc:
+            logger.exception("_cmd_generate: %s", exc)
+            await msg.reply_text(f"⚠️ Ошибка /generate: {exc!s:.400}")
 
     async def _cmd_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Generate a business summary from today's business chats."""

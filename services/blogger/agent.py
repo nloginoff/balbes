@@ -39,6 +39,14 @@ def _llm_messages(system: str, user: str) -> list[dict]:
     ]
 
 
+def _normalize_openrouter_model_id(model: str) -> str:
+    """OpenRouter chat/completions expects `vendor/model`, not `openrouter/vendor/model`."""
+    m = (model or "").strip()
+    while m.startswith("openrouter/"):
+        m = m[11:]
+    return m
+
+
 class BloggerAgent:
     """
     Generates blog posts, handles check-in interviews, and manages approvals.
@@ -79,8 +87,9 @@ class BloggerAgent:
 
         # business_bot reference (set after construction)
         self.business_bot = None
-        # Set by generate_agent_post for user-facing error messages
-        self._last_generate_failure_reason: str | None = None
+
+        # Last failure reason for generate_agent_post (for Telegram error messages)
+        self._last_post_gen_error: str = ""
 
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -127,6 +136,37 @@ class BloggerAgent:
     # Post generation
     # =========================================================================
 
+    async def _bbot_thread_snippet_for_post(self) -> tuple[str, list[str]]:
+        """Recent lines from the owner's active business-bot chat (Memory user_id ``bbot_<tg_id>``).
+
+        Orchestrator history uses plain ``<tg_id>``; DM with this bot is stored separately — without
+        this block, «пост из этого чата» saw nothing useful.
+        """
+        try:
+            cid = await self.bbot_get_active_chat(self.owner_tg_id)
+            if not cid:
+                return "", []
+            hist = await self.bbot_get_history(self.owner_tg_id, cid)
+            if not hist:
+                return "", []
+            lines: list[str] = []
+            for m in hist[-45:]:
+                role = m.get("role", "?")
+                if role not in ("user", "assistant"):
+                    continue
+                content = (m.get("content") or "")[:350]
+                if content.strip():
+                    lines.append(f"[{role}]: {content}")
+            if not lines:
+                return "", []
+            block = "=== Текущий чат с бизнес-ботом (этот диалог в Telegram) ===\n" + "\n".join(
+                lines
+            )
+            return block, [f"bbot_dm:{cid[:8]}"]
+        except Exception as exc:
+            logger.warning("bbot_thread_snippet_for_post: %s", exc)
+            return "", []
+
     async def generate_agent_post(
         self,
         agents: list[str] | None = None,
@@ -146,10 +186,19 @@ class BloggerAgent:
         """
         from_ts = datetime.now(timezone.utc) - timedelta(hours=from_hours)
 
+        self._last_post_gen_error = ""
+
         sources = []
         source_refs: list[str] = []
 
-        # Owner's chat history (all chats from Memory Service)
+        # Same Telegram DM as this bot (bbot_* namespace) — often the only «context» when testing
+        bbot_block, bbot_refs = await self._bbot_thread_snippet_for_post()
+        if bbot_block:
+            sources.append(bbot_block)
+            source_refs.extend(bbot_refs)
+            logger.info("generate_agent_post: added bbot thread snippet, refs=%s", bbot_refs)
+
+        # Owner's chat history (orchestrator / coder — Memory user_id = tg id)
         # Limit aggressively: 30 messages × 250 chars ≈ 7500 chars to stay within context
         if self._chat_reader:
             msgs = await self._chat_reader.read(
@@ -177,8 +226,11 @@ class BloggerAgent:
             source_refs.append(f"cursor:{cf['path']}")
 
         if not sources:
-            self._last_generate_failure_reason = "no_sources"
             logger.info("No source material for agent post")
+            self._last_post_gen_error = (
+                "Нет материалов: ни переписки с бизнес-ботом, ни чатов оркестратора, ни Cursor-файлов. "
+                "Проверь MEMORY_SERVICE_URL и TELEGRAM_USER_ID."
+            )
             return None
 
         identity = _read_workspace_file("IDENTITY.md")
@@ -204,34 +256,34 @@ class BloggerAgent:
         )
 
         user_prompt = "\n\n".join(sources[:5])
-        messages = _llm_messages(system_prompt, user_prompt)
 
-        # Try requested model, then default from config (per-chat model may be invalid for OpenRouter)
-        models_to_try: list[str | None] = []
-        seen_norm: set[str] = set()
-        for m in (model, self.model):
-            if not m:
-                continue
-            norm = _normalize_openrouter_model_id(m)
-            if norm and norm not in seen_norm:
-                seen_norm.add(norm)
-                models_to_try.append(m)
-        if not models_to_try:
-            models_to_try.append(None)
-
-        self._last_generate_failure_reason = None
-        for attempt_model in models_to_try:
-            raw = await self._call_llm(messages, model=attempt_model)
-            parsed = self._parse_post_json(raw, source_refs)
-            if parsed:
-                return parsed
+        primary = model or self.model
+        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=primary)
+        if not raw.strip() and _normalize_openrouter_model_id(
+            primary
+        ) != _normalize_openrouter_model_id(self.cheap_model):
             logger.warning(
-                "generate_agent_post: parse failed or empty LLM for model=%s",
-                attempt_model or self.model,
+                "generate_agent_post: primary model empty, retrying with cheap_model=%s",
+                self.cheap_model,
+            )
+            raw = await self._call_llm(
+                _llm_messages(system_prompt, user_prompt), model=self.cheap_model
             )
 
-        self._last_generate_failure_reason = "llm_failed"
-        return None
+        if not raw.strip():
+            self._last_post_gen_error = (
+                "Модель не вернула текст (проверь OPENROUTER_API_KEY, лимиты или модель в /model). "
+                "История чатов с оркестратором при этом прочитана."
+            )
+            return None
+
+        parsed = self._parse_post_json(raw, source_refs)
+        if not parsed:
+            self._last_post_gen_error = (
+                "Модель вернула ответ не в формате JSON. Попробуй ещё раз или смени модель."
+            )
+            return None
+        return parsed
 
     async def generate_user_post(
         self,
@@ -813,33 +865,93 @@ class BloggerAgent:
         # working copy for this request (includes in-flight tool messages)
         working: list[dict] = list(history)
 
+        if not (self.api_key or "").strip():
+            await reply_fn("⚠️ Не задан OPENROUTER_API_KEY — LLM недоступен.")
+            return
+
         for _round in range(MAX_ROUNDS):
+            # bound context — huge threads break OpenRouter / free models
+            if len(working) > 28:
+                working = working[-28:]
+
             messages = [{"role": "system", "content": system}] + working
 
             http = self._get_http()
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/nloginoff/balbes",
+                "X-Title": "Balbes Blogger Agent",
+            }
+            model_id = _normalize_openrouter_model_id(model)
+            payload_tools = {
+                "model": model_id,
+                "messages": messages,
+                "tools": tools,
+                "tool_choice": "auto",
+                "max_tokens": 1500,
+                "temperature": 0.7,
+            }
+            payload_plain = {
+                "model": model_id,
+                "messages": messages,
+                "max_tokens": 1500,
+                "temperature": 0.7,
+            }
+
             try:
                 resp = await http.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": "https://github.com/nloginoff/balbes",
-                        "X-Title": "Balbes Blogger Agent",
-                    },
-                    json={
-                        "model": _normalize_openrouter_model_id(model),
-                        "messages": messages,
-                        "tools": tools,
-                        "tool_choice": "auto",
-                        "max_tokens": 1500,
-                        "temperature": 0.7,
-                    },
+                    headers=headers,
+                    json=payload_tools,
+                    timeout=120.0,
                 )
-                resp.raise_for_status()
+                if resp.status_code != 200:
+                    try:
+                        err_json = resp.json()
+                        detail = err_json.get("error", err_json)
+                    except Exception:
+                        detail = resp.text[:1500]
+                    logger.error(
+                        "OpenRouter (tools) HTTP %s model=%s: %s",
+                        resp.status_code,
+                        model_id,
+                        detail,
+                    )
+                    # second try: many models / keys reject tool_calls on first call
+                    resp = await http.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers=headers,
+                        json=payload_plain,
+                        timeout=120.0,
+                    )
+                    if resp.status_code != 200:
+                        try:
+                            err_json = resp.json()
+                            detail2 = err_json.get("error", err_json)
+                        except Exception:
+                            detail2 = resp.text[:800]
+                        logger.error(
+                            "OpenRouter (plain) HTTP %s model=%s: %s",
+                            resp.status_code,
+                            model_id,
+                            detail2,
+                        )
+                        short = str(detail2)[:350]
+                        await reply_fn(
+                            f"⚠️ OpenRouter: HTTP {resp.status_code}\n{short}\n\n"
+                            "Проверь ключ, квоту или выбери другую модель: /model"
+                        )
+                        return
+
                 data = resp.json()
+                if "choices" not in data or not data["choices"]:
+                    logger.error("OpenRouter returned no choices: %s", data)
+                    await reply_fn("⚠️ Пустой ответ от модели. Попробуй /model и другую модель.")
+                    return
             except Exception as exc:
-                logger.error("handle_owner_message LLM error: %s", exc)
-                await reply_fn("⚠️ Ошибка при обращении к LLM. Попробуй ещё раз.")
+                logger.exception("handle_owner_message LLM error: %s", exc)
+                await reply_fn(f"⚠️ Сеть/LLM: {exc!s:.200}")
                 return
 
             choice = data.get("choices", [{}])[0]

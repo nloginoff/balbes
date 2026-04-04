@@ -159,6 +159,7 @@ The Blogger is a standalone FastAPI service that turns your work into public con
 ### What it does
 
 - **Reads** Telegram chat history (via Memory API) and Cursor AI markdown exports from `data/cursor_chats/`
+- **Memory namespaces**: Orchestrator/Coder sessions are stored under your numeric Telegram user id; the Business Bot DM uses a separate namespace `bbot_<user_id>`. Post generation (`/generate`) merges **both** so “this chat” with the business bot is included, not only Orchestrator history.
 - **Generates** posts in Russian and English from its own perspective ("AI-blogger Balbes")
 - **Generates** personal blog posts from the owner's perspective, based on evening check-in interviews
 - **Monitors** business Telegram groups silently — anonymizes messages, stores them, generates daily summaries
