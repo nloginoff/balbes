@@ -39,6 +39,14 @@ def _llm_messages(system: str, user: str) -> list[dict]:
     ]
 
 
+def _normalize_openrouter_model_id(model: str) -> str:
+    """OpenRouter chat/completions expects `vendor/model`, not `openrouter/vendor/model`."""
+    m = (model or "").strip()
+    while m.startswith("openrouter/"):
+        m = m[11:]
+    return m
+
+
 class BloggerAgent:
     """
     Generates blog posts, handles check-in interviews, and manages approvals.
@@ -80,6 +88,9 @@ class BloggerAgent:
         # business_bot reference (set after construction)
         self.business_bot = None
 
+        # Last failure reason for generate_agent_post (for Telegram error messages)
+        self._last_post_gen_error: str = ""
+
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None:
             self._http = httpx.AsyncClient(timeout=120.0)
@@ -94,7 +105,7 @@ class BloggerAgent:
     async def _call_llm(self, messages: list[dict], model: str | None = None) -> str:
         """Call OpenRouter LLM. Returns text content."""
         http = self._get_http()
-        used_model = (model or self.model).removeprefix("openrouter/")
+        used_model = _normalize_openrouter_model_id(model or self.model)
         try:
             resp = await http.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -144,6 +155,8 @@ class BloggerAgent:
         """
         from_ts = datetime.now(timezone.utc) - timedelta(hours=from_hours)
 
+        self._last_post_gen_error = ""
+
         sources = []
         source_refs: list[str] = []
 
@@ -176,6 +189,10 @@ class BloggerAgent:
 
         if not sources:
             logger.info("No source material for agent post")
+            self._last_post_gen_error = (
+                "В памяти нет сообщений за выбранный период (чаты оркестратора + Cursor). "
+                "Проверь MEMORY_SERVICE_URL и TELEGRAM_USER_ID."
+            )
             return None
 
         identity = _read_workspace_file("IDENTITY.md")
@@ -202,8 +219,33 @@ class BloggerAgent:
 
         user_prompt = "\n\n".join(sources[:5])
 
-        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=model)
-        return self._parse_post_json(raw, source_refs)
+        primary = model or self.model
+        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=primary)
+        if not raw.strip() and _normalize_openrouter_model_id(
+            primary
+        ) != _normalize_openrouter_model_id(self.cheap_model):
+            logger.warning(
+                "generate_agent_post: primary model empty, retrying with cheap_model=%s",
+                self.cheap_model,
+            )
+            raw = await self._call_llm(
+                _llm_messages(system_prompt, user_prompt), model=self.cheap_model
+            )
+
+        if not raw.strip():
+            self._last_post_gen_error = (
+                "Модель не вернула текст (проверь OPENROUTER_API_KEY, лимиты или модель в /model). "
+                "История чатов с оркестратором при этом прочитана."
+            )
+            return None
+
+        parsed = self._parse_post_json(raw, source_refs)
+        if not parsed:
+            self._last_post_gen_error = (
+                "Модель вернула ответ не в формате JSON. Попробуй ещё раз или смени модель."
+            )
+            return None
+        return parsed
 
     async def generate_user_post(
         self,
@@ -794,7 +836,7 @@ class BloggerAgent:
                         "X-Title": "Balbes Blogger Agent",
                     },
                     json={
-                        "model": model.removeprefix("openrouter/"),
+                        "model": _normalize_openrouter_model_id(model),
                         "messages": messages,
                         "tools": tools,
                         "tool_choice": "auto",

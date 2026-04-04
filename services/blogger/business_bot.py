@@ -313,11 +313,14 @@ class BusinessBot:
 
         post = await self.agent.generate_agent_post(model=post_model)
         if not post:
+            detail = getattr(self.agent, "_last_post_gen_error", "") or ""
+            extra = f"\n\n{detail}" if detail else ""
             await msg.reply_text(
-                "Нет новых материалов для поста.\n\n"
+                "Не удалось сгенерировать пост." + extra + "\n\n"
                 "Попробуй:\n"
-                "— Написать тему текстом, я сделаю черновик\n"
-                "— /summary — бизнес-саммари за день"
+                "— /model — другая модель\n"
+                "— Написать тему текстом — сделаю черновик\n"
+                "— /summary — бизнес-саммари"
             )
             return
         draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
@@ -325,6 +328,11 @@ class BusinessBot:
             await msg.reply_text(
                 f"✅ Пост сгенерирован и отправлен на согласование.\nID: `{draft_id[:8]}`",
                 parse_mode="Markdown",
+            )
+        else:
+            await msg.reply_text(
+                "Пост сгенерирован, но черновик не сохранён: нет активных каналов в БД "
+                "(blog_channels) или не удалось отправить превью. Проверь конфиг блогера."
             )
 
     async def _cmd_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
