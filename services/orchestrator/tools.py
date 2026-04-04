@@ -519,6 +519,38 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "manage_todo",
+            "description": (
+                "Read or update the project TODO.md backlog. "
+                "Use 'read' to show current tasks; 'add' to append a new item to a section; "
+                "'done' to mark an item as completed (moves it to Выполнено). "
+                "Always use this tool when the user asks to add, update, or check the TODO list."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["read", "add", "done"],
+                        "description": "'read' — return full TODO.md; 'add' — append item; 'done' — mark item done",
+                    },
+                    "section": {
+                        "type": "string",
+                        "enum": ["В работе", "Запланировано", "Идеи"],
+                        "description": "Target section for 'add' action",
+                    },
+                    "item": {
+                        "type": "string",
+                        "description": "Item text to add (for 'add') or substring to match for 'done'",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "manage_schedule",
             "description": (
                 "Manage scheduled tasks (cron/interval jobs). "
@@ -773,6 +805,9 @@ class ToolDispatcher:
 
             elif tool_name == "file_patch":
                 result = self._do_file_patch(tool_args)
+
+            elif tool_name == "manage_todo":
+                result = self._do_manage_todo(tool_args)
 
             elif tool_name == "manage_schedule":
                 result = self._do_manage_schedule(tool_args)
@@ -1288,6 +1323,91 @@ class ToolDispatcher:
         self._SCHEDULES_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(self._SCHEDULES_PATH, "w", encoding="utf-8") as f:
             yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    def _do_manage_todo(self, args: dict[str, Any]) -> str:
+        """Read or update the project TODO.md."""
+        action = args.get("action", "read")
+        todo_path = _PROJECT_ROOT / "TODO.md"
+
+        if action == "read":
+            if not todo_path.exists():
+                return "TODO.md не найден."
+            return todo_path.read_text(encoding="utf-8")
+
+        if action == "add":
+            section = args.get("section", "Идеи").strip()
+            item = (args.get("item") or "").strip()
+            if not item:
+                return "Error: поле 'item' обязательно для action='add'."
+            if not todo_path.exists():
+                return "TODO.md не найден."
+
+            content = todo_path.read_text(encoding="utf-8")
+            header = f"## {section}"
+            idx = content.find(header)
+            if idx == -1:
+                return f"Error: секция '{section}' не найдена в TODO.md."
+
+            # Find the end of the section header line, then insert after blank line
+            after_header = content.find("\n", idx) + 1
+            # Insert the new item as a bullet point after the header line
+            new_item = f"- {item}\n"
+            # Find insertion point: right after the header line (skip one blank line if present)
+            insert_at = after_header
+            if content[insert_at : insert_at + 1] == "\n":
+                insert_at += 1  # skip blank line after header
+
+            new_content = content[:insert_at] + new_item + content[insert_at:]
+            todo_path.write_text(new_content, encoding="utf-8")
+            return f"✅ Добавлено в раздел «{section}»: {item}"
+
+        if action == "done":
+            item_query = (args.get("item") or "").strip()
+            if not item_query:
+                return "Error: поле 'item' обязательно для action='done'."
+            if not todo_path.exists():
+                return "TODO.md не найден."
+
+            content = todo_path.read_text(encoding="utf-8")
+            lines = content.splitlines(keepends=True)
+
+            # Find matching line(s) — case-insensitive substring match
+            matched: list[int] = []
+            for i, line in enumerate(lines):
+                if item_query.lower() in line.lower() and line.strip().startswith("-"):
+                    matched.append(i)
+
+            if not matched:
+                return f"Error: строка с текстом '{item_query}' не найдена в TODO.md."
+            if len(matched) > 1:
+                snippets = [lines[i].strip() for i in matched[:5]]
+                return f"Найдено {len(matched)} строк — уточни запрос:\n" + "\n".join(
+                    f"  {s}" for s in snippets
+                )
+
+            # Remove from current position
+            done_line = lines.pop(matched[0]).rstrip("\n").rstrip()
+            # Strip leading "- " to get clean text
+            done_text = done_line.lstrip("- ").strip()
+
+            # Find/create "## Выполнено" section
+            done_header = "## Выполнено"
+            new_content = "".join(lines)
+            if done_header not in new_content:
+                new_content = new_content.rstrip("\n") + f"\n\n{done_header}\n\n"
+
+            # Append into Выполнено
+            done_idx = new_content.find(done_header) + len(done_header)
+            insert_done_at = new_content.find("\n", done_idx) + 1
+            if new_content[insert_done_at : insert_done_at + 1] == "\n":
+                insert_done_at += 1
+            new_content = (
+                new_content[:insert_done_at] + f"- ✅ {done_text}\n" + new_content[insert_done_at:]
+            )
+            todo_path.write_text(new_content, encoding="utf-8")
+            return f"✅ Отмечено как выполнено: {done_text}"
+
+        return f"Error: неизвестное действие '{action}'. Допустимые: read, add, done."
 
     def _do_manage_schedule(self, args: dict[str, Any]) -> str:
         action = args.get("action", "").strip().lower()
