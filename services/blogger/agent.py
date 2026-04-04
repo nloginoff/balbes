@@ -112,6 +112,10 @@ class BloggerAgent:
                 timeout=90.0,
             )
             data = resp.json()
+            if resp.status_code != 200 or "choices" not in data:
+                err = data.get("error", data)
+                logger.error("LLM error (%s) HTTP %s: %s", used_model, resp.status_code, err)
+                return ""
             return data["choices"][0]["message"]["content"] or ""
         except Exception as exc:
             logger.error("LLM call failed (%s): %s", used_model, exc)
@@ -144,24 +148,30 @@ class BloggerAgent:
         source_refs: list[str] = []
 
         # Owner's chat history (all chats from Memory Service)
+        # Limit aggressively: 30 messages × 250 chars ≈ 7500 chars to stay within context
         if self._chat_reader:
             msgs = await self._chat_reader.read(
                 user_id=str(self.owner_tg_id),
                 from_ts=from_ts,
-                limit=60,
+                limit=40,
             )
             if msgs:
+                # Only assistant responses are informative for post generation
+                # (user messages are short commands, assistant has the real content)
                 chat_text = "\n".join(
-                    f"[{m.get('chat_name', '?')}|{m['role']}]: {m['content'][:400]}"
-                    for m in msgs[:60]
+                    f"[{m.get('chat_name', '?')}|{m['role']}]: {m['content'][:250]}"
+                    for m in msgs[:30]
                 )
                 sources.append(f"=== История чатов (последние {from_hours}ч) ===\n{chat_text}")
                 source_refs.append(f"chat_history:{from_ts.date().isoformat()}")
+                logger.info(
+                    "generate_agent_post: using %d messages from chat history", len(msgs[:30])
+                )
 
         # Cursor files
         cursor_data = self._cursor_reader.read_latest(cursor_files)
         for cf in cursor_data:
-            sources.append(f"=== Cursor: {cf['path']} ===\n{cf['content'][:2000]}")
+            sources.append(f"=== Cursor: {cf['path']} ===\n{cf['content'][:1500]}")
             source_refs.append(f"cursor:{cf['path']}")
 
         if not sources:
