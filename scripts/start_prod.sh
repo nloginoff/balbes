@@ -102,9 +102,10 @@ else
     ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
 
-    cd "$PROJECT_ROOT/services/blogger"
-    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${BLOGGER_SERVICE_PORT:-18105}" --workers 1 > "$LOG_DIR/blogger.log" 2>&1 &
+    cd "$PROJECT_ROOT"
+    ENV=prod PYTHONPATH="$PROJECT_ROOT" uvicorn services.blogger.main:app --host 0.0.0.0 --port "${BLOGGER_SERVICE_PORT:-18105}" --workers 1 > "$LOG_DIR/blogger.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
+    cd "$PROJECT_ROOT"
 
     if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
         cd "$PROJECT_ROOT/services/orchestrator"
