@@ -53,7 +53,7 @@ from shared.config import get_settings
 settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
 
-MAX_TOOL_CALL_ROUNDS = 5  # prevent infinite tool-call loops
+MAX_TOOL_CALL_ROUNDS = 15  # prevent infinite tool-call loops
 
 
 def _count_tokens(text: str) -> int:
@@ -678,7 +678,13 @@ class OrchestratorAgent:
 
             if not tool_calls:
                 # Final text response
-                return content_text or self._fallback_text(), model_used
+                if not content_text:
+                    logger.warning(
+                        f"[{task_id}] Model returned empty content with no tool calls"
+                        f" (round={round_num + 1}, model={model_used},"
+                        f" finish_reason={choice.get('finish_reason', '?')})"
+                    )
+                return content_text or self._fallback_text(model_used), model_used
 
             # Process tool calls
             messages.append(
@@ -721,6 +727,10 @@ class OrchestratorAgent:
             logger.debug(f"[{task_id}] Tool round {round_num + 1} complete, continuing LLM")
 
         # Exceeded rounds — get final response without tools
+        logger.warning(
+            f"[{task_id}] Exceeded {MAX_TOOL_CALL_ROUNDS} tool-call rounds,"
+            f" requesting final response without tools (model={model_id})"
+        )
         response_data, model_used, llm_error = await self._call_llm(
             messages=messages,
             model_id=model_id,
@@ -732,7 +742,11 @@ class OrchestratorAgent:
             text = (
                 response_data.get("choices", [{}])[0].get("message", {}).get("content") or ""
             ).strip()
-            return text or self._fallback_text(), model_used
+            if not text:
+                logger.warning(
+                    f"[{task_id}] Final no-tools response also empty (model={model_used})"
+                )
+            return text or self._fallback_text(model_used), model_used
         raise LLMUnavailableError(llm_error)
 
     def _make_sub_dispatcher(
@@ -1237,8 +1251,12 @@ class OrchestratorAgent:
             logger.debug(f"Failed to save history: {e}")
 
     @staticmethod
-    def _fallback_text() -> str:
-        return "Не смог обработать запрос. Попробуй переформулировать или уточни задачу."
+    def _fallback_text(model_id: str = "") -> str:
+        model_hint = f" (модель: `{model_id}`)" if model_id else ""
+        return (
+            f"⚠️ Модель вернула пустой ответ{model_hint}. "
+            "Попробуй переформулировать запрос, сменить модель (/model) или повторить попытку."
+        )
 
     # -------------------------------------------------------------------------
     # Status

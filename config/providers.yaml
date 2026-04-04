@@ -403,10 +403,21 @@ agents:
         - "rg -l {pattern} {path}"
         - "rg -n {pattern} {path}"
         - "rg -i {pattern} {path}"
+        - "rg -in {pattern} {path}"
+        - "rg --files {path}"
+        - "rg --files-with-matches {pattern} {path}"
+        - "rg -A {n} {pattern} {path}"
+        - "rg -B {n} {pattern} {path}"
+        - "rg -C {n} {pattern} {path}"
         # ── Script execution ──
         - "bash {script}"
         - "sh {script}"
         - "chmod +x {file}"
+        # ── File inspection ──
+        - "wc -l {file}"
+        - "wc -c {file}"
+        - "file {path}"
+        - "stat {path}"
 
 
 # Models available for user selection (shown in /model menu)
