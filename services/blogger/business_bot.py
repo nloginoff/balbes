@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import asyncpg
 import yaml
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -97,9 +97,31 @@ class BusinessBot:
         """Return a filter that passes only messages from the owner."""
         return filters.User(user_id=self.owner_tg_id)
 
+    async def _post_init(self, app: Application) -> None:
+        """Set bot commands menu visible in Telegram."""
+        commands = [
+            BotCommand("generate", "Сгенерировать пост по чатам"),
+            BotCommand("drafts", "Черновики постов"),
+            BotCommand("published", "Опубликованные посты"),
+            BotCommand("queue", "Очередь на публикацию"),
+            BotCommand("summary", "Бизнес-саммари за день"),
+            BotCommand("model", "Выбрать LLM модель"),
+            BotCommand("chats", "Список чатов / переключить"),
+            BotCommand("newchat", "Создать новый чат"),
+            BotCommand("rename", "Переименовать чат"),
+            BotCommand("clear", "Очистить историю чата"),
+            BotCommand("list_chats", "Зарегистрированные бизнес-группы"),
+            BotCommand("help", "Справка"),
+        ]
+        try:
+            await app.bot.set_my_commands(commands)
+            logger.info("Bot commands menu updated (%d commands)", len(commands))
+        except Exception as exc:
+            logger.warning("Could not set bot commands: %s", exc)
+
     def build(self) -> Application:
         """Build and configure the Telegram Application."""
-        app = Application.builder().token(self.token).build()
+        app = Application.builder().token(self.token).post_init(self._post_init).build()
 
         owner = self._owner_filter()
 
@@ -118,6 +140,8 @@ class BusinessBot:
         app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
         app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
         app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
+        app.add_handler(CommandHandler("generate", self._cmd_generate, filters=owner))
+        app.add_handler(CommandHandler("summary", self._cmd_summary, filters=owner))
 
         # Inline callbacks
         app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
@@ -178,23 +202,25 @@ class BusinessBot:
     async def _cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "*Команды бизнес-бота:*\n\n"
-            "💬 *Чаты*\n"
-            "/chats — список чатов / переключить\n"
-            "/newchat \\[название\\] — создать новый чат\n"
-            "/rename \\[название\\] — переименовать текущий\n"
-            "/clear — очистить историю текущего чата\n\n"
-            "🤖 *Модель*\n"
-            "/model — выбрать LLM модель для текущего чата\n\n"
+            "✍️ *Генерация*\n"
+            "/generate — сгенерировать пост по последним чатам\n"
+            "/summary — бизнес-саммари за сегодня\n\n"
             "📝 *Посты*\n"
-            "/drafts — черновики постов\n"
-            "/published — опубликованные посты\n"
+            "/drafts — черновики\n"
+            "/published — опубликованные\n"
             "/queue — очередь на публикацию\n\n"
+            "🤖 *Модель*\n"
+            "/model — выбрать LLM для текущего чата\n\n"
+            "💬 *Чаты*\n"
+            "/chats — список / переключить\n"
+            "/newchat \\[название\\] — создать новый чат\n"
+            "/rename \\[название\\] — переименовать\n"
+            "/clear — очистить историю\n\n"
             "⚙️ *Бизнес-наблюдение*\n"
             "/list\\_chats — зарегистрированные группы\n"
             "/register\\_business\\_chat — добавить группу\n\n"
             "*Просто пиши текстом:*\n"
-            "— «придумай пост о запуске проекта»\n"
-            "— «сделай саммари бизнес-чатов»\n"
+            "— «придумай пост о запуске продукта»\n"
             "— «одобри пост abc12345»\n"
             "— любой вопрос или задача",
             parse_mode="Markdown",
@@ -273,6 +299,48 @@ class BusinessBot:
                 f"[{p.get('post_type', '')}]"
             )
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_generate(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Generate a new post immediately from recent chats and files."""
+        msg = update.effective_message
+        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+        await msg.reply_text("Генерирую пост по последним чатам…")
+
+        owner_id = update.effective_user.id
+        # Use chat's active model
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        post_model = await self.agent.bbot_get_chat_model(owner_id, chat_id)
+
+        post = await self.agent.generate_agent_post(model=post_model)
+        if not post:
+            await msg.reply_text(
+                "Нет новых материалов для поста.\n\n"
+                "Попробуй:\n"
+                "— Написать тему текстом, я сделаю черновик\n"
+                "— /summary — бизнес-саммари за день"
+            )
+            return
+        draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
+        if draft_id:
+            await msg.reply_text(
+                f"✅ Пост сгенерирован и отправлен на согласование.\nID: `{draft_id[:8]}`",
+                parse_mode="Markdown",
+            )
+
+    async def _cmd_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Generate a business summary from today's business chats."""
+        msg = update.effective_message
+        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+        await msg.reply_text("Генерирую бизнес-саммари…")
+        summary = await self.agent.generate_business_summary()
+        if not summary:
+            await msg.reply_text(
+                "Нет данных из бизнес-чатов за сегодня.\n"
+                "Добавь меня в рабочие группы командой /register_business_chat"
+            )
+            return
+        for chunk in _split_long(summary):
+            await msg.reply_text(chunk, parse_mode="Markdown")
 
     # ── Multi-chat commands ───────────────────────────────────────────────────
 
