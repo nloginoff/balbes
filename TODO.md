@@ -6,30 +6,7 @@
 
 ## Запланировано
 
-### Задача 5: Семантический поиск по коду
-**Приоритет:** Высокий
-**Описание:** Индексировать кодовую базу по файлам в Qdrant (`code_index` collection).
-Агент получает инструменты `code_search(query, limit)` и `index_codebase(path, force)`.
-Обновление индекса — вручную через инструмент + автоматически по расписанию (каждые N минут).
-
-**Файлы:**
-- Новый `services/orchestrator/skills/code_indexer.py`
-- `services/orchestrator/tools.py` — добавить `code_search`, `index_codebase`
-- `config/providers.yaml` — добавить schedule для re-index
-
----
-
-### Задача 6: Суммаризация истории через LLM
-**Приоритет:** Высокий
-**Описание:** Когда `build_messages_for_llm` обнаруживает, что история близка к лимиту контекста,
-вместо тихого удаления старых сообщений — суммаризировать их через дешёвую LLM (llama-3.1-8b).
-Суммаризация сохраняется в Redis и переиспользуется.
-
-**Файлы:**
-- `services/orchestrator/agent.py` — `build_messages_for_llm`, добавить `_summarize_history_chunk`
-- `config/providers.yaml` — добавить `memory.history_strategy: "summarize"`
-
----
+*(пусто — всё из первоначального backlog выполнено)*
 
 ## Идеи / Backlog
 
@@ -43,6 +20,9 @@
 - **Автоматический деплой** — агент-деплойер: git pull + docker compose up при новых коммитах
 - **Алерты по метрикам** — мониторинг сервисов и отправка уведомлений при проблемах
 - **Экспорт истории** — /export для выгрузки чата в markdown/json
+- **Токен-бюджет в ответе** — показывать `_Токены: N | model_` в конце ответа в debug mode
+- **Автоиндексация кода по git hook** — re-index при `git push` через post-receive hook
+- **Инструмент `diff_files`** — показывать diff между двумя файлами без execute_command
 
 ---
 
@@ -54,11 +34,14 @@
 - ✅ Фикс `AttributeError: 'NoneType'.strip()` в нескольких местах
 - ✅ MAX_TOOL_CALL_ROUNDS увеличен с 5 до 15
 - ✅ `file_read` и `file_write` задокументированы в TOOLS.md кодера
-- ✅ Heartbeat/error сообщения сохраняются в историю чата (задача 1)
-- ✅ Сплиттер длинных сообщений `_split_message` (задача 2)
-- ✅ `/stop` всегда отправляет сигнал остановки агентам (задача 3)
-- ✅ `recall_from_memory` доступен агентам (задача 8)
-- ✅ LLM timeout настраивается через providers.yaml (задача 7)
-- ✅ ReadTimeout graceful degradation в Telegram (задача 7)
-- ✅ Rate limiting на вызовы инструментов в ToolDispatcher (задача 9)
-- ✅ Учёт токенов из LLM-ответов, fire-and-forget запись в memory service (задача 10)
+- ✅ Heartbeat/error сообщения сохраняются в историю чата
+- ✅ Сплиттер длинных сообщений `_split_message` — лимит 4096 символов Telegram
+- ✅ `/stop` всегда отправляет cancel-сигнал агентам (foreground + background)
+- ✅ `recall_from_memory(query, limit)` доступен агентам через AVAILABLE_TOOLS
+- ✅ LLM timeout настраивается через `providers.yaml → openrouter.timeout` (поднят до 120с)
+- ✅ ReadTimeout graceful degradation в Telegram (⏳ вместо падения)
+- ✅ Rate limiting на вызовы инструментов — `ToolDispatcher._call_counts`, `reset_call_counts()`
+- ✅ Учёт токенов из LLM-ответов — fire-and-forget запись через `/api/v1/tokens/record`
+- ✅ `code_search(query)` + `index_codebase()` — файловая индексация в Qdrant `code_index`
+- ✅ `_maybe_summarize_history()` — LLM суммаризация при переполнении контекста (`history_strategy: summarize`)
+- ✅ `manage_todo(action, section, item)` — агенты могут читать и обновлять TODO.md

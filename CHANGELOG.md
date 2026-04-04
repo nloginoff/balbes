@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-04-04
+
+### Added
+- **`recall_from_memory(query, limit)`** — инструмент семантического поиска в долгосрочной памяти Qdrant; добавлен в `AVAILABLE_TOOLS` и реализован через `/api/v1/memory/search`.
+- **`code_search(query, path_filter, limit)`** — семантический поиск по кодовой базе проекта (файловый уровень). Индексирует `.py`, `.ts`, `.yaml`, `.md` и другие расширения в Qdrant коллекцию `code_index`.
+- **`index_codebase(path, force)`** — ручная переиндексация файлов проекта. Пропускает неизменённые файлы по `mtime`; `force=True` переиндексирует всё.
+- **`manage_todo(action, section, item)`** — инструмент для чтения и обновления `TODO.md`: `read` (показать), `add` (добавить пункт), `done` (отметить выполненным).
+- **`file_patch(path, old_string, new_string)`** — точечная замена строки в файле вместо полной перезаписи (добавлено в предыдущем сезоне, задокументировано здесь).
+- **`_split_message(text, limit=4096)`** — автоматическое разбиение длинных сообщений Telegram на части по 4096 символов с учётом переносов строк. Применяется ко всем путям отправки (debug trace, результат задачи, bg monitor, heartbeat).
+- **Rate limiting** — `ToolDispatcher._call_counts` и `_RATE_LIMITS` ограничивают число вызовов каждого инструмента за одну задачу (web_search: 10, fetch_url: 15, execute_command: 30, остальные: 20). `reset_call_counts()` вызывается в начале каждой задачи.
+- **Учёт токенов** — `_call_llm()` теперь возвращает `usage_dict`; токены накапливаются через все раунды `_run_llm_with_tools`. По завершении задачи данные записываются fire-and-forget через `/api/v1/tokens/record`.
+- **LLM саммаризация истории** — `_maybe_summarize_history()` при `memory.history_strategy: "summarize"` вызывает дешёвую LLM для краткого пересказа старых сообщений. Саммари кэшируется в Redis на 7 дней (ключ `balbes:history_summary:{user_id}:{chat_id}`).
+- **`CodeIndexer`** — новый модуль `services/orchestrator/skills/code_indexer.py` с классом `CodeIndexer`; использует OpenRouter embeddings + Qdrant `AsyncQdrantClient`.
+- **`_save_message_to_history()`** в `TelegramBot` — heartbeat-сообщения и ошибки теперь сохраняются в активный чат пользователя через memory service.
+
+### Changed
+- **`/stop`** теперь всегда отправляет cancel-сигнал оркестратору (`_cancel_orchestrator_task()`) до проверки наличия активных задач — останавливает как foreground, так и background задачи агентов.
+- **LLM timeout** читается из `config/providers.yaml → providers.openrouter.timeout` (поднят с 60 до 120 секунд) и применяется явно в каждом вызове `_call_llm()`.
+- **`_run_llm_with_tools()`** возвращает `tuple[str, str, dict]` — добавлен `total_usage` (накопленные токены).
+- **`build_messages_for_llm()`** принимает опциональный `history_summary: str | None`; если задан, вставляется как системное сообщение перед обрезанными записями истории.
+- **Прогресс в Telegram** (agent mode, debug off): показывает компактный индикатор `⚙️ Работаю… раунд N | tool1 · tool2`, редактируемый на месте.
+
+### Fixed
+- **`httpx.ReadTimeout`** при POST `/api/v1/tasks` теперь обрабатывается gracefully: показывается «⏳ Задача выполняется дольше 120 с» вместо падения с ошибкой.
+- Все пути отправки сообщений в Telegram обёрнуты в `_split_message` — `BadRequest: Message is too long` больше не возникает.
+
 ## [0.4.0] - 2026-03-30
 
 ### Added

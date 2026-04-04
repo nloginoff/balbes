@@ -25,11 +25,12 @@ class OrchestratorAgent:
     _memory: RedisMemory              # история чатов, сессии, флаги
     _qdrant: QdrantMemory             # долгосрочная семантическая память
 
-    # Реестр задач (in-memory, workers=1)
+    # Реестр задач (in-memory + Redis mirror)
     _task_registry: dict[str, dict]   # все задачи, ограничен 50 записями
     _background_tasks: dict[str, asyncio.Task]  # активные фоновые задачи
     _background_results: dict[str, dict]        # результаты завершённых задач
     _bg_debug_buffer: dict[str, list[dict]]     # live debug-события для монитора
+    _redis: aioredis.Redis | None     # для persist task registry + history summary
 ```
 
 ### Жизненный цикл задачи
@@ -37,17 +38,22 @@ class OrchestratorAgent:
 ```
 1. Telegram-бот → POST /api/v1/tasks
 2. execute_task(user_id, chat_id, input, model_id, source, mode, debug_events)
+   ├── reset_call_counts() — сброс rate-limit счётчиков на задачу
    ├── Загрузка системного промпта из workspace (SOUL.md + AGENTS.md + MEMORY.md + …)
    ├── Загрузка истории чата из Redis
+   ├── _maybe_summarize_history() — LLM суммаризация если контекст переполнен
+   ├── build_messages_for_llm(history, summary) — адаптивная обрезка под контекст-окно
    ├── _run_llm_with_tools(messages, tools, model_id, …)
    │   ├── LLM round 1 → tool_calls (JSON или XML)
    │   │   └── _normalize_tool_name() — исправляет de-underscored имена
    │   ├── ToolDispatcher.dispatch(tool_name, args)
+   │   │   ├── rate limit check (_call_counts)
    │   │   └── emit debug event: tool_start / tool_done
-   │   ├── LLM round 2 … MAX_TOOL_CALL_ROUNDS
-   │   └── return (response_text, model_used)
+   │   ├── LLM round 2 … MAX_TOOL_CALL_ROUNDS (15)
+   │   └── return (response_text, model_used, token_usage)
    ├── Сохранение ответа в историю Redis
-   └── return TaskResult
+   ├── _record_token_usage() — fire-and-forget → /api/v1/tokens/record
+   └── return TaskResult {output, model_used, token_usage, debug_events}
 ```
 
 ### XML Tool Call Parsing
@@ -186,20 +192,42 @@ _background_results → result_text (если завершено)
 
 | Инструмент | Ask mode | Agent mode | Описание |
 |-----------|----------|------------|----------|
-| `web_search` | ✅ | ✅ | DuckDuckGo / Brave / Tavily |
+| `web_search` | ✅ | ✅ | Brave / Tavily поиск |
 | `fetch_url` | ✅ | ✅ | Загрузить URL → текст (html2text) |
 | `execute_command` | ✅ (ask-вайтлист) | ✅ (agent-вайтлист) | Команда на сервере |
 | `workspace_read` | ✅ | ✅ | Читать MD/YAML из workspace |
 | `workspace_write` | ✅ | ✅ | Писать в workspace (авто-коммит) |
+| `file_read` | ✅ | ✅ | Читать любой файл проекта |
+| `file_write` | ✅ | ✅ | Создать/перезаписать файл проекта |
+| `file_patch` | ✅ | ✅ | Точечная замена строки в файле |
 | `rename_chat` | ✅ | ✅ | Переименовать текущий чат |
-| `save_to_memory` | ✅ | ✅ | Сохранить в Qdrant |
+| `save_to_memory` | ✅ | ✅ | Сохранить факт в Qdrant |
+| `recall_from_memory` | ✅ | ✅ | Семантический поиск в долгосрочной памяти |
+| `code_search` | ✅ | ✅ | Семантический поиск по кодовой базе |
+| `index_codebase` | ✅ | ✅ | Переиндексировать кодовую базу в Qdrant |
+| `manage_todo` | ✅ | ✅ | Читать/обновлять TODO.md |
 | `read_agent_logs` | ✅ | ✅ | Прочитать JSONL-логи активности |
+| `manage_schedule` | ✅ | ✅ | Управление задачами по расписанию |
 | `delegate_to_agent` | ❌ | ✅ | Делегировать задачу другому агенту |
 | `get_agent_result` | ❌ | ✅ | Получить результат фоновой задачи |
 | `cancel_agent_task` | ❌ | ✅ | Отменить фоновую задачу |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
 
 **Heartbeat** использует только `workspace_read` (минимальный набор для экономии токенов).
+
+### Rate Limiting
+
+Каждый инструмент имеет лимит вызовов на одну задачу (защита от зацикливания):
+
+| Инструмент | Лимит |
+|-----------|-------|
+| `web_search` | 10 |
+| `fetch_url` | 15 |
+| `file_read` / `file_write` / `file_patch` | 20–40 |
+| `execute_command` | 30 |
+| остальные | 20 |
+
+При превышении лимита инструмент возвращает ошибку с просьбой подвести итог.
 
 ### execute_command: вайтлисты
 
@@ -318,6 +346,13 @@ GET /api/v1/tasks/bg/events?user_id=YOUR_TELEGRAM_USER_ID&agent_id=coder&consume
 ```
 
 Трейс отправляется с `parse_mode="HTML"` для надёжной обработки спецсимволов.
+Длинные сообщения автоматически разбиваются на части по 4096 символов (`_split_message`).
+
+**В обычном режиме** (debug off, agent mode) показывается компактный прогресс-индикатор:
+```
+⚙️ Работаю… раунд 3 | execute_command · file_patch
+```
+Сообщение редактируется на месте и удаляется при получении финального ответа.
 
 ### Heartbeat
 

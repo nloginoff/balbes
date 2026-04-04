@@ -252,11 +252,22 @@ skills:
 
 ```yaml
 memory:
+  # "trim"      — молча обрезать старые сообщения (по умолчанию)
+  # "summarize" — суммаризировать обрезаемую часть через дешёвую LLM
   history_strategy: "trim"
-  trim_threshold: 0.85
-  max_messages_in_context: 50
-  system_prompt_reserve: 500
+
+  # Модель для суммаризации (только при history_strategy: "summarize")
+  # summary_model: "meta-llama/llama-3.1-8b-instruct:free"
+
+  trim_threshold: 0.85          # начинать обрезку при 85% заполнения контекста
+  max_messages_in_context: 50   # жёсткий лимит сообщений независимо от токенов
+  system_prompt_reserve: 500    # резерв токенов для системного промпта
 ```
+
+При `history_strategy: "summarize"`:
+1. Если история не умещается в контекстное окно — `_maybe_summarize_history()` вызывает `summary_model` для краткого пересказа старых сообщений
+2. Саммари сохраняется в Redis на 7 дней (ключ `balbes:history_summary:{user_id}:{chat_id}`) и переиспользуется
+3. В следующем `build_messages_for_llm` саммари вставляется как системное сообщение вместо обрезанных записей
 
 ---
 
@@ -307,6 +318,9 @@ config/providers.yaml → global defaults (token_limits, fallback_strategy)
 | `user:{user_id}:chats` | Set | — | Все chat_id пользователя |
 | `chat:{user_id}:{chat_id}:debug` | String | — | Флаг debug on/off |
 | `chat:{user_id}:{chat_id}:mode` | String | — | "ask" или "agent" |
+| `balbes:task:{task_id}` | String (JSON) | 24 ч | Запись о задаче (реестр) |
+| `balbes:task_ids` | Sorted Set | — | Индекс task_id по времени |
+| `balbes:history_summary:{user_id}:{chat_id}` | String | 7 дней | LLM-саммари истории чата |
 
 ---
 
