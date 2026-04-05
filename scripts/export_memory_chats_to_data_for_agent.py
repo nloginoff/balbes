@@ -21,8 +21,8 @@
 
 или ``./scripts/export_chats_for_agent.sh``
 
-Куда писать: сначала пробуем ``/data_for_agent``; если нет прав — ``<корень_репо>/data_for_agent/``.
-Явно: ``--output /путь`` или переменная ``EXPORT_CHATS_OUTPUT``.
+Куда писать по умолчанию: ``<корень_деплоя>/data_for_agent/`` (корень репозитория на проде, не корень ФС).
+Явно: ``--output путь`` или ``EXPORT_CHATS_OUTPUT``.
 
 Подключение к Redis: переменные ``REDIS_*`` / ``REDIS_URL``, без загрузки полного ``Settings``
 (не нужны ``WEB_AUTH_TOKEN``, Postgres и т.д.). Файл ``.env.{ENV}`` или ``.env`` в корне репозитория
@@ -85,10 +85,7 @@ logger = logging.getLogger("export_memory_chats")
 
 
 def _choose_base_output_dir(cli_output: Path | None) -> Path:
-    """
-    Предпочтительно /data_for_agent (на проде с правами); иначе каталог в репозитории —
-    у обычного пользователя mkdir в корне / часто даёт Permission denied.
-    """
+    """По умолчанию ``<корень репозитория>/data_for_agent`` (корень prod-деплоя, не ``/`` на диске)."""
     if cli_output is not None:
         return cli_output
     env = (
@@ -96,20 +93,7 @@ def _choose_base_output_dir(cli_output: Path | None) -> Path:
     ).strip()
     if env:
         return Path(env)
-    system = Path("/data_for_agent")
-    try:
-        system.mkdir(parents=True, exist_ok=True)
-        return system
-    except OSError:
-        fb = _project_root() / "data_for_agent"
-        logger.info(
-            "Нет прав на %s — пишу в %s (или: sudo mkdir -p %s && sudo chown $USER %s, либо EXPORT_CHATS_OUTPUT=...)",
-            system,
-            fb,
-            system,
-            system,
-        )
-        return fb
+    return _project_root() / "data_for_agent"
 
 
 def _safe_segment(s: str, max_len: int = 120) -> str:
@@ -252,7 +236,7 @@ def main() -> int:
         "--output",
         type=Path,
         default=None,
-        help="Базовый каталог (по умолчанию: /data_for_agent или data_for_agent в корне репозитория)",
+        help="Базовый каталог (по умолчанию: data_for_agent в корне репозитория / деплоя)",
     )
     parser.add_argument(
         "--redis-url",
