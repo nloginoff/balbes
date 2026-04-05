@@ -586,12 +586,14 @@ memory:
   system_prompt_reserve: 500    # tokens reserved for system prompt overhead
 
 
-# Whisper voice transcription
+# Whisper voice transcription (env WHISPER_* — see .env.example; openai-whisper package)
 whisper:
-  model: "base"         # tiny | base | small | medium | large
+  model: "large-v3"     # tiny … large-v3; large-v3 best quality, slow on CPU
   device: "cpu"
-  compute_type: "int8"  # int8 uses less RAM, near-identical accuracy
-  language: "ru"        # fixed language for faster + more accurate transcription
+  beam_size: 10
+  best_of: 5
+  patience: 2.0
+  language: "ru"        # or empty for auto-detect
 
 
 # Skills configuration

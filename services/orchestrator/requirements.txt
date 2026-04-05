@@ -9,8 +9,8 @@ qdrant-client>=1.7.0
 redis>=4.5.0
 PyYAML>=6.0
 tiktoken>=0.5.0
-# Voice transcription (requires: sudo apt install ffmpeg)
-faster-whisper>=1.0.0
+# Voice transcription (requires: sudo apt install ffmpeg; PyTorch via openai-whisper)
+openai-whisper>=20231117
 # Web search
 duckduckgo-search>=6.0.0
 # URL content extraction

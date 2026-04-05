@@ -15,7 +15,7 @@ Commands:
   /remember <txt> — save text to long-term memory (Qdrant)
   /recall <query> — search long-term memory
 
-Voice messages are automatically transcribed via Whisper and corrected via LLM.
+Voice messages are transcribed locally via openai-whisper and optionally corrected via LLM.
 """
 
 import asyncio
@@ -2179,7 +2179,7 @@ class BalbesTelegramBot:
                 await message.reply_text(f"❌ Ошибка транскрипции: {e}")
         except ImportError:
             await message.reply_text(
-                "❌ faster-whisper не установлен. Запусти: `pip install faster-whisper`",
+                "❌ openai-whisper не установлен. Запусти: `pip install openai-whisper`",
                 parse_mode="Markdown",
             )
         except Exception as e:

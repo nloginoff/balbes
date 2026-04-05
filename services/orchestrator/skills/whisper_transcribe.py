@@ -1,14 +1,16 @@
 """
-Voice transcription skill using faster-whisper.
+Voice transcription using the official OpenAI Whisper implementation (openai-whisper / PyTorch).
 
 Pipeline:
   1. Receive OGG/OPUS bytes from Telegram
   2. Convert to WAV via ffmpeg
-  3. Transcribe with faster-whisper (singleton model)
-  4. Correct transcription errors via cheap LLM call
-  5. Return corrected text
+  3. Transcribe with whisper.load_model + model.transcribe (beam search, quality-oriented defaults)
+  4. Optional LLM correction via OpenRouter (short/medium text only)
 
-The WhisperModel is loaded once and reused across requests.
+Slower than faster-whisper; better reference decoding. For cloud STT (OpenRouter/Yandex Speech),
+see future backend switch in orchestrator config.
+
+The model is loaded once and reused (singleton).
 """
 
 import asyncio
@@ -26,8 +28,14 @@ _whisper_model = None
 _model_lock = asyncio.Lock()
 
 
+def _fp16_for_decode() -> bool:
+    if settings.whisper_fp16 is not None:
+        return settings.whisper_fp16
+    return settings.whisper_device.lower() == "cuda"
+
+
 async def get_whisper_model():
-    """Lazy-load and return the singleton faster-whisper model."""
+    """Lazy-load and return the singleton Whisper model (openai-whisper)."""
     global _whisper_model
     if _whisper_model is not None:
         return _whisper_model
@@ -37,25 +45,23 @@ async def get_whisper_model():
             return _whisper_model
 
         try:
-            from faster_whisper import WhisperModel
-
-            logger.info(
-                f"Loading Whisper model '{settings.whisper_model}' "
-                f"on {settings.whisper_device} ({settings.whisper_compute_type})..."
-            )
-            _whisper_model = WhisperModel(
-                model_size_or_path=settings.whisper_model,
-                device=settings.whisper_device,
-                compute_type=settings.whisper_compute_type,
-            )
-            logger.info("Whisper model loaded successfully")
+            import whisper
         except ImportError:
-            logger.error("faster-whisper not installed. Run: pip install faster-whisper")
-            raise
-        except Exception as e:
-            logger.error(f"Failed to load Whisper model: {e}")
+            logger.error("openai-whisper not installed. Run: pip install openai-whisper")
             raise
 
+        def _load():
+            logger.info(
+                "Loading OpenAI Whisper model %r on %s (fp16 decode: %s)...",
+                settings.whisper_model,
+                settings.whisper_device,
+                _fp16_for_decode(),
+            )
+            return whisper.load_model(settings.whisper_model, device=settings.whisper_device)
+
+        loop = asyncio.get_event_loop()
+        _whisper_model = await loop.run_in_executor(None, _load)
+        logger.info("Whisper model loaded successfully")
     return _whisper_model
 
 
@@ -65,10 +71,8 @@ def _ffmpeg_timeout_seconds(ogg_bytes: bytes, duration_hint_sec: int | None) -> 
     many seconds on large OPUS files or slow disks.
     """
     if duration_hint_sec is not None and duration_hint_sec > 0:
-        # Up to 15 min cap; at least 4× realtime for slow CPUs
         return float(min(900, max(60.0, duration_hint_sec * 4.0)))
     size = len(ogg_bytes)
-    # ~20 KB/s voice ballpark → generous margin
     return float(min(900, max(90.0, size / 1500.0)))
 
 
@@ -94,9 +98,9 @@ async def _ogg_to_wav(ogg_bytes: bytes, duration_hint_sec: int | None) -> Path:
         "-i",
         str(ogg_path),
         "-ar",
-        "16000",  # 16kHz sample rate (Whisper standard)
+        "16000",
         "-ac",
-        "1",  # mono
+        "1",
         "-c:a",
         "pcm_s16le",
         str(wav_path),
@@ -121,6 +125,26 @@ async def _ogg_to_wav(ogg_bytes: bytes, duration_hint_sec: int | None) -> Path:
     return wav_path
 
 
+def _transcribe_sync(model, wav_path: str, language: str | None) -> tuple[str, str | None]:
+    """Run Whisper transcribe in thread pool; returns (text, detected_language or None)."""
+    fp16 = _fp16_for_decode()
+    kwargs: dict = {
+        "verbose": False,
+        "fp16": fp16,
+        "beam_size": settings.whisper_beam_size,
+        "best_of": settings.whisper_best_of,
+        "patience": settings.whisper_patience,
+        "condition_on_previous_text": True,
+    }
+    if language:
+        kwargs["language"] = language
+
+    result = model.transcribe(wav_path, **kwargs)
+    text = (result.get("text") or "").strip()
+    info_lang = result.get("language")
+    return text, info_lang
+
+
 async def transcribe_voice(
     ogg_bytes: bytes,
     language: str | None = None,
@@ -131,38 +155,32 @@ async def transcribe_voice(
 
     Args:
         ogg_bytes: Raw OGG/OPUS audio bytes from Telegram
-        language: Language code (default from settings.whisper_language)
+        language: Language code (default from settings.whisper_language); None = auto-detect
         duration_hint_sec: Telegram-reported duration (seconds), used to scale ffmpeg timeout
 
     Returns:
         Transcribed text string
     """
-    lang = language or settings.whisper_language
+    lang = language if language is not None else settings.whisper_language
     wav_path: Path | None = None
 
     try:
         model = await get_whisper_model()
 
         wav_path = await _ogg_to_wav(ogg_bytes, duration_hint_sec)
-        logger.debug(f"Transcribing WAV: {wav_path}, language={lang}")
+        logger.debug("Transcribing WAV: %s, language=%s", wav_path, lang)
 
-        # Run in thread pool to avoid blocking event loop
+        path_str = str(wav_path)
         loop = asyncio.get_event_loop()
-        segments, info = await loop.run_in_executor(
+        text, info_lang = await loop.run_in_executor(
             None,
-            lambda: model.transcribe(
-                str(wav_path),
-                language=lang,
-                beam_size=5,
-                vad_filter=True,  # Voice Activity Detection — reduces noise
-                vad_parameters={"min_silence_duration_ms": 500},
-            ),
+            lambda: _transcribe_sync(model, path_str, lang),
         )
 
-        text = " ".join((seg.text or "").strip() for seg in segments).strip()
         logger.info(
-            f"Transcription done: {len(text)} chars, "
-            f"lang={info.language}, prob={info.language_probability:.2f}"
+            "Transcription done: %s chars, lang=%s",
+            len(text),
+            info_lang or lang or "auto",
         )
         return text
 
@@ -190,7 +208,6 @@ async def correct_transcription(text: str, http_client=None) -> str:
     if not text or not settings.openrouter_api_key:
         return text
 
-    # Long audio → huge text; LLM correction uses max_tokens=500 anyway and can stall the HTTP client.
     if len(text) > 8000:
         logger.info("Skipping LLM correction for long transcription (%s chars)", len(text))
         return text

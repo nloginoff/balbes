@@ -215,12 +215,36 @@ class Settings(BaseSettings):
         return f"http://127.0.0.1:{self.coder_port}"
 
     # =============================================================================
-    # Whisper voice transcription
+    # Whisper voice transcription (openai-whisper package, local inference)
     # =============================================================================
-    whisper_model: str = Field(default="base", description="tiny/base/small/medium/large")
+    whisper_model: str = Field(
+        default="large-v3",
+        description="openai-whisper model id: tiny, base, small, medium, large, large-v2, large-v3",
+    )
     whisper_device: str = Field(default="cpu", description="cpu or cuda")
-    whisper_compute_type: str = Field(default="int8", description="int8/float16/float32")
-    whisper_language: str = Field(default="ru", description="Language code for transcription")
+    whisper_fp16: bool | None = Field(
+        default=None,
+        description="fp16 decode; None = True only when whisper_device is cuda (CPU uses fp32)",
+    )
+    whisper_beam_size: int = Field(
+        default=10,
+        ge=1,
+        description="Beam search width (openai-whisper decode; higher = slower, often better)",
+    )
+    whisper_best_of: int = Field(
+        default=5,
+        ge=1,
+        description="Number of candidates when sampling (used with beam search)",
+    )
+    whisper_patience: float = Field(
+        default=2.0,
+        ge=0.0,
+        description="Beam search patience factor (higher = slower, can improve quality)",
+    )
+    whisper_language: str | None = Field(
+        default="ru",
+        description="Language code (e.g. ru) or null/empty for auto-detect",
+    )
 
     # =============================================================================
     # Search skills
@@ -280,6 +304,7 @@ class Settings(BaseSettings):
         "yandex_search_key",
         "yandex_folder_id",
         "yandex_search_user",
+        "whisper_language",
         mode="before",
     )
     @classmethod
