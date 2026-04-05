@@ -96,10 +96,13 @@ async def business_bot_handle_voice(
     chat_model_id: str | None,
     route_text_callback: Callable[[int, str, Any, Any], Awaitable[None]],
     show_preview: bool = True,
+    voice_debug: bool = False,
+    debug_reply: Callable[[Any, bool, str], Awaitable[None]] | None = None,
 ) -> None:
     """
     Voice handler for blogger business bot: transcribe then route like text.
     `route_text_callback(owner_id, text, message, context)` — same as _route_owner_natural_language.
+    With `voice_debug` and `debug_reply`, mirrors orchestrator voice debug lines (per-chat flag from Memory).
     """
     from shared.telegram_app.text import reply_voice_transcription
 
@@ -120,8 +123,8 @@ async def business_bot_handle_voice(
             context,
             http_client=http,
             chat_model_id=chat_model_id,
-            voice_debug=False,
-            debug_reply=None,
+            voice_debug=voice_debug,
+            debug_reply=debug_reply,
         )
         if not corrected:
             await message.reply_text("🎤 Не удалось распознать голосовое сообщение")

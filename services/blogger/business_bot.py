@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import asyncpg
 import httpx
 import yaml
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update, User
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
@@ -134,6 +134,8 @@ class BusinessBot:
             )
         if tg.help_command:
             commands.append(BotCommand("help", "Справка"))
+        if tg.debug_command:
+            commands.append(BotCommand("debug", "🔍 Включить/выключить трейс действий"))
         if tg.start_command:
             commands.insert(0, BotCommand("start", "Начать"))
 
@@ -202,6 +204,8 @@ class BusinessBot:
                     self._handle_private_message,
                 )
             )
+        if tg.debug_command:
+            app.add_handler(CommandHandler("debug", self.cmd_debug, filters=owner))
 
         app.add_handler(
             MessageHandler(
@@ -266,6 +270,30 @@ class BusinessBot:
             "— любой вопрос или задача",
             parse_mode="Markdown",
         )
+
+    async def cmd_debug(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Toggle debug trace for the current bbot chat (Memory settings, same idea as orchestrator)."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        owner_id = user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        if not chat_id:
+            await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
+            return
+        current = await self.agent.bbot_get_chat_settings(owner_id, chat_id)
+        new_debug = not current.get("debug", False)
+        await self.agent.bbot_set_chat_settings(owner_id, chat_id, debug=new_debug)
+        if new_debug:
+            await update.message.reply_text(
+                "🔍 *Debug включён*\n"
+                "— голос: этапы скачивание → Whisper → постобработка\n"
+                "— текст: раунды LLM и вызовы инструментов\n\n"
+                "Отключить: /debug",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text("🔕 Debug выключен")
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         owner_id = update.effective_user.id
@@ -664,7 +692,10 @@ class BusinessBot:
             for chunk in split_long_text(t):
                 await msg.reply_text(chunk, parse_mode="Markdown")
 
-        await self.agent.handle_owner_message(owner_id, text, reply_fn)
+        async def debug_reply(html: str) -> None:
+            await msg.reply_text(html, parse_mode="HTML")
+
+        await self.agent.handle_owner_message(owner_id, text, reply_fn, debug_reply=debug_reply)
 
     async def _handle_private_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -678,6 +709,16 @@ class BusinessBot:
 
         await self._route_owner_natural_language(user.id, msg.text or "", msg, context)
 
+    async def _voice_debug_reply(self, message, enabled: bool, line: str) -> None:
+        """When per-chat debug is on, show voice-pipeline stages (shared semantics with orchestrator)."""
+        if not enabled:
+            return
+        safe = (line or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        try:
+            await message.reply_text(f"<b>voice</b> {safe}", parse_mode="HTML")
+        except Exception as e:
+            logger.debug("voice debug line failed: %s", e)
+
     async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Transcribe voice/audio via shared pipeline, then route like text (как у оркестратора)."""
         msg = update.effective_message
@@ -688,6 +729,8 @@ class BusinessBot:
         owner_id = user.id
         chat_id = await self.agent.bbot_get_active_chat(owner_id)
         model_id = await self.agent.bbot_get_chat_model(owner_id, chat_id)
+        settings = await self.agent.bbot_get_chat_settings(owner_id, chat_id)
+        voice_debug = bool(settings.get("debug", False))
         tg = self._tg
         await business_bot_handle_voice(
             msg,
@@ -696,6 +739,8 @@ class BusinessBot:
             chat_model_id=model_id,
             route_text_callback=self._route_owner_natural_language,
             show_preview=tg.voice_transcription_preview,
+            voice_debug=voice_debug,
+            debug_reply=self._voice_debug_reply,
         )
 
     async def _handle_stranger(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

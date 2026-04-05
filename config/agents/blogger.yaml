@@ -13,6 +13,8 @@ id: blogger
 telegram:
   voice: true
   commands_menu: true
+  # /debug — трейс LLM и голоса (настройки чата в Memory, префикс bbot_<tg_id>)
+  debug_command: true
   model_switch: true
   multi_chat: true
   posts_commands: true

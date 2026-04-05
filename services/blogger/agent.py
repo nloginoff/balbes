@@ -6,8 +6,10 @@ generates posts in RU and EN, creates drafts and sends them for approval.
 Also handles evening check-in interviews and business summaries.
 """
 
+import html
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -713,6 +715,30 @@ class BloggerAgent:
         except Exception as exc:
             logger.warning("bbot_set_chat_model: %s", exc)
 
+    async def bbot_get_chat_settings(self, owner_id: int, chat_id: str) -> dict:
+        """Return {debug: bool, mode: str} for a bbot chat (Memory Service)."""
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/settings"
+            )
+            if r.status_code == 200:
+                return r.json()
+        except Exception as exc:
+            logger.debug("bbot_get_chat_settings: %s", exc)
+        return {"debug": False, "mode": "ask"}
+
+    async def bbot_set_chat_settings(self, owner_id: int, chat_id: str, **kwargs) -> bool:
+        """Update per-chat settings (debug=, mode=) for bbot namespace."""
+        try:
+            r = await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/settings",
+                json={k: v for k, v in kwargs.items() if v is not None},
+            )
+            return r.status_code == 200
+        except Exception as exc:
+            logger.debug("bbot_set_chat_settings: %s", exc)
+        return False
+
     def set_conversation_model(self, model: str) -> None:
         """Set the default LLM model for new bbot conversations."""
         self._conversation_model = model
@@ -723,6 +749,7 @@ class BloggerAgent:
         owner_id: int,
         text: str,
         reply_fn,
+        debug_reply: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         """
         Handle a free-form message from the owner in private business-bot chat.
@@ -846,6 +873,8 @@ class BloggerAgent:
         # ── chat context from Memory Service ────────────────────────────────
         chat_id = await self.bbot_get_active_chat(owner_id)
         model = await self.bbot_get_chat_model(owner_id, chat_id)
+        settings = await self.bbot_get_chat_settings(owner_id, chat_id)
+        debug_on = bool(settings.get("debug", False))
 
         # save incoming user message to persistent history
         await self.bbot_save_message(owner_id, chat_id, "user", text)
@@ -884,6 +913,11 @@ class BloggerAgent:
                 "X-Title": "Balbes Blogger Agent",
             }
             model_id = _normalize_openrouter_model_id(model)
+
+            if debug_on and debug_reply:
+                await debug_reply(
+                    f"⚙️ <b>LLM</b> раунд {_round + 1} → <code>{html.escape(model_id)}</code>"
+                )
             payload_tools = {
                 "model": model_id,
                 "messages": messages,
@@ -978,6 +1012,12 @@ class BloggerAgent:
                     args = json.loads(raw_args)
                 except Exception:
                     args = {}
+
+                if debug_on and debug_reply:
+                    arg_preview = html.escape(json.dumps(args, ensure_ascii=False)[:400])
+                    await debug_reply(
+                        f"🔧 <b>{html.escape(fn_name)}</b> <code>{arg_preview}</code>"
+                    )
 
                 tool_result = await self._dispatch_conversation_tool(
                     fn_name, args, chat_model=model

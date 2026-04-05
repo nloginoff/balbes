@@ -74,7 +74,7 @@ Inter-service trust: when `DELEGATION_SHARED_SECRET` is set, callers must send h
 
 Loader: [`shared/agent_manifest.py`](../../shared/agent_manifest.py).
 
-Optional **`telegram:`** block toggles per-agent Telegram UI (voice, command menu, model switch, multi-chat, memory commands for the orchestrator; `posts_commands`, business group capture, etc. for blogger). See `TelegramFeatureFlags` in the same module. Example: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
+Optional **`telegram:`** block toggles per-agent Telegram UI (voice, command menu, model switch, multi-chat, memory commands, **`debug_command`** (`/debug`: LLM and voice-stage traces for the current chat, stored in Memory) — same flag for the orchestrator bot and the blogger business bot (blogger uses Memory user id prefix `bbot_<telegram_id>`); plus blogger-specific flags such as `posts_commands`, business group capture, etc. See `TelegramFeatureFlags` in the same module. Example: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
 
 ---
 

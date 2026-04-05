@@ -93,7 +93,7 @@ delegate_targets:
 
 Реализация загрузки: [`shared/agent_manifest.py`](../../shared/agent_manifest.py).
 
-Блок **`telegram:`** (опционально) задаёт возможности UI бота для агента: голос (`voice`), меню команд (`commands_menu`), переключение модели (`model_switch`), мультичат (`multi_chat`), команды памяти (`memory_commands`) — для оркестратора; для сервиса блогера — `posts_commands`, `business_groups`, `business_group_capture`, `private_conversation`, `voice_transcription_preview` и др. См. класс `TelegramFeatureFlags` в [`shared/agent_manifest.py`](../../shared/agent_manifest.py). Пример: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
+Блок **`telegram:`** (опционально) задаёт возможности UI бота для агента: голос (`voice`), меню команд (`commands_menu`), переключение модели (`model_switch`), мультичат (`multi_chat`), команды памяти (`memory_commands`), **`debug_command`** (команда `/debug`: трейс LLM и этапов голоса в текущем чате, настройки в Memory) — одинаково для оркестратора и для бизнес-бота блогера (у блогера префикс пользователя в Memory — `bbot_<telegram_id>`); для сервиса блогера дополнительно — `posts_commands`, `business_groups`, `business_group_capture`, `private_conversation`, `voice_transcription_preview` и др. См. класс `TelegramFeatureFlags` в [`shared/agent_manifest.py`](../../shared/agent_manifest.py). Пример: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
 
 ---
 
