@@ -25,6 +25,7 @@ from shared.config import get_settings
 from shared.utils import get_providers_config
 
 from .agent import BloggerAgent
+from .api import execute as execute_api
 from .api import posts as posts_api
 from .business_bot import BusinessBot
 from .post_queue import PostQueue
@@ -217,6 +218,7 @@ async def lifespan(app: FastAPI):
 
     # Init API router
     posts_api.init(_queue, _agent, _publisher, _business_bot)
+    app.state.blogger_agent = _agent
 
     # Scheduler
     evening_hour = int(cfg.get("evening_checkin_hour", 20))
@@ -322,6 +324,7 @@ app = FastAPI(
 
 app.include_router(posts_api.router)
 app.include_router(posts_api.business_router)
+app.include_router(execute_api.router)
 
 
 @app.get("/health")

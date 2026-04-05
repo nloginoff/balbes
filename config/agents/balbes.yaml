@@ -1,0 +1,21 @@
+# Git-safe manifest for the main orchestrator agent (id matches providers.yaml "balbes").
+# Secrets (API keys, delegation shared secret) live in .env only.
+
+id: balbes
+
+# Optional per-mode tool allowlists (override providers.yaml tools_allowlist for this agent).
+# Omit or leave null to use providers.yaml only.
+# tools:
+#   ask: [web_search, workspace_read]
+#   agent: null
+#   dev: null
+
+# HTTP delegation targets: agent_id -> base URL (no trailing slash required).
+delegate_targets:
+  coder: http://127.0.0.1:8001
+  blogger: http://127.0.0.1:8105
+
+# Telegram UI (оркестратор): см. shared.agent_manifest.TelegramFeatureFlags — всё true по умолчанию.
+# telegram:
+#   voice: true
+#   agents_switch: true

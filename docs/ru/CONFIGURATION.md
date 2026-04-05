@@ -75,6 +75,28 @@ PYTHONUNBUFFERED=1
 
 ---
 
+## config/agents/*.yaml (манифесты агентов)
+
+Файлы в репозитории **без секретов**: allowlist инструментов по режимам (`ask` / `agent` / `dev`) и таблица **HTTP-делегирования** для `delegate_to_agent`.
+
+Пример [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml):
+
+```yaml
+id: balbes
+delegate_targets:
+  coder: http://127.0.0.1:8001
+  blogger: http://127.0.0.1:8105
+```
+
+- Базовые URL для `coder` и `blogger` при отсутствии записи подставляются из `CODER_PORT` / `BLOGGER_SERVICE_PORT` (см. `shared.config.Settings`).
+- Доверие между сервисами: заголовок `X-Balbes-Delegation-Key` должен совпадать с переменной окружения **`DELEGATION_SHARED_SECRET`** на стороне оркестратора и целевого сервиса. Если секрет не задан, проверка отключена (удобно для локальной разработки).
+
+Реализация загрузки: [`shared/agent_manifest.py`](../../shared/agent_manifest.py).
+
+Блок **`telegram:`** (опционально) задаёт возможности UI бота для агента: голос (`voice`), меню команд (`commands_menu`), переключение модели (`model_switch`), мультичат (`multi_chat`), команды памяти (`memory_commands`) — для оркестратора; для сервиса блогера — `posts_commands`, `business_groups`, `business_group_capture`, `private_conversation`, `voice_transcription_preview` и др. См. класс `TelegramFeatureFlags` в [`shared/agent_manifest.py`](../../shared/agent_manifest.py). Пример: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
+
+---
+
 ## config/providers.yaml
 
 Центральный конфиг системы. Управляет моделями, агентами, heartbeat, skills, whisper.

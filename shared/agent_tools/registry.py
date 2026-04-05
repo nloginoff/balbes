@@ -269,20 +269,17 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "name": "delegate_to_agent",
             "description": (
                 "Delegate a task to a specialist sub-agent and return their response. "
-                "Use the 'coder' agent for: writing / editing / debugging code, "
-                "creating project files, running scripts or tests, git operations "
-                "(add, commit, push, pull), and any development work. "
-                "Provide a complete, self-contained task description — the sub-agent "
-                "has NO access to the current conversation history, so include all "
-                "necessary context: file paths, tech stack, what to do and why."
+                "Use 'coder' for code, files, tests, git. "
+                "Use 'blogger' for drafts, posts, channel content, blog summaries. "
+                "Provide a complete, self-contained task — the sub-agent has NO chat history."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Target agent. Currently available: 'coder'",
-                        "enum": ["coder"],
+                        "description": "Target agent: 'coder' (dev) or 'blogger' (blog)",
+                        "enum": ["coder", "blogger"],
                     },
                     "task": {
                         "type": "string",
