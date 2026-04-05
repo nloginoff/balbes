@@ -590,7 +590,7 @@ memory:
 # Hybrid routing: short voice → WHISPER_LOCAL_MODEL (default medium); long/unknown → cloud
 # (WHISPER_REMOTE_BACKEND, OpenRouter / Yandex SpeechKit — see whisper_remote_stt)
 whisper:
-  model: "large-v3"     # legacy; local path uses WHISPER_LOCAL_MODEL in Settings
+  model: "medium"     # legacy; local path uses WHISPER_LOCAL_MODEL in Settings
   device: "cpu"
   beam_size: 10
   best_of: 5
@@ -658,7 +658,7 @@ skills:
 # Always uses the free model regardless of the user's active chat model
 heartbeat:
   enabled: true
-  every_minutes: 5
+  every_minutes: 15
   # Primary model (free). On 429/error, tries fallback_models in order.
   # Last fallback is the cheapest paid model. If all fail → error sent to user.
   model: "openrouter/stepfun/step-3.5-flash:free"
