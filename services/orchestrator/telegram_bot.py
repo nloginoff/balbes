@@ -86,6 +86,27 @@ def _split_message(text: str, limit: int = 4096) -> list[str]:
     return chunks
 
 
+# Reserve room for «🎤 Услышал (NN/NN):» header when splitting transcription for Telegram (4096 max).
+_VOICE_HEARD_BODY_LIMIT = 3950
+
+
+async def _reply_voice_transcription(message, corrected: str) -> None:
+    """Send transcribed text; split into several messages if longer than Telegram allows."""
+    # Short text: keep readable Markdown. Long: plain chunks (Markdown breaks on underscores etc.).
+    overhead = len("🎤 _Услышал:_ «»")
+    if len(corrected) + overhead <= 4090:
+        await message.reply_text(
+            f"🎤 _Услышал:_ «{corrected}»",
+            parse_mode="Markdown",
+        )
+        return
+    chunks = _split_message(corrected, limit=_VOICE_HEARD_BODY_LIMIT)
+    n = len(chunks)
+    for i, chunk in enumerate(chunks):
+        header = f"🎤 Услышал ({i + 1}/{n}):\n\n" if n > 1 else "🎤 Услышал:\n\n"
+        await message.reply_text(header + chunk)
+
+
 def _load_providers_yaml() -> dict:
     """Load providers.yaml once. Returns empty dict on failure."""
     try:
@@ -2101,11 +2122,8 @@ class BalbesTelegramBot:
             # Correct via LLM
             corrected = await correct_transcription(raw_text, http_client=self.http_client)
 
-            # Show what was heard
-            await message.reply_text(
-                f"🎤 _Услышал:_ «{corrected}»",
-                parse_mode="Markdown",
-            )
+            # Show what was heard (may be many messages for long audio)
+            await _reply_voice_transcription(message, corrected)
 
             # Process as regular text message
             await self._process_user_input(
@@ -2133,10 +2151,10 @@ class BalbesTelegramBot:
             )
         except Exception as e:
             logger.error(f"Voice handling failed: {e}", exc_info=True)
-            await message.reply_text(
-                f"❌ Ошибка обработки голоса: `{type(e).__name__}: {e or '(нет описания)'}`",
-                parse_mode="Markdown",
-            )
+            err_detail = f"{type(e).__name__}: {e or '(нет описания)'}"
+            if len(err_detail) > 3800:
+                err_detail = err_detail[:3797] + "..."
+            await message.reply_text(f"❌ Ошибка обработки голоса: {err_detail}")
         finally:
             self._active_tasks.pop(user_id, None)
 
