@@ -90,7 +90,7 @@ default_fallback_chain:  # Цепочка fallback (free → cheap)
 cheap_models:       # Для автопереключения при превышении лимита
 token_limits:       # Глобальные defaults
 memory:             # Стратегия trim/summarize для истории
-whisper:            # Конфиг faster-whisper
+whisper:            # Справочный блок; реальные параметры — WHISPER_* в .env (см. ниже)
 skills:             # web_search, fetch_url, server_commands
 heartbeat:          # Проактивные сообщения
 embeddings:         # Qdrant embeddings (text-embedding-3-small)
@@ -225,15 +225,21 @@ Heartbeat использует только `workspace_read` — без исто
 
 ### Voice / Whisper
 
+Параметры задаются **переменными окружения** (`WHISPER_*`, `YANDEX_SPEECH_*`) — полный список в **`.env.example`** и в англ. [CONFIGURATION.md](../en/CONFIGURATION.md#optional--voice-telegram). Блок в `providers.yaml` остаётся справочным (см. комментарии в файле).
+
+**Пайплайн:**
+
+1. **Короткие** голосовые (длительность из Telegram ≤ `WHISPER_LOCAL_MAX_DURATION_SECONDS`) — локально **openai-whisper** с моделью `WHISPER_LOCAL_MODEL` (часто `medium`), нужны `ffmpeg` и пакет `openai-whisper`.
+2. **Длинные** или **без известной длительности** — облачный STT: **OpenRouter** (чат с `input_audio`) и/или **Yandex SpeechKit** в зависимости от `WHISPER_REMOTE_BACKEND`; для ключей SpeechKit можно не задавать `YANDEX_SPEECH_*` — тогда используются `YANDEX_SEARCH_KEY` и `YANDEX_FOLDER_ID`.
+3. После сырой расшифровки — **LLM-коррекция** через OpenRouter (сначала модель текущего чата, затем `WHISPER_CORRECTION_FALLBACK_MODEL`).
+
 ```yaml
 whisper:
-  model: "base"          # tiny | base | small | medium | large
+  model: "large-v3"    # legacy в YAML; локальный путь — WHISPER_LOCAL_MODEL в .env
   device: "cpu"
-  compute_type: "int8"
+  beam_size: 10
   language: "ru"
 ```
-
-После транскрибации текст прогоняется через LLM для исправления ошибок транскрибации.
 
 ### Web Search
 

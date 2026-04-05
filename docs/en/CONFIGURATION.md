@@ -24,12 +24,27 @@
 | `YANDEX_FOLDER_ID` | Yandex Cloud folder ID (`b1g...`) — required with the above |
 | `BRAVE_SEARCH_KEY` | Brave Search API key |
 
-### Optional — Voice
+### Optional — Voice (Telegram)
+
+Voice uses **openai-whisper** locally for short messages and **cloud STT** (OpenRouter multimodal audio and/or Yandex SpeechKit) for longer audio. Full list: `.env.example`.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `WHISPER_MODEL` | Whisper model size: `tiny` / `base` / `small` / `medium` / `large` | `base` |
+| `WHISPER_MODEL` | Legacy YAML/docs; local path uses `WHISPER_LOCAL_MODEL` | `large-v3` |
+| `WHISPER_LOCAL_MODEL` | openai-whisper model when duration ≤ threshold | `medium` |
+| `WHISPER_LOCAL_MAX_DURATION_SECONDS` | If Telegram `voice.duration` ≤ this (seconds), use local Whisper; otherwise cloud | `30` |
+| `WHISPER_REMOTE_BACKEND` | `openrouter` · `yandex` · `openrouter_then_yandex` | `openrouter_then_yandex` |
+| `WHISPER_OPENROUTER_STT_MODEL` | OpenRouter model with audio input ([models with audio](https://openrouter.ai/models?input_modalities=audio)) | `google/gemini-2.0-flash-001` |
+| `WHISPER_OPENROUTER_STT_TIMEOUT_SECONDS` | HTTP timeout for cloud STT via OpenRouter | `300` |
+| `WHISPER_YANDEX_STT_TIMEOUT_SECONDS` | HTTP timeout for Yandex SpeechKit | `300` |
+| `YANDEX_SPEECH_API_KEY` | Optional SpeechKit key; if unset, `YANDEX_SEARCH_KEY` is used | — |
+| `YANDEX_SPEECH_FOLDER_ID` | Optional; if unset, `YANDEX_FOLDER_ID` is used | — |
 | `WHISPER_DEVICE` | `cpu` or `cuda` | `cpu` |
+| `WHISPER_LANGUAGE` | e.g. `ru`, or empty for auto-detect | `ru` |
+| `WHISPER_BEAM_SIZE` / `WHISPER_BEST_OF` / `WHISPER_PATIENCE` | openai-whisper decode quality (local path only) | `10` / `5` / `2.0` |
+| `WHISPER_CORRECTION_FALLBACK_MODEL` | Paid OpenRouter model for post-STT text correction (not `:free`) | MiniMax M2.5 |
+
+Requires `ffmpeg` and `pip install openai-whisper`. Optional preload: `ENV=prod python scripts/prefetch_whisper.py`.
 
 ### Optional — Infrastructure
 

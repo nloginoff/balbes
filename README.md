@@ -52,7 +52,7 @@ Switch providers on the fly: just say *"search via yandex: ..."*
 
 ### 🎙️ Voice Messages
 
-Send a voice note, get a text response. Transcription via `faster-whisper` with optional LLM post-correction.
+Send a voice note, get a text response. Hybrid STT: local **openai-whisper** for short audio, OpenRouter and/or Yandex SpeechKit for longer; optional LLM post-correction via OpenRouter.
 
 ### 💓 Heartbeat
 
@@ -88,7 +88,7 @@ No Web UI needed. Everything — switching models, managing chats, reading logs,
 | Background task monitoring | Live debug trace streamed to your Telegram as the agent works |
 | Workspace versioning | Agent workspace files auto-committed to a private git repo |
 | Mode switching | `/mode ask` (safe read-only) / `/mode agent` (full dev powers) |
-| Voice transcription | `faster-whisper` + optional LLM correction |
+| Voice transcription | openai-whisper (short) + OpenRouter / Yandex STT (long) + optional LLM correction |
 | Token limits | Per-agent daily/hourly token budgets with automatic fallback |
 | Multi-chat | Multiple named conversations, each with own history and settings |
 | Blogger agent | AI-driven blog post generation from chats, Cursor exports, and voice check-ins |
@@ -194,7 +194,7 @@ You → Orchestrator → delegate_to_agent(coder, background=true)
 | Fast memory | Redis (chat history, sessions, flags) |
 | Long-term memory | Qdrant (semantic vector search) |
 | Database | PostgreSQL |
-| Voice transcription | faster-whisper + ffmpeg |
+| Voice transcription | openai-whisper + ffmpeg; cloud STT optional |
 | Search | Tavily · Yandex Search API v2 · Brave |
 | Infrastructure | Docker Compose |
 | Code quality | ruff · pre-commit |

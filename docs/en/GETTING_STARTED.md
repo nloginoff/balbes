@@ -48,8 +48,12 @@ JWT_SECRET=change-me-to-another-random-string
 POSTGRES_PASSWORD=your-secure-password
 
 # Voice transcription (optional but recommended)
-WHISPER_MODEL=base          # tiny / base / small / medium
-WHISPER_DEVICE=cpu          # cpu or cuda
+# Short voice → local openai-whisper; long → OpenRouter / Yandex (see .env.example)
+WHISPER_LOCAL_MODEL=medium
+WHISPER_LOCAL_MAX_DURATION_SECONDS=30
+WHISPER_REMOTE_BACKEND=openrouter_then_yandex
+WHISPER_OPENROUTER_STT_MODEL=google/gemini-2.0-flash-001
+WHISPER_DEVICE=cpu
 ```
 
 Optional search providers (at least one recommended):
@@ -202,7 +206,9 @@ bash scripts/restart_prod.sh
 
 **Voice messages not working**
 - Install `ffmpeg`: `sudo apt install ffmpeg`
-- Check `WHISPER_MODEL` and `WHISPER_DEVICE` in `.env.prod`
+- Install local STT: `pip install openai-whisper` (in the same venv as the orchestrator)
+- In `.env.prod`: `OPENROUTER_API_KEY` (cloud STT + correction); for Yandex-only or fallback, `YANDEX_SEARCH_KEY` + `YANDEX_FOLDER_ID` (or `YANDEX_SPEECH_*`)
+- Tune routing: `WHISPER_LOCAL_MAX_DURATION_SECONDS`, `WHISPER_REMOTE_BACKEND`, `WHISPER_OPENROUTER_STT_MODEL`
 
 ---
 

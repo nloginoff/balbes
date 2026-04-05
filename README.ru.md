@@ -161,7 +161,7 @@
 | Быстрая память | Redis (история чатов, сессии, флаги) |
 | Долгосрочная память | Qdrant (семантический векторный поиск) |
 | База данных | PostgreSQL |
-| Транскрипция голоса | faster-whisper + ffmpeg |
+| Транскрипция голоса | openai-whisper (короткие) + OpenRouter / Yandex STT (длинные) + ffmpeg |
 | Поиск | Tavily · Yandex Search API v2 · Brave |
 | Инфраструктура | Docker Compose |
 | Качество кода | ruff · pre-commit |
