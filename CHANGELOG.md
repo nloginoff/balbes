@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Единая матрица slash-команд Telegram** — [`shared/telegram_app/telegram_command_matrix.py`](shared/telegram_app/telegram_command_matrix.py): порядок меню и регистрация обработчиков для оркестратора и бизнес-бота блогера по `TelegramFeatureFlags` и [`config/agents/*.yaml`](config/agents/balbes.yaml).
+- **Memory namespace для Telegram-агентов** — [`shared/telegram_app/memory_namespace.py`](shared/telegram_app/memory_namespace.py): канонический ключ `{agent_id}_{telegram_user_id}`; для блогера запись в `blogger_<id>`, чтение с fallback на legacy `bbot_<id>`. Класс `TelegramMemoryNamespace` для подключения новых сервисов без дублирования формулы `user_id`.
+- **Паритет команд блогера** с оркестратором (через те же флаги `telegram:`): status, tasks, agents, mode, remember, recall, heartbeat и др.; `/debug` для блогера с настройками чата в Memory.
 - **Telegram UI по манифесту** — `TelegramFeatureFlags` в [`shared/agent_manifest.py`](shared/agent_manifest.py), блок `telegram:` в [`config/agents/balbes.yaml`](config/agents/balbes.yaml) / [`config/agents/blogger.yaml`](config/agents/blogger.yaml). Оркестраторский бот и бизнес-бот блогера регистрируют команды и хендлеры по флагам; общие [`shared/telegram_app/text.py`](shared/telegram_app/text.py) и [`shared/telegram_app/voice.py`](shared/telegram_app/voice.py) для текста и STT.
 - **Единая архитектура делегирования** — `delegate_to_agent` вызывает только HTTP `POST /api/v1/agent/execute` (Coder и Blogger); общий контракт [`shared/agent_execute_contract.py`](shared/agent_execute_contract.py), опциональный заголовок `X-Balbes-Delegation-Key` при заданном `DELEGATION_SHARED_SECRET`. Манифест оркестратора [`config/agents/balbes.yaml`](config/agents/balbes.yaml): `delegate_targets` и пер-режимные allowlist инструментов через [`shared/agent_manifest.py`](shared/agent_manifest.py).
 - **Blogger execute API** — [`services/blogger/api/execute.py`](services/blogger/api/execute.py) и метод `BloggerAgent.execute_delegate_task()` для ответов по делегированию.
@@ -16,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
 
 ### Changed
+- Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) — секция Blogger (Memory `blogger_*`, матрица команд); [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) / [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md) — `memory_namespace`, `/debug` для блогера; [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — namespaces.
 - Документация (CONFIGURATION, GETTING_STARTED, README): описание голоса приведено к openai-whisper + облачный STT вместо устаревших упоминаний faster-whisper.
 
 ## [0.5.0] - 2026-04-04

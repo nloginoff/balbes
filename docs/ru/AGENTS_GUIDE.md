@@ -86,6 +86,12 @@ class OrchestratorAgent(BaseAgent):
 
 ---
 
+## Blogger (микросервис)
+
+Сервис [`services/blogger`](../../services/blogger): посты, бизнес-бот, очередь публикаций. История DM с владельцем в Memory Service хранится под **`user_id` = `blogger_<telegram_user_id>`** — см. [`shared/telegram_app/memory_namespace.py`](../../shared/telegram_app/memory_namespace.py). Старый префикс `bbot_<id>` при чтении ещё учитывается для миграции. Общий список slash-команд и порядок меню — [`shared/telegram_app/telegram_command_matrix.py`](../../shared/telegram_app/telegram_command_matrix.py); включение/выключение — блок `telegram:` в [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml) (в т.ч. `debug_command` для `/debug`). Подробнее по настройкам: [`docs/ru/CONFIGURATION.md`](CONFIGURATION.md).
+
+---
+
 ## Workspace агента
 
 Каждый агент хранит своё состояние в `data/agents/{agent_id}/`:
