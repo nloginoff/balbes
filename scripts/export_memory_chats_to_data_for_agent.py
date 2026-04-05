@@ -7,13 +7,13 @@
 
 Структура (каталог задаётся ``--output``, см. ниже)::
 
-    {agent_id}__{chat_id}/
+    {memory_user_id}__{agent_id}__{chat_id}/
         meta.json      — memory_user_id, chat_id, хеш meta из Redis, имя из chats
         history.json   — все сообщения по времени (ZRANGE 0 -1)
         active.flag    — есть только если этот чат был активным у пользователя
 
-При коллизии имён каталога (редко) используется
-``{memory_user_id}__{agent_id}__{chat_id}``.
+``memory_user_id`` — namespace Redis (например ``blogger_<telegram_id>`` у бизнес-бота,
+числовой id у оркестратора). При коллизии — суффикс ``__2``, ``__3``, ….
 
 Запуск::
 
@@ -145,17 +145,18 @@ def _resolve_output_dir(
     agent_id: str,
     chat_id: str,
 ) -> Path:
+    """
+    Имя каталога включает Memory user_id (blogger_<tg>, bbot_<tg>, число для оркестратора),
+    иначе чат блогера неотличим от основного бота (оба могут иметь agent_id=balbes в meta).
+    """
+    mu = _safe_segment(memory_user_id)
     a = _safe_segment(agent_id or "balbes")
-    primary = base / f"{a}__{chat_id}"
+    primary = base / f"{mu}__{a}__{chat_id}"
     if not primary.exists():
         return primary
-    # Уже есть каталог с тем же agent+chat — добавляем namespace
-    fallback = base / f"{_safe_segment(memory_user_id)}__{a}__{chat_id}"
-    if not fallback.exists():
-        return fallback
     n = 2
     while True:
-        cand = base / f"{_safe_segment(memory_user_id)}__{a}__{chat_id}__{n}"
+        cand = base / f"{mu}__{a}__{chat_id}__{n}"
         if not cand.exists():
             return cand
         n += 1
@@ -186,6 +187,9 @@ async def export_all(
         await client.ping()
         user_ids = await _scan_memory_user_ids(client)
         logger.info("Найдено namespace (memory user_id): %d", len(user_ids))
+        blog_ns = [u for u in user_ids if u.startswith("blogger_") or u.startswith("bbot_")]
+        if blog_ns:
+            logger.info("Среди них блогер (chats:blogger_* / bbot_*): %s", ", ".join(blog_ns))
 
         exported = 0
         skipped = 0

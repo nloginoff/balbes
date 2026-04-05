@@ -1142,7 +1142,7 @@ docker exec balbes-redis redis-cli --scan --pattern "context:*" | xargs docker e
 # Или настроить eviction policy (уже в docker-compose: allkeys-lru)
 ```
 
-**Экспорт всех чатов Memory (Redis) на диск** — каталоги `{agent_id}__{chat_id}/` (`meta.json`, `history.json`). По умолчанию пишет в **`data_for_agent/` в корне каталога проекта на проде** (корень клона репозитория, не корень файловой системы). Другой путь: `EXPORT_CHATS_OUTPUT` или `--output`. Из корня репозитория:
+**Экспорт всех чатов Memory (Redis) на диск** — каталоги `{memory_user_id}__{agent_id}__{chat_id}/` (`meta.json`, `history.json`), чтобы отличать блогера (`blogger_<tg_id>`) от оркестратора. По умолчанию пишет в **`data_for_agent/` в корне каталога проекта на проде** (корень клона репозитория, не корень файловой системы). Другой путь: `EXPORT_CHATS_OUTPUT` или `--output`. Из корня репозитория:
 
 ```bash
 python3 scripts/export_memory_chats_to_data_for_agent.py
