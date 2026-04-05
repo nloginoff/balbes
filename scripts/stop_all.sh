@@ -28,7 +28,7 @@ else
     echo "No PID file found, searching for processes..."
 
     # Kill by port
-    for port in 8100 8101 8102 8103 8200; do
+    for port in 8100 8101 8102 8103 8105 8200; do
         pid=$(lsof -ti:$port 2>/dev/null || true)
         if [ -n "$pid" ]; then
             echo "   Killing process on port $port (PID: $pid)"

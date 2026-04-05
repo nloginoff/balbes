@@ -75,6 +75,9 @@ cd "$PROJECT_ROOT"
 if systemctl list-unit-files | grep -q balbes-memory; then
     echo "Using systemd services..."
     sudo systemctl start balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
+    if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-blogger.service'; then
+        sudo systemctl start balbes-blogger
+    fi
 else
     echo "Starting services manually..."
 

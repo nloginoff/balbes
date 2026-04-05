@@ -74,12 +74,22 @@ BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 sleep 2
 
+# Start Blogger (posts API + business bot)
+echo ""
+echo "📝 Starting Blogger Service (port ${BLOGGER_SERVICE_PORT:-8105})..."
+cd "$PROJECT_ROOT"
+PYTHONPATH="$PROJECT_ROOT" uvicorn services.blogger.main:app --host 0.0.0.0 --port "${BLOGGER_SERVICE_PORT:-8105}" > /tmp/balbes-blogger.log 2>&1 &
+BLOGGER_PID=$!
+echo "   PID: $BLOGGER_PID"
+sleep 2
+
 # Save PIDs
 echo "$MEMORY_PID" > /tmp/balbes-pids.txt
 echo "$SKILLS_PID" >> /tmp/balbes-pids.txt
 echo "$ORCH_PID" >> /tmp/balbes-pids.txt
 echo "$CODER_PID" >> /tmp/balbes-pids.txt
 echo "$BACKEND_PID" >> /tmp/balbes-pids.txt
+echo "$BLOGGER_PID" >> /tmp/balbes-pids.txt
 
 # Verify services
 echo ""
@@ -115,6 +125,7 @@ echo "   Skills Registry:  http://localhost:8101"
 echo "   Orchestrator:     http://localhost:8102"
 echo "   Coder Agent:      http://localhost:8103"
 echo "   Web Backend:      http://localhost:8200"
+echo "   Blogger:          http://localhost:${BLOGGER_SERVICE_PORT:-8105}"
 echo ""
 echo "Logs:"
 echo "   Memory:       tail -f /tmp/balbes-memory.log"
@@ -122,6 +133,7 @@ echo "   Skills:       tail -f /tmp/balbes-skills.log"
 echo "   Orchestrator: tail -f /tmp/balbes-orchestrator.log"
 echo "   Coder:        tail -f /tmp/balbes-coder.log"
 echo "   Web Backend:  tail -f /tmp/balbes-web-backend.log"
+echo "   Blogger:      tail -f /tmp/balbes-blogger.log"
 echo ""
 echo "To start frontend:"
 echo "   cd $PROJECT_ROOT/web-frontend && npm run dev"

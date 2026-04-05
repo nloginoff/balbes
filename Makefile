@@ -15,6 +15,7 @@ help:
 	@echo "  make dev-skills      - Run Skills Registry"
 	@echo "  make dev-orch        - Run Orchestrator + Telegram bot"
 	@echo "  make dev-coder       - Run Coder Agent"
+	@echo "  make dev-blogger     - Run Blogger service (posts + business bot)"
 	@echo "  make dev-web         - Run Web Backend API"
 	@echo "  make dev-frontend    - Run Web Frontend (React)"
 	@echo ""
@@ -95,6 +96,10 @@ dev-orch:
 dev-coder:
 	@echo "💻 Starting Coder Agent..."
 	cd services/coder && python main.py
+
+dev-blogger:
+	@echo "📝 Starting Blogger service..."
+	cd "$(CURDIR)" && PYTHONPATH=. uvicorn services.blogger.main:app --reload --host 0.0.0.0 --port $${BLOGGER_SERVICE_PORT:-8105}
 
 dev-web:
 	@echo "🌐 Starting Web Backend..."

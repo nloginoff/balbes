@@ -18,6 +18,9 @@ echo "Proceeding without interactive confirmation (script mode)."
 if systemctl list-unit-files | grep -q balbes-memory; then
     echo "Stopping systemd services..."
     sudo systemctl stop balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
+    if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-blogger.service'; then
+        sudo systemctl stop balbes-blogger
+    fi
 else
     # Kill manual processes
     if [ -f "$PID_FILE" ]; then

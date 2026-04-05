@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 echo "🚀 Starting Balbes - DEVELOPMENT MODE"
 echo "========================================"
 echo "Environment: DEV"
-echo "Ports: 8100-8200, Frontend: 5173"
+echo "Ports: 8100-8200, 8105 blogger, Frontend: 5173"
 echo "Database: balbes_dev"
 echo ""
 
@@ -89,12 +89,22 @@ BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 sleep 2
 
+# Start Blogger (FastAPI: posts API + scheduled jobs; business bot if token set)
+echo ""
+echo "📝 Starting Blogger Service (port ${BLOGGER_SERVICE_PORT:-8105})..."
+cd "$PROJECT_ROOT"
+PYTHONPATH="$PROJECT_ROOT" uvicorn services.blogger.main:app --host 0.0.0.0 --port "${BLOGGER_SERVICE_PORT:-8105}" --reload > /tmp/balbes-dev-blogger.log 2>&1 &
+BLOGGER_PID=$!
+echo "   PID: $BLOGGER_PID"
+sleep 2
+
 # Save PIDs
 echo "$MEMORY_PID" > /tmp/balbes-dev-pids.txt
 echo "$SKILLS_PID" >> /tmp/balbes-dev-pids.txt
 echo "$ORCH_PID" >> /tmp/balbes-dev-pids.txt
 echo "$CODER_PID" >> /tmp/balbes-dev-pids.txt
 echo "$BACKEND_PID" >> /tmp/balbes-dev-pids.txt
+echo "$BLOGGER_PID" >> /tmp/balbes-dev-pids.txt
 
 # Verify services
 echo ""
@@ -119,6 +129,7 @@ check_service "http://localhost:8101/health" "Skills Registry"
 check_service "http://localhost:8102/health" "Orchestrator"
 check_service "http://localhost:8103/health" "Coder Agent"
 check_service "http://localhost:8200/health" "Web Backend"
+check_service "http://localhost:${BLOGGER_SERVICE_PORT:-8105}/health" "Blogger Service"
 
 echo ""
 echo "========================================"
@@ -130,6 +141,7 @@ echo "   Skills:       http://localhost:8101/docs"
 echo "   Orchestrator: http://localhost:8102/docs"
 echo "   Coder:        http://localhost:8103/docs"
 echo "   Web Backend:  http://localhost:8200/docs"
+echo "   Blogger:      http://localhost:${BLOGGER_SERVICE_PORT:-8105}/docs"
 echo ""
 echo "🔧 Frontend (run in separate terminal):"
 echo "   cd web-frontend && npm run dev"

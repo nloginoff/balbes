@@ -37,6 +37,7 @@ check_service "http://localhost:8101/health" "Skills Registry" 8101
 check_service "http://localhost:8102/health" "Orchestrator" 8102
 check_service "http://localhost:8103/health" "Coder Agent" 8103
 check_service "http://localhost:8200/health" "Web Backend" 8200
+check_service "http://localhost:8105/health" "Blogger Service" 8105
 check_service "http://localhost:5173" "Frontend" 5173
 
 # Database connections
@@ -63,13 +64,14 @@ fi
 echo ""
 echo "========================================"
 
-# Count running services
-total=8
+# Count running services (HTTP apps + frontend + db + redis)
+total=9
 running=$(curl -sf http://localhost:8100/health > /dev/null 2>&1 && echo 1 || echo 0)
 running=$((running + $(curl -sf http://localhost:8101/health > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(curl -sf http://localhost:8102/health > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(curl -sf http://localhost:8103/health > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(curl -sf http://localhost:8200/health > /dev/null 2>&1 && echo 1 || echo 0)))
+running=$((running + $(curl -sf http://localhost:8105/health > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(curl -sf http://localhost:5173 > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(psql -h localhost -U balbes -d balbes -c "SELECT 1;" > /dev/null 2>&1 && echo 1 || echo 0)))
 running=$((running + $(redis-cli -h localhost ping > /dev/null 2>&1 && echo 1 || echo 0)))
