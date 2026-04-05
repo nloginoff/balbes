@@ -47,7 +47,8 @@ where = ["."]
 include = ["shared*"]
 
 [tool.pytest.ini_options]
-pythonpath = [".", "shared"]
+# Orchestrator must precede shared/skills so `import skills.*` resolves to services/orchestrator/skills.
+pythonpath = [".", "services/orchestrator", "shared"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 

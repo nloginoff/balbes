@@ -15,7 +15,8 @@ Commands:
   /remember <txt> — save text to long-term memory (Qdrant)
   /recall <query> — search long-term memory
 
-Voice messages are transcribed locally via openai-whisper and optionally corrected via LLM.
+Voice messages: short audio is transcribed locally (openai-whisper, configurable model); longer or
+unknown duration uses cloud STT (OpenRouter / Yandex SpeechKit), then optional LLM correction.
 """
 
 import asyncio
@@ -2176,21 +2177,27 @@ class BalbesTelegramBot:
             await self._voice_debug_reply(
                 message,
                 voice_debug,
-                "Whisper: распознавание (на CPU может занять много времени)…",
+                "STT: распознавание (короткие — локальный Whisper; длинные — API)…",
             )
 
             t_tr = time.monotonic()
-            raw_text = await transcribe_voice(ogg_bytes, duration_hint_sec=duration_sec)
+            tr_result = await transcribe_voice(
+                ogg_bytes,
+                duration_hint_sec=duration_sec,
+                http_client=self._get_http(),
+            )
+            raw_text = tr_result.text
             tr_s = time.monotonic() - t_tr
             logger.info(
-                "Voice: transcribe done %s chars in %.1fs",
+                "Voice: transcribe done %s chars in %.1fs (%s)",
                 len(raw_text),
                 tr_s,
+                tr_result.stt_label_ru,
             )
             await self._voice_debug_reply(
                 message,
                 voice_debug,
-                f"Whisper: готово, {len(raw_text)} символов за {tr_s:.1f} с",
+                f"voice: {tr_result.stt_label_ru} — готово, {len(raw_text)} символов за {tr_s:.1f} с",
             )
 
             if not raw_text.strip():

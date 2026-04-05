@@ -5,7 +5,7 @@ Loads configuration from environment variables (from .env file).
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -219,7 +219,45 @@ class Settings(BaseSettings):
     # =============================================================================
     whisper_model: str = Field(
         default="large-v3",
-        description="openai-whisper model id: tiny, base, small, medium, large, large-v2, large-v3",
+        description=(
+            "Legacy: kept for YAML/docs compatibility. Local short voice uses whisper_local_model."
+        ),
+    )
+    whisper_local_model: str = Field(
+        default="medium",
+        description="openai-whisper model for short voice (duration ≤ whisper_local_max_duration_seconds)",
+    )
+    whisper_local_max_duration_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=3600,
+        description="Telegram voice duration (seconds) at or below this uses local Whisper; above uses cloud STT",
+    )
+    whisper_remote_backend: Literal["openrouter", "yandex", "openrouter_then_yandex"] = Field(
+        default="openrouter_then_yandex",
+        description="Cloud STT: OpenRouter multimodal audio, Yandex SpeechKit, or try OpenRouter then Yandex",
+    )
+    whisper_openrouter_stt_model: str = Field(
+        default="google/gemini-2.0-flash-001",
+        description="OpenRouter model id with audio input (see OpenRouter Models → input_modalities=audio)",
+    )
+    whisper_openrouter_stt_timeout_seconds: float = Field(
+        default=300.0,
+        ge=30.0,
+        description="HTTP timeout for OpenRouter STT (long voice messages)",
+    )
+    whisper_yandex_stt_timeout_seconds: float = Field(
+        default=300.0,
+        ge=30.0,
+        description="HTTP timeout for Yandex SpeechKit STT",
+    )
+    yandex_speech_api_key: str | None = Field(
+        default=None,
+        description="Yandex Cloud API key for SpeechKit STT (if unset, yandex_search_key may be used)",
+    )
+    yandex_speech_folder_id: str | None = Field(
+        default=None,
+        description="Yandex folder for SpeechKit (defaults to yandex_folder_id)",
     )
     whisper_device: str = Field(default="cpu", description="cpu or cuda")
     whisper_fp16: bool | None = Field(
@@ -316,6 +354,8 @@ class Settings(BaseSettings):
         "yandex_search_key",
         "yandex_folder_id",
         "yandex_search_user",
+        "yandex_speech_api_key",
+        "yandex_speech_folder_id",
         "whisper_language",
         mode="before",
     )

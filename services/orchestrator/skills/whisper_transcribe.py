@@ -1,22 +1,24 @@
 """
 Voice transcription using the official OpenAI Whisper implementation (openai-whisper / PyTorch).
 
-Pipeline:
+Short voice (Telegram duration ≤ ``whisper_local_max_duration_seconds``): local ``whisper_local_model``
+(default medium). Longer or unknown duration: cloud STT via OpenRouter multimodal audio and/or
+Yandex SpeechKit (``whisper_remote_backend``).
+
+Pipeline (local):
   1. Receive OGG/OPUS bytes from Telegram
   2. Convert to WAV via ffmpeg
   3. Transcribe with whisper.load_model + model.transcribe (beam search, quality-oriented defaults)
   4. Optional LLM correction via OpenRouter: chat's active model first, then fallback (cheap paid)
 
-Slower than faster-whisper; better reference decoding. For cloud STT (OpenRouter/Yandex Speech),
-see future backend switch in orchestrator config.
-
-The model is loaded once and reused (singleton).
+The local model is loaded once and reused (singleton).
 """
 
 import asyncio
 import contextlib
 import logging
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from shared.config import get_settings
@@ -28,14 +30,33 @@ _whisper_model = None
 _model_lock = asyncio.Lock()
 
 
+@dataclass(frozen=True)
+class VoiceTranscribeResult:
+    """Raw STT output and a Russian label for Telegram debug lines."""
+
+    text: str
+    stt_label_ru: str
+
+
 def _fp16_for_decode() -> bool:
     if settings.whisper_fp16 is not None:
         return settings.whisper_fp16
     return settings.whisper_device.lower() == "cuda"
 
 
+def use_local_whisper_for_duration(duration_hint_sec: int | None) -> bool:
+    """
+    Use local Whisper only when Telegram reported duration is known and within the threshold.
+    Unknown duration is treated as long → cloud STT.
+    """
+    s = get_settings()
+    if duration_hint_sec is None:
+        return False
+    return duration_hint_sec <= s.whisper_local_max_duration_seconds
+
+
 async def get_whisper_model():
-    """Lazy-load and return the singleton Whisper model (openai-whisper)."""
+    """Lazy-load and return the singleton Whisper model (openai-whisper) for the local path."""
     global _whisper_model
     if _whisper_model is not None:
         return _whisper_model
@@ -50,19 +71,49 @@ async def get_whisper_model():
             logger.error("openai-whisper not installed. Run: pip install openai-whisper")
             raise
 
+        s = get_settings()
+        model_id = s.whisper_local_model
+
         def _load():
             logger.info(
                 "Loading OpenAI Whisper model %r on %s (fp16 decode: %s)...",
-                settings.whisper_model,
-                settings.whisper_device,
+                model_id,
+                s.whisper_device,
                 _fp16_for_decode(),
             )
-            return whisper.load_model(settings.whisper_model, device=settings.whisper_device)
+            return whisper.load_model(model_id, device=s.whisper_device)
 
         loop = asyncio.get_event_loop()
         _whisper_model = await loop.run_in_executor(None, _load)
         logger.info("Whisper model loaded successfully")
     return _whisper_model
+
+
+async def _transcribe_remote_stt(
+    ogg_bytes: bytes,
+    language: str | None,
+    http_client,
+) -> tuple[str, str]:
+    """Cloud STT; returns (text, Russian debug label)."""
+    from skills.whisper_remote_stt import transcribe_openrouter, transcribe_yandex
+
+    s = get_settings()
+    mode = s.whisper_remote_backend
+
+    if mode == "openrouter":
+        text = await transcribe_openrouter(ogg_bytes, language=language, http_client=http_client)
+        return text, "OpenRouter STT"
+    if mode == "yandex":
+        text = await transcribe_yandex(ogg_bytes, language=language, http_client=http_client)
+        return text, "Yandex STT"
+
+    try:
+        text = await transcribe_openrouter(ogg_bytes, language=language, http_client=http_client)
+        return text, "OpenRouter STT"
+    except Exception as e:
+        logger.warning("OpenRouter STT failed, falling back to Yandex: %s", e)
+        text = await transcribe_yandex(ogg_bytes, language=language, http_client=http_client)
+        return text, "Yandex STT (fallback после OpenRouter)"
 
 
 def _ffmpeg_timeout_seconds(ogg_bytes: bytes, duration_hint_sec: int | None) -> float:
@@ -149,20 +200,48 @@ async def transcribe_voice(
     ogg_bytes: bytes,
     language: str | None = None,
     duration_hint_sec: int | None = None,
-) -> str:
+    *,
+    http_client=None,
+) -> VoiceTranscribeResult:
     """
-    Transcribe a voice message.
+    Transcribe a voice message (local Whisper for short audio, cloud STT otherwise).
 
     Args:
         ogg_bytes: Raw OGG/OPUS audio bytes from Telegram
         language: Language code (default from settings.whisper_language); None = auto-detect
-        duration_hint_sec: Telegram-reported duration (seconds), used to scale ffmpeg timeout
+        duration_hint_sec: Telegram-reported duration (seconds); routing + ffmpeg timeout
+        http_client: ``httpx.AsyncClient`` for cloud STT (required when not using local path)
 
     Returns:
-        Transcribed text string
+        VoiceTranscribeResult with text and a Russian label for debug UI
     """
-    lang = language if language is not None else settings.whisper_language
+    import httpx as _httpx
+
+    s = get_settings()
+    lang = language if language is not None else s.whisper_language
     wav_path: Path | None = None
+
+    if not use_local_whisper_for_duration(duration_hint_sec):
+        logger.info(
+            "Voice routing: cloud STT (duration_hint=%s, local_max=%ss, mode=%s)",
+            duration_hint_sec,
+            s.whisper_local_max_duration_seconds,
+            s.whisper_remote_backend,
+        )
+        own_client = http_client is None
+        client = http_client or _httpx.AsyncClient(
+            timeout=max(
+                s.whisper_openrouter_stt_timeout_seconds,
+                s.whisper_yandex_stt_timeout_seconds,
+            )
+        )
+        try:
+            text, label = await _transcribe_remote_stt(ogg_bytes, lang, client)
+            logger.info("Cloud transcription done: %s chars, label=%s", len(text), label)
+            return VoiceTranscribeResult(text=text, stt_label_ru=label)
+        finally:
+            if own_client:
+                await client.aclose()
 
     try:
         model = await get_whisper_model()
@@ -182,7 +261,8 @@ async def transcribe_voice(
             len(text),
             info_lang or lang or "auto",
         )
-        return text
+        local_label = f"локально ({s.whisper_local_model})"
+        return VoiceTranscribeResult(text=text, stt_label_ru=local_label)
 
     except FileNotFoundError:
         raise RuntimeError("ffmpeg not found. Install it: sudo apt install ffmpeg")

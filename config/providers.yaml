@@ -587,8 +587,10 @@ memory:
 
 
 # Whisper voice transcription (env WHISPER_* — see .env.example; openai-whisper package)
+# Hybrid routing: short voice → WHISPER_LOCAL_MODEL (default medium); long/unknown → cloud
+# (WHISPER_REMOTE_BACKEND, OpenRouter / Yandex SpeechKit — see whisper_remote_stt)
 whisper:
-  model: "large-v3"     # tiny … large-v3; large-v3 best quality, slow on CPU
+  model: "large-v3"     # legacy; local path uses WHISPER_LOCAL_MODEL in Settings
   device: "cpu"
   beam_size: 10
   best_of: 5
