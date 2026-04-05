@@ -739,6 +739,28 @@ class BloggerAgent:
             logger.debug("bbot_set_chat_settings: %s", exc)
         return False
 
+    async def bbot_get_chat_agent(self, owner_id: int, chat_id: str) -> str:
+        try:
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/agent"
+            )
+            if r.status_code == 200:
+                return r.json().get("agent_id", "balbes")
+        except Exception as exc:
+            logger.warning("bbot_get_chat_agent: %s", exc)
+        return "balbes"
+
+    async def bbot_set_chat_agent(self, owner_id: int, chat_id: str, agent_id: str) -> bool:
+        try:
+            r = await self._get_http().put(
+                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/agent",
+                json={"agent_id": agent_id},
+            )
+            return r.status_code == 200
+        except Exception as exc:
+            logger.warning("bbot_set_chat_agent: %s", exc)
+        return False
+
     def set_conversation_model(self, model: str) -> None:
         """Set the default LLM model for new bbot conversations."""
         self._conversation_model = model

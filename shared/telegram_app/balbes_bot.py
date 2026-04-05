@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 import httpx
 from telegram import (
-    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Update,
@@ -43,7 +42,6 @@ from telegram.ext import (
     ApplicationHandlerStop,
     CallbackQueryHandler,
     ChatJoinRequestHandler,
-    CommandHandler,
     ContextTypes,
     MessageHandler,
     TypeHandler,
@@ -52,6 +50,10 @@ from telegram.ext import (
 
 from shared.agent_manifest import get_agent_manifest
 from shared.config import get_settings
+from shared.telegram_app.telegram_command_matrix import (
+    build_slash_bot_commands,
+    register_slash_command_handlers,
+)
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
@@ -499,9 +501,8 @@ class BalbesTelegramBot:
         # Add / replace enabled jobs
         added = 0
         for job in jobs:
-            if job.get("enabled", False) and job.get("id"):
-                if self._register_job(job):
-                    added += 1
+            if job.get("enabled", False) and job.get("id") and self._register_job(job):
+                added += 1
 
         logger.info(f"Scheduler reloaded: +{added} registered, -{removed} removed")
         return f"Планировщик обновлён: добавлено {added}, удалено {removed} задач."
@@ -771,35 +772,7 @@ class BalbesTelegramBot:
         # Security gate: runs before every other handler (group=-1)
         self.app.add_handler(TypeHandler(Update, self._security_check), group=-1)
 
-        if tg.start_command:
-            self.app.add_handler(CommandHandler("start", self.cmd_start))
-        if tg.help_command:
-            self.app.add_handler(CommandHandler("help", self.cmd_help))
-        if tg.stop_command:
-            self.app.add_handler(CommandHandler("stop", self.cmd_stop))
-        if tg.status_command:
-            self.app.add_handler(CommandHandler("status", self.cmd_status))
-        if tg.clear_command:
-            self.app.add_handler(CommandHandler("clear", self.cmd_clear))
-        if tg.agents_switch:
-            self.app.add_handler(CommandHandler("agents", self.cmd_agents))
-        if tg.multi_chat:
-            self.app.add_handler(CommandHandler("chats", self.cmd_chats))
-            self.app.add_handler(CommandHandler("newchat", self.cmd_newchat))
-            self.app.add_handler(CommandHandler("rename", self.cmd_rename))
-        if tg.model_switch:
-            self.app.add_handler(CommandHandler("model", self.cmd_model))
-        if tg.memory_commands:
-            self.app.add_handler(CommandHandler("remember", self.cmd_remember))
-            self.app.add_handler(CommandHandler("recall", self.cmd_recall))
-        if tg.heartbeat_cmd:
-            self.app.add_handler(CommandHandler("heartbeat", self.cmd_heartbeat))
-        if tg.debug_command:
-            self.app.add_handler(CommandHandler("debug", self.cmd_debug))
-        if tg.mode_command:
-            self.app.add_handler(CommandHandler("mode", self.cmd_mode))
-        if tg.tasks_command:
-            self.app.add_handler(CommandHandler("tasks", self.cmd_tasks))
+        register_slash_command_handlers(self.app, tg, self, role="orchestrator", owner_filter=None)
 
         # Inline keyboard callbacks
         if tg.multi_chat:
@@ -844,45 +817,7 @@ class BalbesTelegramBot:
             await app.bot.set_my_commands([])
             return
 
-        commands: list[BotCommand] = []
-        if tg.start_command:
-            commands.append(BotCommand("start", "Начать работу"))
-        if tg.help_command:
-            commands.append(BotCommand("help", "Справка по командам"))
-        if tg.stop_command:
-            commands.append(BotCommand("stop", "⛔ Остановить текущее действие агента"))
-        if tg.agents_switch:
-            commands.append(BotCommand("agents", "Список агентов / переключить агента"))
-        if tg.multi_chat:
-            commands.extend(
-                [
-                    BotCommand("chats", "Список чатов / переключить чат"),
-                    BotCommand("newchat", "Создать новый чат"),
-                    BotCommand("rename", "Переименовать текущий чат"),
-                ]
-            )
-        if tg.model_switch:
-            commands.append(BotCommand("model", "Выбрать модель для чата"))
-        if tg.clear_command:
-            commands.append(BotCommand("clear", "Очистить историю чата"))
-        if tg.memory_commands:
-            commands.extend(
-                [
-                    BotCommand("remember", "Сохранить в долгосрочную память"),
-                    BotCommand("recall", "Найти в долгосрочной памяти"),
-                ]
-            )
-        if tg.heartbeat_cmd:
-            commands.append(BotCommand("heartbeat", "Запустить проверку прямо сейчас"))
-        if tg.debug_command:
-            commands.append(BotCommand("debug", "🔍 Включить/выключить трейс действий"))
-        if tg.mode_command:
-            commands.append(BotCommand("mode", "🤖 Режим: agent (exec) / 📝 ask (только чтение)"))
-        if tg.tasks_command:
-            commands.append(BotCommand("tasks", "📋 Список задач агентов (реестр)"))
-        if tg.status_command:
-            commands.append(BotCommand("status", "Статус системы"))
-
+        commands = build_slash_bot_commands(tg, "orchestrator")
         await app.bot.set_my_commands(commands)
 
     def _get_http(self) -> httpx.AsyncClient:

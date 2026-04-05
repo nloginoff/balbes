@@ -21,18 +21,29 @@ from typing import TYPE_CHECKING
 import asyncpg
 import httpx
 import yaml
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update, User
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, User
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
-    CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
 from shared.agent_manifest import get_agent_manifest
+from shared.config import get_settings
+from shared.telegram_app.balbes_bot import (
+    CALLBACK_AGENT_PREFIX,
+    HEARTBEAT_PROMPT,
+    _load_agents,
+    _load_heartbeat_config,
+    _make_agent_keyboard,
+)
+from shared.telegram_app.telegram_command_matrix import (
+    build_slash_bot_commands,
+    register_slash_command_handlers,
+)
 from shared.telegram_app.text import split_long_text
 from shared.telegram_app.voice import business_bot_handle_voice
 
@@ -89,6 +100,10 @@ class BusinessBot:
         self._app: Application | None = None
         self._tg = get_agent_manifest("blogger").telegram
 
+    @property
+    def _orchestrator_url(self) -> str:
+        return f"http://localhost:{get_settings().orchestrator_port}"
+
     def _owner_filter(self) -> filters.BaseFilter:
         """Return a filter that passes only messages from the owner."""
         return filters.User(user_id=self.owner_tg_id)
@@ -103,41 +118,7 @@ class BusinessBot:
                 logger.warning("Could not clear bot commands: %s", exc)
             return
 
-        commands: list[BotCommand] = []
-        if tg.posts_commands:
-            commands.extend(
-                [
-                    BotCommand("generate", "Сгенерировать пост по чатам"),
-                    BotCommand("drafts", "Черновики постов (полный текст)"),
-                    BotCommand("draft", "Один черновик по ID (8 символов)"),
-                    BotCommand("published", "Опубликованные посты"),
-                    BotCommand("queue", "Очередь на публикацию"),
-                    BotCommand("summary", "Бизнес-саммари за день"),
-                ]
-            )
-        if tg.model_switch:
-            commands.append(BotCommand("model", "Выбрать LLM модель"))
-        if tg.multi_chat:
-            commands.extend(
-                [
-                    BotCommand("chats", "Список чатов / переключить"),
-                    BotCommand("newchat", "Создать новый чат"),
-                    BotCommand("rename", "Переименовать чат"),
-                    BotCommand("clear", "Очистить историю чата"),
-                ]
-            )
-        if tg.business_groups:
-            commands.append(BotCommand("list_chats", "Зарегистрированные бизнес-группы"))
-        if tg.register_business_chat:
-            commands.append(
-                BotCommand("register_business_chat", "Добавить бизнес-группу"),
-            )
-        if tg.help_command:
-            commands.append(BotCommand("help", "Справка"))
-        if tg.debug_command:
-            commands.append(BotCommand("debug", "🔍 Включить/выключить трейс действий"))
-        if tg.start_command:
-            commands.insert(0, BotCommand("start", "Начать"))
+        commands = build_slash_bot_commands(tg, "blogger")
 
         try:
             await app.bot.set_my_commands(commands)
@@ -152,35 +133,18 @@ class BusinessBot:
         owner = self._owner_filter()
         tg = self._tg
 
-        if tg.start_command:
-            app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
-        if tg.help_command:
-            app.add_handler(CommandHandler("help", self._cmd_help, filters=owner))
-        if tg.model_switch:
-            app.add_handler(CommandHandler("model", self._cmd_model, filters=owner))
-        if tg.multi_chat:
-            app.add_handler(CommandHandler("chats", self._cmd_chats, filters=owner))
-            app.add_handler(CommandHandler("newchat", self._cmd_newchat, filters=owner))
-            app.add_handler(CommandHandler("rename", self._cmd_rename, filters=owner))
-            app.add_handler(CommandHandler("clear", self._cmd_clear, filters=owner))
-        if tg.register_business_chat:
-            app.add_handler(
-                CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
-            )
-        if tg.business_groups:
-            app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
-        if tg.posts_commands:
-            app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
-            app.add_handler(CommandHandler("draft", self._cmd_draft_one, filters=owner))
-            app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
-            app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
-            app.add_handler(CommandHandler("generate", self._cmd_generate, filters=owner))
-            app.add_handler(CommandHandler("summary", self._cmd_summary, filters=owner))
+        register_slash_command_handlers(app, tg, self, role="blogger", owner_filter=owner)
 
         if tg.model_switch:
             app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
         if tg.multi_chat:
             app.add_handler(CallbackQueryHandler(self._cb_chat_selected, pattern="^bbot_chat:"))
+        if tg.agents_switch:
+            app.add_handler(
+                CallbackQueryHandler(self.cb_agent_selected, pattern=f"^{CALLBACK_AGENT_PREFIX}")
+            )
+        if tg.mode_command:
+            app.add_handler(CallbackQueryHandler(self.cb_mode_set, pattern="^mode_set:"))
 
         if tg.business_group_capture:
             app.add_handler(
@@ -204,8 +168,6 @@ class BusinessBot:
                     self._handle_private_message,
                 )
             )
-        if tg.debug_command:
-            app.add_handler(CommandHandler("debug", self.cmd_debug, filters=owner))
 
         app.add_handler(
             MessageHandler(
@@ -294,6 +256,324 @@ class BusinessBot:
             )
         else:
             await update.message.reply_text("🔕 Debug выключен")
+
+    @staticmethod
+    def _agent_display_info(agent_id: str | None) -> tuple[str, str]:
+        aid = agent_id or "balbes"
+        for a in _load_agents():
+            if a.get("id") == aid:
+                return a.get("emoji", "🤖"), a.get("display_name", aid)
+        return "🤖", aid
+
+    async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        try:
+            http = self._http or httpx.AsyncClient(timeout=10.0)
+            own = self._http is None
+            try:
+                response = await http.get(f"{self._orchestrator_url}/api/v1/status")
+                if response.status_code == 200:
+                    data = response.json()
+                    workspace_files = ", ".join(data.get("workspace_files", [])) or "—"
+                    text = (
+                        f"✅ *Статус:* {data.get('status', 'unknown').upper()}\n\n"
+                        f"🔗 *Сервисы:*\n"
+                        f"— Memory: `{data.get('services', {}).get('memory_service', '?')}`\n"
+                        f"— Skills: `{data.get('services', {}).get('skills_registry', '?')}`\n\n"
+                        f"📁 *Workspace:* {workspace_files}\n"
+                        f"⏰ {data.get('timestamp', '')}"
+                    )
+                    await update.message.reply_text(text, parse_mode="Markdown")
+                else:
+                    await update.message.reply_text(f"⚠️ Status: {response.status_code}")
+            finally:
+                if own:
+                    await http.aclose()
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
+
+    async def cmd_tasks(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        try:
+            http = self._http or httpx.AsyncClient(timeout=10.0)
+            own = self._http is None
+            try:
+                resp = await http.get(
+                    f"{self._orchestrator_url}/api/v1/tasks",
+                    params={"user_id": user_id, "limit": 20},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            finally:
+                if own:
+                    await http.aclose()
+        except Exception as e:
+            await update.message.reply_text(f"❌ Не удалось получить список задач: {e}")
+            return
+
+        tasks = data.get("tasks", [])
+        if not tasks:
+            await update.message.reply_text("📋 Нет задач в реестре.")
+            return
+
+        STATUS_ICON = {
+            "running": "⏳",
+            "completed": "✅",
+            "cancelled": "🚫",
+            "error": "❌",
+        }
+        lines = [f"<b>📋 Задачи проекта</b> ({len(tasks)}):\n"]
+        for t in tasks:
+            icon = STATUS_ICON.get(t.get("status", ""), "❓")
+            agent = t.get("agent_id", "?")
+            status_label = t.get("status", "?")
+            bg_label = " <i>[bg]</i>" if t.get("background") else ""
+            dur = t.get("duration_ms")
+            dur_str = f" <code>{dur}ms</code>" if dur else ""
+            started = (t.get("started_at") or "")[:16].replace("T", " ")
+            desc = (t.get("description") or "")[:90]
+            desc_safe = desc.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(
+                f"{icon} <b>[{agent}]</b>{bg_label} — {status_label}{dur_str}\n"
+                f"   🕐 {started}\n"
+                f"   📝 {desc_safe}\n"
+            )
+        await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+    async def cmd_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        user_id = str(user.id)
+        try:
+            http = self._http or httpx.AsyncClient(timeout=5.0)
+            own = self._http is None
+            try:
+                await http.post(
+                    f"{self._orchestrator_url}/api/v1/tasks/cancel",
+                    params={"user_id": user_id},
+                )
+            finally:
+                if own:
+                    await http.aclose()
+        except Exception as e:
+            logger.debug("cmd_stop cancel: %s", e)
+        await update.message.reply_text("✋ Сигнал остановки отправлен оркестратору")
+
+    async def cmd_remember(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        args = context.args
+        if not args:
+            await update.message.reply_text(
+                "Использование: /remember текст который нужно запомнить"
+            )
+            return
+        text = " ".join(args)
+        aid = self.agent._bbot_uid(user.id)
+        try:
+            http = self._http or httpx.AsyncClient(timeout=30.0)
+            own = self._http is None
+            try:
+                r = await http.post(
+                    f"{self.agent.memory_url}/api/v1/memory",
+                    json={
+                        "agent_id": aid,
+                        "content": text,
+                        "memory_type": "user_memory",
+                        "importance": 0.9,
+                        "metadata": {"source": "telegram_command", "bot": "blogger"},
+                    },
+                )
+            finally:
+                if own:
+                    await http.aclose()
+            if r.status_code == 200:
+                await update.message.reply_text(
+                    f"💾 Сохранено в долгосрочную память:\n_{text[:200]}_",
+                    parse_mode="Markdown",
+                )
+            else:
+                await update.message.reply_text(f"⚠️ Не удалось сохранить: {r.status_code}")
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
+
+    async def cmd_recall(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        args = context.args
+        if not args:
+            await update.message.reply_text("Использование: /recall запрос")
+            return
+        query = " ".join(args)
+        aid = self.agent._bbot_uid(user.id)
+        try:
+            http = self._http or httpx.AsyncClient(timeout=30.0)
+            own = self._http is None
+            try:
+                r = await http.post(
+                    f"{self.agent.memory_url}/api/v1/memory/search",
+                    json={"agent_id": aid, "query": query, "limit": 3},
+                )
+            finally:
+                if own:
+                    await http.aclose()
+            if r.status_code == 200:
+                results = r.json().get("results", [])
+                if not results:
+                    await update.message.reply_text("🔍 Ничего не найдено в памяти")
+                    return
+                lines = [f"🔍 *Результаты поиска:* _{query}_\n"]
+                for i, res in enumerate(results, 1):
+                    score = res.get("score", 0)
+                    content = res.get("content", "")[:200]
+                    lines.append(f"{i}. [{score:.2f}] {content}")
+                await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            else:
+                await update.message.reply_text(f"⚠️ Ошибка поиска: {r.status_code}")
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ Ошибка: `{type(e).__name__}: {e or '(нет описания)'}`", parse_mode="Markdown"
+            )
+
+    async def cmd_heartbeat(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        cfg = _load_heartbeat_config()
+        if not cfg["enabled"]:
+            await update.message.reply_text(
+                "⏸ Heartbeat отключён.\n"
+                "Включи в `config/providers.yaml` → `heartbeat.enabled: true`",
+                parse_mode="Markdown",
+            )
+            return
+        await update.message.reply_text("🔄 Запускаю heartbeat проверку...")
+        try:
+            http = self._http or httpx.AsyncClient(timeout=90.0)
+            own = self._http is None
+            try:
+                params: dict = {
+                    "user_id": str(cfg["target_user_id"]),
+                    "description": HEARTBEAT_PROMPT,
+                    "agent_id": "balbes",
+                    "source": "heartbeat",
+                }
+                if cfg.get("model"):
+                    params["model_id"] = cfg["model"]
+                response = await http.post(
+                    f"{self._orchestrator_url}/api/v1/tasks",
+                    params=params,
+                )
+                if response.status_code == 200:
+                    await update.message.reply_text("✅ Heartbeat выполнен")
+                else:
+                    await update.message.reply_text(f"⚠️ Heartbeat: HTTP {response.status_code}")
+            finally:
+                if own:
+                    await http.aclose()
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка heartbeat: {e}")
+
+    async def cmd_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        owner_id = user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        if not chat_id:
+            await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
+            return
+        current = await self.agent.bbot_get_chat_settings(owner_id, chat_id)
+        mode = current.get("mode", "ask")
+        mode_text = {
+            "agent": "🤖 *Agent* — агент может выполнять команды на сервере",
+            "ask": "📝 *Ask* — агент только пишет и советует, без выполнения команд",
+        }.get(mode, mode)
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("🤖 Agent", callback_data="mode_set:agent"),
+                    InlineKeyboardButton("📝 Ask", callback_data="mode_set:ask"),
+                ]
+            ]
+        )
+        await update.message.reply_text(
+            f"Текущий режим: {mode_text}\n\nВыбери режим:",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+    async def cb_mode_set(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user:
+            return
+        new_mode = query.data.split(":", 1)[1]
+        owner_id = user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        if not chat_id:
+            return
+        await self.agent.bbot_set_chat_settings(owner_id, chat_id, mode=new_mode)
+        labels = {"agent": "🤖 Agent — команды разрешены", "ask": "📝 Ask — только чтение"}
+        label = labels.get(new_mode, new_mode)
+        await query.edit_message_text(f"✅ Режим переключён: {label}")
+
+    async def cmd_agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        user: User | None = update.effective_user
+        if not user:
+            return
+        owner_id = user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        current_agent_id = "balbes"
+        if chat_id:
+            current_agent_id = await self.agent.bbot_get_chat_agent(owner_id, chat_id)
+        agent_emoji, agent_name = self._agent_display_info(current_agent_id)
+        keyboard = _make_agent_keyboard(current_id=current_agent_id)
+        agent_lines = []
+        for a in _load_agents():
+            mark = "✅ " if a.get("id") == current_agent_id else "   "
+            e = a.get("emoji", "🤖")
+            desc = a.get("description", "")
+            agent_lines.append(f"{mark}{e} *{a.get('display_name', a['id'])}* — {desc}")
+        text = (
+            "🤖 *Агенты:*\n\n"
+            + "\n".join(agent_lines)
+            + f"\n\nТекущий: {agent_emoji} _{agent_name}_\nВыбери агента для этого чата:"
+        )
+        await update.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+    async def cb_agent_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user:
+            return
+        agent_id = query.data[len(CALLBACK_AGENT_PREFIX) :]
+        owner_id = user.id
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        if not chat_id:
+            await query.edit_message_text("❌ Нет активного чата. Создай его через /newchat")
+            return
+        ok = await self.agent.bbot_set_chat_agent(owner_id, chat_id, agent_id)
+        agent_emoji, agent_name = self._agent_display_info(agent_id)
+        if ok:
+            await query.edit_message_text(
+                f"✅ Агент переключён: {agent_emoji} *{agent_name}*\n"
+                "Следующее сообщение пойдёт этому агенту.",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text("❌ Не удалось переключить агента")
 
     async def _cmd_model(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         owner_id = update.effective_user.id
