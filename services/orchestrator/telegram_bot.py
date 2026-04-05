@@ -2197,10 +2197,15 @@ class BalbesTelegramBot:
                 await message.reply_text("🎤 Не удалось распознать голосовое сообщение")
                 return
 
-            # Correct via LLM
+            # Correct via LLM (chat model first, then paid fallback — see whisper_transcribe)
             await self._voice_debug_reply(message, voice_debug, "LLM: постобработка расшифровки…")
             t_co = time.monotonic()
-            corrected = await correct_transcription(raw_text, http_client=self.http_client)
+            chat_model_id = await self._get_chat_model(str(user.id), chat_id) if chat_id else None
+            corrected = await correct_transcription(
+                raw_text,
+                http_client=self.http_client,
+                chat_model_id=chat_model_id,
+            )
             co_s = time.monotonic() - t_co
             logger.info("Voice: LLM correction in %.1fs", co_s)
             await self._voice_debug_reply(

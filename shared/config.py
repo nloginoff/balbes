@@ -245,6 +245,18 @@ class Settings(BaseSettings):
         default="ru",
         description="Language code (e.g. ru) or null/empty for auto-detect",
     )
+    whisper_correction_fallback_model: str = Field(
+        default="openrouter/minimax/minimax-m2.5",
+        description=(
+            "OpenRouter model id for transcription LLM correction when chat model is unset "
+            "or fails (use a small paid model, not :free)"
+        ),
+    )
+    whisper_correction_timeout_seconds: float = Field(
+        default=120.0,
+        ge=15.0,
+        description="HTTP timeout (seconds) per OpenRouter correction attempt",
+    )
 
     # =============================================================================
     # Search skills

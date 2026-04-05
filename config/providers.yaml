@@ -594,6 +594,7 @@ whisper:
   best_of: 5
   patience: 2.0
   language: "ru"        # or empty for auto-detect
+  # LLM correction: chat model (from memory) first, then WHISPER_CORRECTION_FALLBACK_MODEL
 
 
 # Skills configuration

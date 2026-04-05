@@ -5,7 +5,7 @@ Pipeline:
   1. Receive OGG/OPUS bytes from Telegram
   2. Convert to WAV via ffmpeg
   3. Transcribe with whisper.load_model + model.transcribe (beam search, quality-oriented defaults)
-  4. Optional LLM correction via OpenRouter (short/medium text only)
+  4. Optional LLM correction via OpenRouter: chat's active model first, then fallback (cheap paid)
 
 Slower than faster-whisper; better reference decoding. For cloud STT (OpenRouter/Yandex Speech),
 see future backend switch in orchestrator config.
@@ -194,16 +194,36 @@ async def transcribe_voice(
             wav_path.unlink(missing_ok=True)
 
 
-async def correct_transcription(text: str, http_client=None) -> str:
+def _correction_models_order(chat_model_id: str | None) -> list[str]:
+    """Primary = chat model; then fallback (cheap paid). De-dupe."""
+    out: list[str] = []
+    if chat_model_id and chat_model_id.strip():
+        out.append(chat_model_id.strip())
+    fb = (settings.whisper_correction_fallback_model or "").strip()
+    if fb and fb not in out:
+        out.append(fb)
+    return out
+
+
+async def correct_transcription(
+    text: str,
+    http_client=None,
+    *,
+    chat_model_id: str | None = None,
+) -> str:
     """
-    Fix common speech recognition errors using a cheap LLM.
+    Fix common speech recognition errors via OpenRouter.
+
+    Tries the chat's active model first, then ``whisper_correction_fallback_model``
+    (default: MiniMax M2.5 paid, not :free).
 
     Args:
         text: Raw transcription text
         http_client: Optional httpx.AsyncClient
+        chat_model_id: Current chat model from memory (e.g. openrouter/...)
 
     Returns:
-        Corrected text, or original if correction fails
+        Corrected text, or original if all attempts fail
     """
     if not text or not settings.openrouter_api_key:
         return text
@@ -212,44 +232,86 @@ async def correct_transcription(text: str, http_client=None) -> str:
         logger.info("Skipping LLM correction for long transcription (%s chars)", len(text))
         return text
 
+    models = _correction_models_order(chat_model_id)
+    if not models:
+        logger.warning("No correction models configured; skipping LLM correction")
+        return text
+
     import httpx as _httpx
 
     own_client = http_client is None
-    client = http_client or _httpx.AsyncClient(timeout=20.0)
+    client = http_client or _httpx.AsyncClient(timeout=settings.whisper_correction_timeout_seconds)
 
+    timeout = settings.whisper_correction_timeout_seconds
+    payload_base = {
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a transcription corrector. Fix spelling errors, "
+                    "punctuation, and speech recognition mistakes in the text. "
+                    "Return ONLY the corrected text, nothing else. "
+                    "Preserve the original language."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Correct this transcription:\n{text}",
+            },
+        ],
+        "temperature": 0.1,
+        "max_tokens": 1024,
+    }
+
+    last_error: str | None = None
     try:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openrouter_api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "openrouter/meta-llama/llama-3.1-8b-instruct:free",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a transcription corrector. Fix spelling errors, "
-                            "punctuation, and speech recognition mistakes in the text. "
-                            "Return ONLY the corrected text, nothing else. "
-                            "Preserve the original language."
-                        ),
+        for attempt, model_id in enumerate(models):
+            try:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
                     },
-                    {
-                        "role": "user",
-                        "content": f"Correct this transcription:\n{text}",
-                    },
-                ],
-                "temperature": 0.1,
-                "max_tokens": 500,
-            },
-        )
-        if response.status_code == 200:
-            corrected = (
-                response.json().get("choices", [{}])[0].get("message", {}).get("content") or text
-            ).strip()
-            return corrected if corrected else text
+                    json={**payload_base, "model": model_id},
+                    timeout=timeout,
+                )
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(
+                    "Transcription correction request failed (model=%s): %s",
+                    model_id,
+                    e,
+                )
+                continue
+
+            if response.status_code == 200:
+                corrected = (
+                    response.json().get("choices", [{}])[0].get("message", {}).get("content")
+                    or text
+                ).strip()
+                if corrected:
+                    if attempt > 0:
+                        logger.info(
+                            "Transcription correction used fallback model %s (chat model failed)",
+                            model_id,
+                        )
+                    else:
+                        logger.info("Transcription correction used chat model %s", model_id)
+                    return corrected
+                last_error = "empty content"
+            else:
+                last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                logger.warning(
+                    "Transcription correction bad response (model=%s): %s",
+                    model_id,
+                    last_error,
+                )
+
+        if last_error:
+            logger.warning(
+                "Transcription correction gave up after %s models: %s", len(models), last_error
+            )
     except Exception as e:
         logger.warning(f"Transcription correction failed: {e}")
     finally:
