@@ -1,3 +1,6 @@
+# Memory chat export (fallback path next to repo root)
+data_for_agent/
+
 # Python
 __pycache__/
 *.py[cod]

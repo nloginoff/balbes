@@ -5,7 +5,7 @@
 Обходит ключи ``chats:*``, для каждого ``user_id`` (namespace памяти) читает
 список чатов, ``chat_meta:*``, полную историю из sorted set ``history:*``.
 
-Структура (по умолчанию ``--output /data_for_agent``)::
+Структура (каталог задаётся ``--output``, см. ниже)::
 
     {agent_id}__{chat_id}/
         meta.json      — memory_user_id, chat_id, хеш meta из Redis, имя из chats
@@ -15,13 +15,14 @@
 При коллизии имён каталога (редко) используется
 ``{memory_user_id}__{agent_id}__{chat_id}``.
 
-Запуск (каталог по умолчанию уже ``/data_for_agent``, ``PYTHONPATH`` не нужен)::
+Запуск::
 
     python3 scripts/export_memory_chats_to_data_for_agent.py
 
-или обёртка::
+или ``./scripts/export_chats_for_agent.sh``
 
-    ./scripts/export_chats_for_agent.sh
+Куда писать: сначала пробуем ``/data_for_agent``; если нет прав — ``<корень_репо>/data_for_agent/``.
+Явно: ``--output /путь`` или переменная ``EXPORT_CHATS_OUTPUT``.
 
 Подключение к Redis: переменные ``REDIS_*`` / ``REDIS_URL``, без загрузки полного ``Settings``
 (не нужны ``WEB_AUTH_TOKEN``, Postgres и т.д.). Файл ``.env.{ENV}`` или ``.env`` в корне репозитория
@@ -81,6 +82,34 @@ logging.basicConfig(
     format="%(levelname)s %(message)s",
 )
 logger = logging.getLogger("export_memory_chats")
+
+
+def _choose_base_output_dir(cli_output: Path | None) -> Path:
+    """
+    Предпочтительно /data_for_agent (на проде с правами); иначе каталог в репозитории —
+    у обычного пользователя mkdir в корне / часто даёт Permission denied.
+    """
+    if cli_output is not None:
+        return cli_output
+    env = (
+        os.environ.get("EXPORT_CHATS_OUTPUT") or os.environ.get("BALBES_EXPORT_CHATS_DIR") or ""
+    ).strip()
+    if env:
+        return Path(env)
+    system = Path("/data_for_agent")
+    try:
+        system.mkdir(parents=True, exist_ok=True)
+        return system
+    except OSError:
+        fb = _project_root() / "data_for_agent"
+        logger.info(
+            "Нет прав на %s — пишу в %s (или: sudo mkdir -p %s && sudo chown $USER %s, либо EXPORT_CHATS_OUTPUT=...)",
+            system,
+            fb,
+            system,
+            system,
+        )
+        return fb
 
 
 def _safe_segment(s: str, max_len: int = 120) -> str:
@@ -222,8 +251,8 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/data_for_agent"),
-        help="Базовый каталог (по умолчанию /data_for_agent)",
+        default=None,
+        help="Базовый каталог (по умолчанию: /data_for_agent или data_for_agent в корне репозитория)",
     )
     parser.add_argument(
         "--redis-url",
@@ -240,10 +269,12 @@ def main() -> int:
 
     redis_url = (args.redis_url or "").strip() or _redis_url_from_env()
 
-    args.output.mkdir(parents=True, exist_ok=True)
+    output = _choose_base_output_dir(args.output)
+    output.mkdir(parents=True, exist_ok=True)
+    logger.info("Каталог экспорта: %s", output.resolve())
 
     try:
-        exported, skipped = asyncio.run(export_all(redis_url, args.output, args.dry_run))
+        exported, skipped = asyncio.run(export_all(redis_url, output, args.dry_run))
     except Exception as e:
         logger.error("Ошибка экспорта: %s", e)
         return 1

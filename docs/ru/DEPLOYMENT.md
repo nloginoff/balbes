@@ -1142,13 +1142,13 @@ docker exec balbes-redis redis-cli --scan --pattern "context:*" | xargs docker e
 # Или настроить eviction policy (уже в docker-compose: allkeys-lru)
 ```
 
-**Экспорт всех чатов Memory (Redis) на диск** — в `/data_for_agent` по умолчанию, каталоги `{agent_id}__{chat_id}/` (`meta.json`, `history.json`). Из корня репозитория:
+**Экспорт всех чатов Memory (Redis) на диск** — каталоги `{agent_id}__{chat_id}/` (`meta.json`, `history.json`). По умолчанию пробуется `/data_for_agent`; если нет прав у текущего пользователя — `data_for_agent/` в корне репозитория (или задайте `EXPORT_CHATS_OUTPUT` / `--output`). Из корня репозитория:
 
 ```bash
 python3 scripts/export_memory_chats_to_data_for_agent.py
 ```
 
-или `./scripts/export_chats_for_agent.sh` (тот же скрипт). Подхватывается `.env.{ENV}` или `.env` из корня репозитория; Redis задаётся `REDIS_URL` или `REDIS_*` (без полного `Settings` — не нужны секреты веба/Postgres). При необходимости `--redis-url`.
+или `./scripts/export_chats_for_agent.sh`. Подхватывается `.env.{ENV}` или `.env`; Redis — `REDIS_URL` или `REDIS_*`. На проде с отдельным каталогом: `sudo mkdir -p /data_for_agent && sudo chown "$USER" /data_for_agent` или `--output /data_for_agent` при наличии прав.
 
 ### Qdrant
 
