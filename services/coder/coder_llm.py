@@ -6,6 +6,7 @@ Requires project root and orchestrator package on sys.path (set in main before i
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import sys
 from pathlib import Path
@@ -24,7 +25,15 @@ def get_coding_engine():
         for p in (str(_ROOT), str(_ORCH)):
             if p not in sys.path:
                 sys.path.insert(0, p)
-        from agent import OrchestratorAgent  # noqa: WPS433 — runtime path
+
+        # Must load orchestrator/agent.py by path: `from agent` resolves to coder/agent.py when cwd is services/coder.
+        orch_agent_path = _ORCH / "agent.py"
+        spec = importlib.util.spec_from_file_location("orchestrator_runtime_agent", orch_agent_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load orchestrator agent from {orch_agent_path}")
+        orch_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(orch_mod)
+        OrchestratorAgent = orch_mod.OrchestratorAgent
 
         _ORCH_AGENT = OrchestratorAgent(primary_agent_id="coder")
         logger.info("Coder LLM engine (OrchestratorAgent) constructed for agent_id=coder")
