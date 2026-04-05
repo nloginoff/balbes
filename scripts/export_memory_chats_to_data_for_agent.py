@@ -23,7 +23,9 @@
 
     ./scripts/export_chats_for_agent.sh
 
-Переменные окружения: как у сервисов — ``REDIS_*`` (см. ``shared.config``). Или ``--redis-url``.
+Подключение к Redis: переменные ``REDIS_*`` / ``REDIS_URL``, без загрузки полного ``Settings``
+(не нужны ``WEB_AUTH_TOKEN``, Postgres и т.д.). Файл ``.env.{ENV}`` или ``.env`` в корне репозитория
+подхватывается автоматически (как у сервисов). Либо явно ``--redis-url``.
 """
 
 from __future__ import annotations
@@ -32,20 +34,47 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Any
 
-
-def _ensure_project_root_on_path() -> None:
-    """Добавляет корень репозитория в sys.path — скрипт можно вызывать без PYTHONPATH=."""
-    root = Path(__file__).resolve().parent.parent
-    if str(root) not in sys.path:
-        sys.path.insert(0, str(root))
-
-
 import redis.asyncio as aioredis
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def _load_project_env_file() -> None:
+    """Подмешивает .env.{ENV} или .env из корня репозитория (без импорта shared.config)."""
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    env = os.environ.get("ENV", "dev")
+    root = _project_root()
+    primary = root / f".env.{env}"
+    fallback = root / ".env"
+    path = primary if primary.is_file() else fallback if fallback.is_file() else None
+    if path:
+        load_dotenv(path, override=False)
+
+
+def _redis_url_from_env() -> str:
+    """Собирает URL из окружения; не требует полной конфигурации приложения."""
+    u = (os.environ.get("REDIS_URL") or "").strip()
+    if u:
+        return u
+    host = os.environ.get("REDIS_HOST", "localhost")
+    port = int(os.environ.get("REDIS_PORT", "6379"))
+    password = (os.environ.get("REDIS_PASSWORD") or "").strip()
+    db = int(os.environ.get("REDIS_DB", "0"))
+    if password:
+        return f"redis://:{password}@{host}:{port}/{db}"
+    return f"redis://{host}:{port}/{db}"
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -186,7 +215,7 @@ async def export_all(
 
 
 def main() -> int:
-    _ensure_project_root_on_path()
+    _load_project_env_file()
     parser = argparse.ArgumentParser(
         description="Экспорт всех чатов Memory из Redis в каталог (агент + chat_id)."
     )
@@ -200,7 +229,7 @@ def main() -> int:
         "--redis-url",
         type=str,
         default=None,
-        help="URL Redis; если не задан — из shared.config (REDIS_*)",
+        help="URL Redis; иначе REDIS_URL или REDIS_HOST/REDIS_PORT/REDIS_PASSWORD/REDIS_DB",
     )
     parser.add_argument(
         "--dry-run",
@@ -209,16 +238,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.redis_url:
-        redis_url = args.redis_url
-    else:
-        try:
-            from shared.config import get_settings
-
-            redis_url = get_settings().redis_url
-        except Exception as e:
-            logger.error("Нужен --redis-url или корректный shared.config: %s", e)
-            return 1
+    redis_url = (args.redis_url or "").strip() or _redis_url_from_env()
 
     args.output.mkdir(parents=True, exist_ok=True)
 

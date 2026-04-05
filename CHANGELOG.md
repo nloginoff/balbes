@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
 
 ### Changed
-- Экспорт чатов Memory: запуск без `PYTHONPATH`, обёртка [`scripts/export_chats_for_agent.sh`](scripts/export_chats_for_agent.sh); [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md).
+- Экспорт чатов Memory: Redis из `REDIS_*` / `REDIS_URL` и `.env` (без полного `Settings`), обёртка [`scripts/export_chats_for_agent.sh`](scripts/export_chats_for_agent.sh); [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md).
 - Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) — секция Blogger (Memory `blogger_*`, матрица команд); [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) / [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md) — `memory_namespace`, `/debug` для блогера; [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — namespaces.
 - Документация (CONFIGURATION, GETTING_STARTED, README): описание голоса приведено к openai-whisper + облачный STT вместо устаревших упоминаний faster-whisper.
 

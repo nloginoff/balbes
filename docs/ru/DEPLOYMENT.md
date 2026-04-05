@@ -1148,7 +1148,7 @@ docker exec balbes-redis redis-cli --scan --pattern "context:*" | xargs docker e
 python3 scripts/export_memory_chats_to_data_for_agent.py
 ```
 
-или `./scripts/export_chats_for_agent.sh` (тот же скрипт). `PYTHONPATH` не нужен. Redis — как у сервисов (`REDIS_*`), при необходимости `--redis-url`.
+или `./scripts/export_chats_for_agent.sh` (тот же скрипт). Подхватывается `.env.{ENV}` или `.env` из корня репозитория; Redis задаётся `REDIS_URL` или `REDIS_*` (без полного `Settings` — не нужны секреты веба/Postgres). При необходимости `--redis-url`.
 
 ### Qdrant
 
