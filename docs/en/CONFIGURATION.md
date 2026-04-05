@@ -74,7 +74,9 @@ Inter-service trust: when `DELEGATION_SHARED_SECRET` is set, callers must send h
 
 Loader: [`shared/agent_manifest.py`](../../shared/agent_manifest.py).
 
-Optional **`telegram:`** block toggles per-agent Telegram UI (voice, command menu, model switch, multi-chat, memory commands, **`debug_command`** (`/debug`: LLM and voice-stage traces for the current chat, stored in Memory) — same flag for the orchestrator bot and the blogger business bot (blogger uses Memory user id prefix `bbot_<telegram_id>`); plus blogger-specific flags such as `posts_commands`, business group capture, etc. See `TelegramFeatureFlags` in the same module. Example: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml). Slash command registration and menu order for orchestrator vs blogger are defined in [`shared/telegram_app/telegram_command_matrix.py`](../../shared/telegram_app/telegram_command_matrix.py); YAML only selects which flags are on and which handlers exist on the bot class.
+Optional **`telegram:`** block toggles per-agent Telegram UI (voice, command menu, model switch, multi-chat, memory commands, **`debug_command`** (`/debug`: LLM and voice-stage traces for the current chat, stored in Memory) — same flag for the orchestrator bot and the blogger business bot. Blogger’s Memory Service user id is **`blogger_<telegram_id>`** (see [`shared/telegram_app/memory_namespace.py`](../../shared/telegram_app/memory_namespace.py)); legacy `bbot_<id>` is read-only for migration. Plus blogger-specific flags such as `posts_commands`, business group capture, etc. See `TelegramFeatureFlags` in the same module. Example: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml). Slash commands: [`shared/telegram_app/telegram_command_matrix.py`](../../shared/telegram_app/telegram_command_matrix.py).
+
+**Blogger: enable `/debug`.** In [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml), under `telegram:`, set `debug_command: true`. If `telegram:` is omitted or the key is missing, `TelegramFeatureFlags` defaults `debug_command` to true — restart the blogger service for menu changes. Set `debug_command: false` to hide the command.
 
 ---
 

@@ -16,6 +16,8 @@ from pathlib import Path
 import asyncpg
 import httpx
 
+from shared.telegram_app.memory_namespace import blogger_memory_user_ids_try_order, memory_user_id
+
 from .post_queue import PostQueue, post_content_ru_en
 from .publisher import TelegramPublisher
 from .reader import BusinessChatReader, ChatReader, CursorFileReader
@@ -139,7 +141,7 @@ class BloggerAgent:
     # =========================================================================
 
     async def _bbot_thread_snippet_for_post(self) -> tuple[str, list[str]]:
-        """Recent lines from the owner's active business-bot chat (Memory user_id ``bbot_<tg_id>``).
+        """Recent lines from the owner's active business-bot chat (Memory user_id ``blogger_<tg_id>``, legacy ``bbot_<tg_id>``).
 
         Orchestrator history uses plain ``<tg_id>``; DM with this bot is stored separately — without
         this block, «пост из этого чата» saw nothing useful.
@@ -613,28 +615,32 @@ class BloggerAgent:
     # ── Memory-Service backed multi-chat helpers ─────────────────────────────
 
     def _bbot_uid(self, owner_id: int) -> str:
-        """Unique Memory Service user_id for business bot chats (isolated from main bot)."""
-        return f"bbot_{owner_id}"
+        """Memory `user_id` for blogger agent: ``blogger_<telegram_id>`` (see shared.telegram_app.memory_namespace)."""
+        return memory_user_id("blogger", owner_id)
 
     async def bbot_get_chats(self, owner_id: int) -> list[dict]:
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}"
-            )
-            return r.json().get("chats", []) if r.is_success else []
-        except Exception as exc:
-            logger.warning("bbot_get_chats: %s", exc)
-            return []
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(f"{self.memory_url}/api/v1/chats/{uid}")
+                if r.is_success:
+                    chats = r.json().get("chats", []) or []
+                    if chats:
+                        return chats
+            except Exception as exc:
+                logger.warning("bbot_get_chats uid=%s: %s", uid, exc)
+        return []
 
     async def bbot_get_active_chat(self, owner_id: int) -> str:
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/active"
-            )
-            return r.json().get("chat_id", "default") if r.is_success else "default"
-        except Exception as exc:
-            logger.warning("bbot_get_active_chat: %s", exc)
-            return "default"
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(f"{self.memory_url}/api/v1/chats/{uid}/active")
+                if r.is_success:
+                    cid = r.json().get("chat_id", "default")
+                    if cid != "default":
+                        return cid
+            except Exception as exc:
+                logger.warning("bbot_get_active_chat uid=%s: %s", uid, exc)
+        return "default"
 
     async def bbot_set_active_chat(self, owner_id: int, chat_id: str) -> None:
         try:
@@ -674,15 +680,19 @@ class BloggerAgent:
             logger.warning("bbot_clear_history: %s", exc)
 
     async def bbot_get_history(self, owner_id: int, chat_id: str) -> list[dict]:
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/history/{self._bbot_uid(owner_id)}/{chat_id}",
-                params={"limit": 40},
-            )
-            return r.json().get("messages", []) if r.is_success else []
-        except Exception as exc:
-            logger.warning("bbot_get_history: %s", exc)
-            return []
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(
+                    f"{self.memory_url}/api/v1/history/{uid}/{chat_id}",
+                    params={"limit": 40},
+                )
+                if r.is_success:
+                    messages = r.json().get("messages", []) or []
+                    if messages:
+                        return messages
+            except Exception as exc:
+                logger.warning("bbot_get_history uid=%s: %s", uid, exc)
+        return []
 
     async def bbot_save_message(self, owner_id: int, chat_id: str, role: str, content: str) -> None:
         try:
@@ -694,17 +704,18 @@ class BloggerAgent:
             logger.warning("bbot_save_message: %s", exc)
 
     async def bbot_get_chat_model(self, owner_id: int, chat_id: str) -> str:
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/model"
-            )
-            return (
-                r.json().get("model_id") or self._conversation_model
-                if r.is_success
-                else self._conversation_model
-            )
-        except Exception:
-            return self._conversation_model
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(
+                    f"{self.memory_url}/api/v1/chats/{uid}/{chat_id}/model"
+                )
+                if r.is_success:
+                    mid = r.json().get("model_id")
+                    if mid:
+                        return mid
+            except Exception:
+                pass
+        return self._conversation_model
 
     async def bbot_set_chat_model(self, owner_id: int, chat_id: str, model: str) -> None:
         try:
@@ -717,14 +728,15 @@ class BloggerAgent:
 
     async def bbot_get_chat_settings(self, owner_id: int, chat_id: str) -> dict:
         """Return {debug: bool, mode: str} for a bbot chat (Memory Service)."""
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/settings"
-            )
-            if r.status_code == 200:
-                return r.json()
-        except Exception as exc:
-            logger.debug("bbot_get_chat_settings: %s", exc)
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(
+                    f"{self.memory_url}/api/v1/chats/{uid}/{chat_id}/settings"
+                )
+                if r.status_code == 200:
+                    return r.json()
+            except Exception as exc:
+                logger.debug("bbot_get_chat_settings uid=%s: %s", uid, exc)
         return {"debug": False, "mode": "ask"}
 
     async def bbot_set_chat_settings(self, owner_id: int, chat_id: str, **kwargs) -> bool:
@@ -740,14 +752,15 @@ class BloggerAgent:
         return False
 
     async def bbot_get_chat_agent(self, owner_id: int, chat_id: str) -> str:
-        try:
-            r = await self._get_http().get(
-                f"{self.memory_url}/api/v1/chats/{self._bbot_uid(owner_id)}/{chat_id}/agent"
-            )
-            if r.status_code == 200:
-                return r.json().get("agent_id", "balbes")
-        except Exception as exc:
-            logger.warning("bbot_get_chat_agent: %s", exc)
+        for uid in blogger_memory_user_ids_try_order(owner_id):
+            try:
+                r = await self._get_http().get(
+                    f"{self.memory_url}/api/v1/chats/{uid}/{chat_id}/agent"
+                )
+                if r.status_code == 200:
+                    return r.json().get("agent_id", "balbes")
+            except Exception as exc:
+                logger.warning("bbot_get_chat_agent uid=%s: %s", uid, exc)
         return "balbes"
 
     async def bbot_set_chat_agent(self, owner_id: int, chat_id: str, agent_id: str) -> bool:
