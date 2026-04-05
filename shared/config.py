@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     # =============================================================================
     # Telegram Bot
     # =============================================================================
+    telegram_secondary_bot_token: str | None = Field(
+        default=None,
+        description="Optional second bot token; same handlers, separate Telegram chat IDs",
+    )
+    telegram_mirror_replies: bool = Field(
+        default=False,
+        description="If true and secondary bot is set, send assistant replies to both chats",
+    )
     telegram_bot_token: str | None = Field(
         default=None, description="Telegram bot token from @BotFather"
     )
@@ -150,6 +158,10 @@ class Settings(BaseSettings):
     # =============================================================================
     orchestrator_port: int = Field(default=8102)
     coder_port: int = Field(default=8001)
+    coder_service_url: str | None = Field(
+        default=None,
+        description="Base URL for coder microservice (default http://127.0.0.1:{coder_port})",
+    )
     memory_service_port: int = Field(default=8100)
     memory_service_url: str = Field(default="http://localhost:8100")
     skills_registry_port: int = Field(default=8101)
@@ -194,6 +206,13 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins as list"""
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    @property
+    def coder_base_url(self) -> str:
+        """HTTP base URL for the coder microservice (used by orchestrator delegation)."""
+        if self.coder_service_url:
+            return self.coder_service_url.rstrip("/")
+        return f"http://127.0.0.1:{self.coder_port}"
 
     # =============================================================================
     # Whisper voice transcription
@@ -251,6 +270,7 @@ class Settings(BaseSettings):
         "openrouter_api_key",
         "aitunnel_api_key",
         "telegram_bot_token",
+        "telegram_secondary_bot_token",
         "business_bot_token",
         "blogger_channel_ru",
         "blogger_channel_en",

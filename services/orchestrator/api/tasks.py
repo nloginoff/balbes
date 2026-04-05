@@ -21,6 +21,7 @@ async def create_task(
     source: str = "user",
     debug: bool = False,
     mode: str = "ask",
+    bot_id: str | None = None,
 ) -> dict:
     """
     Create and execute a task within a chat session.
@@ -29,7 +30,7 @@ async def create_task(
         user_id: User identifier (Telegram user_id)
         description: Task / message text
         chat_id: Chat session ID (optional, uses active chat if omitted)
-        agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
+        agent_id: Agent to use (balbes | coder | ...). Defaults to 'balbes'.
         model_id: Override model for this task (e.g. heartbeat uses a fixed free model).
         source: Origin of the task — "user" | "heartbeat" (used for activity log tagging).
         debug: If true, collect execution trace events and return them in response.
@@ -50,7 +51,7 @@ async def create_task(
             chat_id=chat_id,
             agent_id=agent_id,
             model_id=model_id,
-            context={"source": source, "debug": debug, "mode": mode},
+            context={"source": source, "debug": debug, "mode": mode, "bot_id": bot_id},
         )
         return result
 

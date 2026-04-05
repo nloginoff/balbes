@@ -494,7 +494,7 @@ async def test_e2e_web_backend_full_flow(http_client, services_health):
 
     # Step 6: Create task
     task_data = {
-        "agent_id": "orchestrator",
+        "agent_id": "balbes",
         "description": "E2E Web Backend Test Task",
         "payload": {},
     }

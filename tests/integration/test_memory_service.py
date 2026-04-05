@@ -226,7 +226,7 @@ class TestAgents:
 
             # Should have at least orchestrator and coder
             agent_ids = [a["agent_id"] for a in result["agents"]]
-            assert "orchestrator" in agent_ids
+            assert "balbes" in agent_ids
             assert "coder" in agent_ids
 
 

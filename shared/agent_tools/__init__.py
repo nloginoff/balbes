@@ -1,10 +1,6 @@
-"""
-Compatibility shim: re-exports shared agent tool registry.
+"""Shared agent tool schemas, filtering, and ToolDispatcher."""
 
-Implementation lives in shared.agent_tools.registry.
-"""
-
-from shared.agent_tools.registry import (  # noqa: F401
+from shared.agent_tools.registry import (
     AGENT_TOOLS,
     AVAILABLE_TOOLS,
     HEARTBEAT_TOOLS,

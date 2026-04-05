@@ -34,7 +34,7 @@ async def test_postgres_connection():
         agents = await conn.fetch("SELECT agent_id, name FROM agents ORDER BY agent_id")
         agent_ids = [row["agent_id"] for row in agents]
 
-        assert "orchestrator" in agent_ids
+        assert "balbes" in agent_ids
         assert "coder" in agent_ids
 
         print(f"✅ PostgreSQL: Found {result} agents")

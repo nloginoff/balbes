@@ -25,7 +25,14 @@ import httpx
 import redis.asyncio as aioredis
 import tiktoken
 from agent_logger import AgentActivityLogger
-from tools import AGENT_TOOLS, AVAILABLE_TOOLS, HEARTBEAT_TOOLS, ToolDispatcher, get_tools_for_mode
+from tools import (
+    AVAILABLE_TOOLS,
+    ToolDispatcher,
+    build_heartbeat_tools,
+    build_subagent_tools,
+    get_tools_for_mode,
+    resolve_tools_for_agent,
+)
 from workspace import AgentWorkspace
 
 
@@ -49,6 +56,7 @@ class _LiveDebugList(list):
         self._live.append(event)
 
 
+from shared.agent_base import BaseAgent
 from shared.config import get_settings
 
 settings = get_settings()
@@ -296,7 +304,7 @@ def _parse_xml_tool_calls(content: str) -> list[dict] | None:
     return calls or None
 
 
-class OrchestratorAgent:
+class OrchestratorAgent(BaseAgent):
     """
     Orchestrator Agent — coordinates the whole Balbes system.
 
@@ -308,8 +316,8 @@ class OrchestratorAgent:
     - Model fallback chain
     """
 
-    def __init__(self):
-        self.agent_id = "orchestrator"
+    def __init__(self, primary_agent_id: str = "balbes"):
+        super().__init__(primary_agent_id, get_providers_config())
         self.memory_service_url = f"http://localhost:{settings.memory_service_port}"
         self.skills_registry_url = f"http://localhost:{settings.skills_registry_port}"
         self.http_client: httpx.AsyncClient | None = None
@@ -399,13 +407,14 @@ class OrchestratorAgent:
         activity_log = self._get_activity_logger(self.agent_id)
 
         # Initialize tool dispatcher with default workspace and logger
+        _cfg = get_providers_config()
         self.tool_dispatcher = ToolDispatcher(
             workspace=ws,
             http_client=self.http_client,
-            providers_config=get_providers_config(),
+            providers_config=_cfg,
             activity_logger=activity_log,
-            delegate_callback=self._delegate_task,
-            background_runner=self.run_agent_background,
+            delegate_callback=self._delegate_task if self.features.delegation else None,
+            background_runner=self.run_agent_background if self.features.delegation else None,
             get_result_callback=self.get_background_result,
             cancel_callback=self.cancel_agent_background_tasks,
             list_tasks_callback=self.list_tasks,
@@ -440,7 +449,7 @@ class OrchestratorAgent:
             description: User's message / task
             user_id: Telegram user_id (string)
             chat_id: Chat session ID. If None, uses/creates default chat.
-            agent_id: Agent to use (orchestrator | coder | ...). Defaults to 'orchestrator'.
+            agent_id: Agent to use (balbes | coder | ...). Defaults to 'balbes'.
             model_id: Override model for this task. If None, uses the chat's configured model.
                       Pass explicitly for heartbeat (free model) or tests.
             context: Extra context dict (unused externally, kept for compat)
@@ -476,6 +485,13 @@ class OrchestratorAgent:
             # Resolve chat_id
             if chat_id is None:
                 chat_id = await self._get_or_create_chat(user_id)
+
+            await self._persist_agent_session(
+                user_id=user_id,
+                agent_id=effective_agent_id,
+                chat_id=chat_id,
+                bot_id=ctx.get("bot_id"),
+            )
 
             logger.info(
                 f"[{task_id}] user={user_id} chat={chat_id} agent={effective_agent_id}"
@@ -528,6 +544,9 @@ class OrchestratorAgent:
             debug: bool = ctx.get("debug", False)
             mode: str = ctx.get("mode", "agent")
 
+            _pc = get_providers_config()
+            resolved_tools = resolve_tools_for_agent(effective_agent_id, _pc)
+
             # For heartbeat: read inter-round delay from config (guards against rate limits)
             between_rounds_delay: float = 0.0
             if is_heartbeat:
@@ -563,7 +582,9 @@ class OrchestratorAgent:
                 debug_events=debug_events if debug else None,
                 mode=mode,
                 # Heartbeat uses only workspace_read — all other tools add tokens with no benefit
-                override_tools=HEARTBEAT_TOOLS if is_heartbeat else None,
+                override_tools=(
+                    build_heartbeat_tools(resolved_tools) if is_heartbeat else resolved_tools
+                ),
                 between_rounds_delay=between_rounds_delay,
             )
 
@@ -866,6 +887,44 @@ class OrchestratorAgent:
                 return a["default_model"]
         return fallback
 
+    async def _invoke_coder_http(
+        self,
+        task: str,
+        context: dict[str, Any],
+        mode: str = "agent",
+        debug_events: list[dict[str, Any]] | None = None,
+    ) -> str:
+        """Run the coder LLM loop via the coder microservice."""
+        if not self.http_client:
+            return "Coder HTTP: HTTP client not configured."
+        url = f"{settings.coder_base_url}/api/v1/agent/execute"
+        payload = {
+            "task": task,
+            "user_id": context.get("user_id", "unknown"),
+            "chat_id": context.get("chat_id", "default"),
+            "model_id": context.get("model_id"),
+            "mode": mode,
+            "debug": bool(context.get("debug")),
+        }
+        try:
+            resp = await self.http_client.post(url, json=payload, timeout=600.0)
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Coder HTTP {e.response.status_code}: {e.response.text[:500]}")
+            return f"Coder service HTTP error: {e.response.status_code}"
+        except Exception as e:
+            logger.error(f"Coder HTTP request failed: {e}", exc_info=True)
+            return f"Coder service unreachable: {type(e).__name__}: {e}"
+
+        if data.get("status") != "success":
+            return data.get("error") or str(data)
+        out = data.get("output") or ""
+        ev = data.get("debug_events")
+        if debug_events is not None and isinstance(ev, list):
+            debug_events.extend(ev)
+        return out
+
     async def _delegate_task(
         self,
         agent_id: str,
@@ -876,7 +935,14 @@ class OrchestratorAgent:
         """
         Synchronous delegation — blocks until the sub-agent finishes.
         Uses an isolated ToolDispatcher so concurrent background calls are safe.
+        Coder runs in a separate microservice (HTTP).
         """
+        if agent_id == "coder":
+            parent_debug = self.tool_dispatcher._debug_collector if self.tool_dispatcher else None
+            logger.info(f"Delegating to 'coder' via HTTP (mode={mode}): {task[:60]}…")
+            text = await self._invoke_coder_http(task, context, mode, parent_debug)
+            return f"[Agent coder]:\n{text}"
+
         model_id = self._resolve_agent_model(
             agent_id, context.get("model_id") or settings.default_chat_model
         )
@@ -897,7 +963,9 @@ class OrchestratorAgent:
             agent_id=agent_id,
             debug_events=sub_dispatcher._debug_collector,
             mode=mode,
-            override_tools=AGENT_TOOLS,
+            override_tools=build_subagent_tools(
+                resolve_tools_for_agent(agent_id, get_providers_config())
+            ),
             dispatcher=sub_dispatcher,
         )
         return response_text
@@ -939,19 +1007,26 @@ class OrchestratorAgent:
         async def _run_bg() -> None:
             status, result_text = "completed", ""
             try:
-                result_text, _, _bg_usage = await self._run_llm_with_tools(
-                    messages=messages,
-                    model_id=model_id,
-                    user_id=user_id,
-                    chat_id=context.get("chat_id", "default"),
-                    task_id=task_id,
-                    source=context.get("source", "user"),
-                    agent_id=agent_id,
-                    mode=mode,
-                    override_tools=AGENT_TOOLS,
-                    dispatcher=sub_dispatcher,
-                    debug_events=bg_debug,
-                )
+                if agent_id == "coder":
+                    result_text = await self._invoke_coder_http(
+                        task, context, mode, debug_events=bg_debug
+                    )
+                else:
+                    result_text, _, _bg_usage = await self._run_llm_with_tools(
+                        messages=messages,
+                        model_id=model_id,
+                        user_id=user_id,
+                        chat_id=context.get("chat_id", "default"),
+                        task_id=task_id,
+                        source=context.get("source", "user"),
+                        agent_id=agent_id,
+                        mode=mode,
+                        override_tools=build_subagent_tools(
+                            resolve_tools_for_agent(agent_id, get_providers_config())
+                        ),
+                        dispatcher=sub_dispatcher,
+                        debug_events=bg_debug,
+                    )
             except asyncio.CancelledError:
                 status, result_text = "cancelled", "Задача отменена."
                 logger.info(f"Background task {task_id} cancelled")
@@ -1211,10 +1286,11 @@ class OrchestratorAgent:
                     "messages": messages,
                     "temperature": 0.4,
                 }
-                if with_tools and self.tool_dispatcher:
+                if with_tools:
                     tools_list = available_tools if available_tools is not None else AVAILABLE_TOOLS
-                    payload["tools"] = tools_list
-                    payload["tool_choice"] = "auto"
+                    if tools_list:
+                        payload["tools"] = tools_list
+                        payload["tool_choice"] = "auto"
 
                 response = await self.http_client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -1344,6 +1420,25 @@ class OrchestratorAgent:
     # -------------------------------------------------------------------------
     # Chat / history helpers
     # -------------------------------------------------------------------------
+
+    async def _persist_agent_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        chat_id: str,
+        bot_id: str | None = None,
+    ) -> None:
+        """Store last chat (and optional bot) for this user+agent in memory service Redis."""
+        if not self.http_client:
+            return
+        try:
+            await self.http_client.patch(
+                f"{self.memory_service_url}/api/v1/agent-session/{user_id}/{agent_id}",
+                json={"chat_id": chat_id, "bot_id": bot_id, "extra": {}},
+                timeout=8.0,
+            )
+        except Exception as e:
+            logger.debug(f"agent-session PATCH skipped: {e}")
 
     async def _get_or_create_chat(self, user_id: str) -> str:
         """Return active chat_id, creating one if needed."""
@@ -1521,3 +1616,7 @@ class OrchestratorAgent:
                 "skills_registry": self.skills_registry_url,
             },
         }
+
+
+# Public name aligned with product branding (see providers id migration to balbes).
+BalbesAgent = OrchestratorAgent

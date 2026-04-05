@@ -3,9 +3,7 @@ Coder Service - FastAPI приложение для Coder Agent.
 
 Управляет:
 - Skill generation API
-- Code execution and testing
-- Skill validation
-- Registry integration
+- Full LLM + tools execution (HTTP) for orchestrator delegation
 """
 
 import logging
@@ -13,8 +11,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from agent import CoderAgent
+from agent import CoderAgent as SkillCoderAgent
+from api import execute as execute_api
 from api import skills as skills_api
+from coder_llm import connect_coding_engine, get_coding_engine
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -31,39 +31,39 @@ logging.basicConfig(
 )
 logger = logging.getLogger("coder")
 
-
-# Global agent instance
-coder_agent: CoderAgent | None = None
+# Global skill-builder (legacy API) + full LLM engine
+skill_coder: SkillCoderAgent | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    """
-    FastAPI lifespan context manager.
-
-    Handles startup and shutdown of Coder Agent.
-    """
-    global coder_agent
+    """Startup: skill builder + OrchestratorAgent(coder) for /api/v1/agent/execute."""
+    global skill_coder
 
     logger.info("Starting Coder Service...")
 
     try:
-        coder_agent = CoderAgent()
-        await coder_agent.connect()
-        logger.info("Coder Agent initialized")
+        skill_coder = SkillCoderAgent()
+        await skill_coder.connect()
 
+        await connect_coding_engine()
+        app.state.coding_engine = get_coding_engine()
+
+        logger.info("Coder Service (skills + LLM engine) initialized")
     except Exception as e:
-        logger.error(f"Failed to initialize Coder Agent: {e}")
+        logger.error(f"Failed to initialize Coder Service: {e}")
         raise
 
-    # App is running
     yield
 
-    # Shutdown
     logger.info("Shutting down Coder Service...")
 
-    if coder_agent:
-        await coder_agent.close()
+    eng = getattr(app.state, "coding_engine", None)
+    if eng:
+        await eng.close()
+
+    if skill_coder:
+        await skill_coder.close()
 
     logger.info("Coder Service stopped")
 
@@ -118,64 +118,59 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
 
 # Include API routers
 app.include_router(skills_api.router)
+app.include_router(execute_api.router)
 
 
 # Health check endpoint
 @app.get("/health")
 async def health_check() -> dict:
-    """
-    Health check endpoint.
-
-    Returns:
-        dict: Health status
-    """
-    if not coder_agent:
+    """Health status for skill builder and LLM engine."""
+    eng = getattr(app.state, "coding_engine", None)
+    if not skill_coder or not eng:
         return {
             "service": "coder",
             "status": "unhealthy",
-            "reason": "Agent not initialized",
+            "reason": "Agents not initialized",
         }
 
     return {
         "service": "coder",
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "agent_id": coder_agent.agent_id,
+        "skill_agent_id": skill_coder.agent_id,
+        "llm_engine_id": getattr(eng, "agent_id", None),
     }
 
 
 # Root endpoint
 @app.get("/")
 async def root() -> dict:
-    """Root endpoint with service information"""
+    """Root endpoint for service information"""
     return {
         "service": "Coder",
         "version": "0.1.0",
         "docs": "/docs",
         "health": "/health",
-        "description": "Autonomous code generation and skill creation",
+        "description": "Skills API + LLM/tools execute for delegation",
     }
 
 
 # Status endpoint
 @app.get("/api/v1/status")
 async def get_status() -> dict:
-    """
-    Get Coder service status.
-
-    Returns:
-        Coder service status
-    """
-    if not coder_agent:
+    """Coder service status"""
+    if not skill_coder:
         return {"status": "unavailable"}
 
-    generated_skills = await coder_agent.get_generated_skills()
+    generated_skills = await skill_coder.get_generated_skills()
+    eng = getattr(app.state, "coding_engine", None)
 
     return {
         "service": "coder",
         "status": "online",
-        "agent_id": coder_agent.agent_id,
+        "skill_agent_id": skill_coder.agent_id,
         "generated_skills_count": len(generated_skills),
+        "llm_engine_ready": eng is not None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

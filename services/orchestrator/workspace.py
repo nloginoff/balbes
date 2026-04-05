@@ -80,7 +80,14 @@ class AgentWorkspace:
             # Resolve relative to project root (two levels up from this file)
             project_root = Path(__file__).parent.parent.parent
             workspace_root = str(project_root / "data" / "agents")
-        self.workspace_dir = Path(workspace_root) / agent_id
+        base = Path(workspace_root)
+        ws_dir = base / agent_id
+        # Migration: use data/agents/orchestrator/ if data/agents/balbes/ not present
+        if agent_id == "balbes" and not ws_dir.exists():
+            legacy = base / "orchestrator"
+            if legacy.exists():
+                ws_dir = legacy
+        self.workspace_dir = ws_dir
         self._config: AgentConfig | None = None
         self._lock = threading.Lock()
 

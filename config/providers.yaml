@@ -123,7 +123,7 @@ providers:
 # Each agent can override: fallback_chain, token_limits, server_commands
 # Omitted fields fall back to the global defaults defined below.
 agents:
-  - id: "orchestrator"
+  - id: "balbes"
     display_name: "Balbes"
     description: "Основной интеллектуальный ассистент"
     emoji: "🤖"
@@ -233,6 +233,29 @@ agents:
     display_name: "Coder"
     description: "Специалист по написанию и анализу кода"
     emoji: "💻"
+    # Subset of tools (no blogger-specific tools); omit to allow all from registry
+    tools_allowlist:
+      - web_search
+      - fetch_url
+      - execute_command
+      - workspace_read
+      - workspace_write
+      - rename_chat
+      - save_to_memory
+      - recall_from_memory
+      - code_search
+      - index_codebase
+      - list_agent_tasks
+      - get_agent_result
+      - cancel_agent_task
+      - read_agent_logs
+      - file_read
+      - file_write
+      - file_patch
+      - manage_todo
+      - manage_schedule
+    features:
+      delegation: false
     # Coder uses a capable model by default (good at code); overrides chat model for delegations
     default_model: "openrouter/moonshotai/kimi-k2.5"
 
@@ -722,7 +745,7 @@ blogger:
       auto_publish: false   # Personal blog always requires approval — never change to true
   evening_checkin_hour: 20   # 20:00 Moscow time
   source_agents:
-    - orchestrator
+    - balbes
     - coder
   cursor_files_dir: "data/cursor_chats"   # Drop Cursor AI .md exports here
   business:

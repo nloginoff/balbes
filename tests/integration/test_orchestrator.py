@@ -66,7 +66,7 @@ async def test_agent_initialization():
     from services.orchestrator.agent import OrchestratorAgent
 
     agent = OrchestratorAgent()
-    assert agent.agent_id == "orchestrator"
+    assert agent.agent_id == "balbes"
     assert agent.memory_service_url
     assert agent.skills_registry_url
 
@@ -86,7 +86,7 @@ async def test_agent_status():
 
     status = await agent.get_agent_status()
 
-    assert status["agent_id"] == "orchestrator"
+    assert status["agent_id"] == "balbes"
     assert status["status"] == "online"
     assert "services" in status
     assert "memory_service" in status["services"]

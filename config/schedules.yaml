@@ -21,7 +21,7 @@
 # - id: blogger_morning
 #   enabled: false
 #   trigger: cron
-#   agent_id: orchestrator
+#   agent_id: balbes
 #   user_id: "0"
 #   hour: 8
 #   minute: 0
@@ -36,7 +36,7 @@ jobs:
   - id: daily_morning_briefing
     enabled: false
     trigger: cron
-    agent_id: orchestrator
+    agent_id: balbes
     user_id: "0"
     hour: 9
     minute: 0
@@ -50,7 +50,7 @@ jobs:
   - id: weekly_status
     enabled: false
     trigger: cron
-    agent_id: orchestrator
+    agent_id: balbes
     user_id: "0"
     day_of_week: mon
     hour: 10
@@ -65,7 +65,7 @@ jobs:
   - id: hourly_ping
     enabled: false
     trigger: interval
-    agent_id: orchestrator
+    agent_id: balbes
     user_id: "0"
     minutes: 60
     prompt: "Проверь, нет ли срочных уведомлений или задач."

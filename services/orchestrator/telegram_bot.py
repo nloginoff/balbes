@@ -231,8 +231,9 @@ class BalbesTelegramBot:
     Telegram Bot for Balbes System with multi-chat and model management.
     """
 
-    def __init__(self):
-        self.token = settings.telegram_bot_token
+    def __init__(self, token: str | None = None, bot_label: str = "main"):
+        self.token = token or settings.telegram_bot_token
+        self.bot_label = bot_label
         self.app: Application | None = None
         self.http_client: httpx.AsyncClient | None = None
         self.orchestrator_url = f"http://localhost:{settings.orchestrator_port}"
@@ -256,14 +257,31 @@ class BalbesTelegramBot:
         # APScheduler instance (started lazily in start_scheduler)
         self._scheduler: AsyncIOScheduler | None = None
 
+    async def _touch_agent_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        chat_id: str,
+    ) -> None:
+        """Persist last chat + bot for memory / agent_session API."""
+        try:
+            await self._get_http().patch(
+                f"{self.memory_url}/api/v1/agent-session/{user_id}/{agent_id}",
+                json={"chat_id": chat_id, "bot_id": self.bot_label, "extra": {}},
+                timeout=8.0,
+            )
+        except Exception as e:
+            logger.debug(f"agent-session touch skipped: {e}")
+
     def initialize(self) -> None:
         """Initialize Telegram bot application."""
         logger.info("Initializing Telegram bot...")
 
         async def _post_init(app: Application) -> None:
             await self._set_commands(app)
-            await self.start_heartbeat()
-            await self.start_scheduler()
+            if self.bot_label == "main":
+                await self.start_heartbeat()
+                await self.start_scheduler()
 
         self.app = (
             Application.builder()
@@ -342,7 +360,7 @@ class BalbesTelegramBot:
             return False
         job_id = job.get("id", "unnamed")
         trigger = job.get("trigger", "cron")
-        agent_id = job.get("agent_id", "orchestrator")
+        agent_id = job.get("agent_id", "balbes")
         user_id = str(job.get("user_id", "0"))
         prompt = job.get("prompt", "")
         debug = job.get("debug", False)
@@ -571,7 +589,7 @@ class BalbesTelegramBot:
                 params: dict = {
                     "user_id": user_id,
                     "description": HEARTBEAT_PROMPT,
-                    "agent_id": "orchestrator",
+                    "agent_id": "balbes",
                     "source": "heartbeat",
                 }
                 if model_id:
@@ -883,10 +901,10 @@ class BalbesTelegramBot:
                 f"{self.memory_url}/api/v1/chats/{user_id}/{chat_id}/agent"
             )
             if r.status_code == 200:
-                return r.json().get("agent_id", "orchestrator")
+                return r.json().get("agent_id", "balbes")
         except Exception as e:
             logger.debug(f"get_chat_agent error: {e}")
-        return "orchestrator"
+        return "balbes"
 
     async def _set_chat_agent(self, user_id: str, chat_id: str, agent_id: str) -> bool:
         try:
@@ -901,7 +919,7 @@ class BalbesTelegramBot:
 
     def _agent_display_info(self, agent_id: str | None) -> tuple[str, str]:
         """Return (emoji, display_name) for an agent_id."""
-        aid = agent_id or "orchestrator"
+        aid = agent_id or "balbes"
         for a in _load_agents():
             if a.get("id") == aid:
                 return a.get("emoji", "🤖"), a.get("display_name", aid)
@@ -1182,7 +1200,7 @@ class BalbesTelegramBot:
             return
 
         chat_id = await self._get_active_chat(str(user.id))
-        current_agent_id = "orchestrator"
+        current_agent_id = "balbes"
         if chat_id:
             current_agent_id = await self._get_chat_agent(str(user.id), chat_id)
 
@@ -2168,6 +2186,7 @@ class BalbesTelegramBot:
                     "description": text,
                     "debug": chat_settings.get("debug", False),
                     "mode": chat_settings.get("mode", "ask"),
+                    "bot_id": self.bot_label,
                 }
                 if chat_id:
                     params["chat_id"] = chat_id
@@ -2175,11 +2194,17 @@ class BalbesTelegramBot:
                     if agent_id:
                         params["agent_id"] = agent_id
 
+                await self._touch_agent_session(
+                    str(user.id),
+                    params.get("agent_id") or "balbes",
+                    chat_id or "default",
+                )
+
                 # Start live monitor for foreground tasks:
                 #   debug=True  → full debug trace (existing behaviour)
                 #   agent mode  → compact progress indicator (new)
                 fg_monitor: asyncio.Task | None = None
-                _active_agent_id = params.get("agent_id", "orchestrator")
+                _active_agent_id = params.get("agent_id", "balbes")
                 _is_debug = chat_settings.get("debug", False)
                 _is_agent_mode = params.get("mode", "ask") == "agent"
                 if chat_tg and (_is_debug or _is_agent_mode):
@@ -2362,7 +2387,9 @@ class BalbesTelegramBot:
 
 
 def run_bot() -> None:
-    """Entry point: run Telegram bot."""
+    """Entry point: run Telegram bot (optional second token = parallel polling)."""
+    import threading
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -2372,6 +2399,19 @@ def run_bot() -> None:
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured, skipping")
         return
+
+    if settings.telegram_secondary_bot_token:
+
+        def _run_secondary() -> None:
+            sb = BalbesTelegramBot(
+                token=settings.telegram_secondary_bot_token,
+                bot_label="secondary",
+            )
+            sb.initialize()
+            sb.start_polling()
+
+        threading.Thread(target=_run_secondary, name="telegram-secondary", daemon=True).start()
+        logger.info("Secondary Telegram bot polling started in background thread")
 
     bot = BalbesTelegramBot()
     bot.initialize()

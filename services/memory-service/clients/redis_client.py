@@ -172,7 +172,7 @@ class RedisClient:
         meta = {
             "name": chat_name,
             "model_id": model_id or "",
-            "agent_id": agent_id or "orchestrator",
+            "agent_id": agent_id or "balbes",
             "created_at": now,
             "last_used_at": now,
         }
@@ -181,7 +181,7 @@ class RedisClient:
         await pipe.execute()
 
         logger.info(
-            f"Created chat {chat_id} for user {user_id}: '{chat_name}' agent={agent_id or 'orchestrator'}"
+            f"Created chat {chat_id} for user {user_id}: '{chat_name}' agent={agent_id or 'balbes'}"
         )
         return chat_id
 
@@ -208,7 +208,7 @@ class RedisClient:
                         "chat_id": chat_id,
                         "name": meta.get("name", name),
                         "model_id": meta.get("model_id", ""),
-                        "agent_id": meta.get("agent_id", "orchestrator"),
+                        "agent_id": meta.get("agent_id", "balbes"),
                         "debug": meta.get("debug", "false") == "true",
                         "mode": meta.get("mode", "ask"),
                         "created_at": meta.get("created_at", ""),
@@ -298,11 +298,11 @@ class RedisClient:
         logger.info(f"Set model {model_id} for chat {chat_id} / user {user_id}")
 
     async def get_chat_agent(self, user_id: str, chat_id: str) -> str:
-        """Return agent_id assigned to the chat (defaults to 'orchestrator')."""
+        """Return agent_id assigned to the chat (defaults to 'balbes')."""
         if not self.client:
             raise MemoryRetrievalError("Redis client not connected")
         agent_id = await self.client.hget(self._chat_meta_key(user_id, chat_id), "agent_id")
-        return agent_id if agent_id else "orchestrator"
+        return agent_id if agent_id else "balbes"
 
     async def set_chat_agent(self, user_id: str, chat_id: str, agent_id: str) -> None:
         """Assign an agent to a specific chat."""
@@ -424,6 +424,53 @@ class RedisClient:
         pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
         pipe.expire(self._history_key(user_id, chat_id), CHAT_TTL_SECONDS)
         await pipe.execute()
+
+    # =========================================================================
+    # Per-agent session (last chat + bot used for this logical agent)
+    # Key: agent_session:{user_id}:{agent_id}  JSON, TTL=7d
+    # =========================================================================
+
+    def _agent_session_key(self, user_id: str, agent_id: str) -> str:
+        return f"agent_session:{user_id}:{agent_id}"
+
+    async def get_agent_session(self, user_id: str, agent_id: str) -> dict[str, Any] | None:
+        if not self.client:
+            raise MemoryRetrievalError("Redis client not connected")
+        raw = await self.client.get(self._agent_session_key(user_id, agent_id))
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
+    async def set_agent_session(
+        self,
+        user_id: str,
+        agent_id: str,
+        chat_id: str,
+        bot_id: str | None = None,
+        extra: dict[str, Any] | None = None,
+        ttl: int = CHAT_TTL_SECONDS,
+    ) -> dict[str, Any]:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        now = datetime.now(timezone.utc).isoformat()
+        data: dict[str, Any] = {
+            "user_id": user_id,
+            "agent_id": agent_id,
+            "chat_id": chat_id,
+            "bot_id": bot_id or "",
+            "updated_at": now,
+        }
+        if extra:
+            data.update(extra)
+        await self.client.setex(
+            self._agent_session_key(user_id, agent_id),
+            ttl,
+            json.dumps(data, ensure_ascii=False),
+        )
+        return data
 
     # =========================================================================
     # Legacy History Methods (kept for backward compatibility)

@@ -352,7 +352,7 @@ async def test_perf_e2e_task_execution(http_client, check_service):
 
     for i in range(num_tasks):
         task_data = {
-            "agent_id": "orchestrator",
+            "agent_id": "balbes",
             "description": f"Performance test task {i}",
             "payload": {"test": True, "iteration": i},
         }
