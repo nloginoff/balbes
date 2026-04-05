@@ -24,9 +24,8 @@
 Куда писать по умолчанию: ``<корень_деплоя>/data_for_agent/`` (корень репозитория на проде, не корень ФС).
 Явно: ``--output путь`` или ``EXPORT_CHATS_OUTPUT``.
 
-Подключение к Redis: переменные ``REDIS_*`` / ``REDIS_URL``, без загрузки полного ``Settings``
-(не нужны ``WEB_AUTH_TOKEN``, Postgres и т.д.). Файл ``.env.{ENV}`` или ``.env`` в корне репозитория
-подхватывается автоматически (как у сервисов). Либо явно ``--redis-url``.
+Redis: ``REDIS_*`` / ``REDIS_URL``. Файлы окружения: сначала ``.env``, иначе ``.env.prod``; затем ``.env.{ENV}``
+(если ``ENV=prod``, подтянется ``.env.prod`` поверх). Явно: ``--env-file /path/.env.prod`` или ``--redis-url``.
 """
 
 from __future__ import annotations
@@ -43,24 +42,58 @@ from typing import Any
 
 import redis.asyncio as aioredis
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(message)s",
+)
+logger = logging.getLogger("export_memory_chats")
+
 
 def _project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _load_project_env_file() -> None:
-    """Подмешивает .env.{ENV} или .env из корня репозитория (без импорта shared.config)."""
+def _early_env_file_from_argv() -> Path | None:
+    """Парсит --env-file до основного argparse, чтобы подмешать Redis до чтения флагов."""
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--env-file" and i + 1 < len(argv):
+            return Path(argv[i + 1])
+        if a.startswith("--env-file="):
+            return Path(a.split("=", 1)[1])
+    return None
+
+
+def _load_project_env_file(explicit: Path | None = None) -> None:
+    """Загружает .env из корня деплоя (без shared.config)."""
     try:
         from dotenv import load_dotenv
     except ImportError:
         return
-    env = os.environ.get("ENV", "dev")
     root = _project_root()
-    primary = root / f".env.{env}"
-    fallback = root / ".env"
-    path = primary if primary.is_file() else fallback if fallback.is_file() else None
-    if path:
-        load_dotenv(path, override=False)
+    if explicit is not None:
+        if explicit.is_file():
+            load_dotenv(explicit, override=True)
+            logger.info("Переменные из %s", explicit)
+        else:
+            logger.warning("Файл не найден: %s", explicit)
+        return
+    if (root / ".env").is_file():
+        load_dotenv(root / ".env", override=False)
+    elif (root / ".env.prod").is_file():
+        load_dotenv(root / ".env.prod", override=False)
+        logger.info("Загружен %s (файла .env нет)", root / ".env.prod")
+    env = os.environ.get("ENV", "dev")
+    specific = root / f".env.{env}"
+    if specific.is_file():
+        load_dotenv(specific, override=True)
+
+
+def _redis_url_for_log(url: str) -> str:
+    """Убирает пароль из URL для лога."""
+    if "@" in url and "://" in url:
+        return re.sub(r":([^/@]+)@", r":***@", url, count=1)
+    return url
 
 
 def _redis_url_from_env() -> str:
@@ -75,13 +108,6 @@ def _redis_url_from_env() -> str:
     if password:
         return f"redis://:{password}@{host}:{port}/{db}"
     return f"redis://{host}:{port}/{db}"
-
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(levelname)s %(message)s",
-)
-logger = logging.getLogger("export_memory_chats")
 
 
 def _choose_base_output_dir(cli_output: Path | None) -> Path:
@@ -228,9 +254,15 @@ async def export_all(
 
 
 def main() -> int:
-    _load_project_env_file()
+    _load_project_env_file(_early_env_file_from_argv())
     parser = argparse.ArgumentParser(
         description="Экспорт всех чатов Memory из Redis в каталог (агент + chat_id)."
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Явный путь к .env (обрабатывается первым; иначе .env / .env.prod / .env.{ENV})",
     )
     parser.add_argument(
         "--output",
@@ -256,11 +288,20 @@ def main() -> int:
     output = _choose_base_output_dir(args.output)
     output.mkdir(parents=True, exist_ok=True)
     logger.info("Каталог экспорта: %s", output.resolve())
+    logger.info("Redis: %s", _redis_url_for_log(redis_url))
 
     try:
         exported, skipped = asyncio.run(export_all(redis_url, output, args.dry_run))
     except Exception as e:
-        logger.error("Ошибка экспорта: %s", e)
+        err = str(e)
+        if "Connect call failed" in err or "Connection refused" in err or "111" in err:
+            logger.error(
+                "Redis недоступен по %s. Укажите хост/порт Redis (с хоста к контейнеру — проброшенный порт). "
+                "Пример: ENV=prod ./export_chats_for_agent.sh или --env-file ../.env.prod или --redis-url redis://...",
+                _redis_url_for_log(redis_url),
+            )
+        else:
+            logger.error("Ошибка экспорта: %s", e)
         return 1
 
     logger.info("Готово: экспортировано %d, пропущено пустых %d", exported, skipped)

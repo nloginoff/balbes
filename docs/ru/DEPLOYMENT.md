@@ -1148,7 +1148,7 @@ docker exec balbes-redis redis-cli --scan --pattern "context:*" | xargs docker e
 python3 scripts/export_memory_chats_to_data_for_agent.py
 ```
 
-или `./scripts/export_chats_for_agent.sh`. Подхватывается `.env.{ENV}` или `.env`; Redis — `REDIS_URL` или `REDIS_*`.
+или `./scripts/export_chats_for_agent.sh`. Окружение: при отсутствии `.env` читается `.env.prod`; иначе `.env`, затем `.env.{ENV}` (для прода часто `ENV=prod`). Явно: `--env-file .env.prod`. Redis: `REDIS_URL` или `REDIS_*` (с хоста ВМ к Redis в Docker нужен проброшенный порт на `127.0.0.1`, не имя сервиса `redis` из compose).
 
 ### Qdrant
 
