@@ -981,6 +981,16 @@ class BalbesTelegramBot:
             logger.debug(f"set_chat_settings error: {e}")
         return False
 
+    async def _voice_debug_reply(self, message, enabled: bool, line: str) -> None:
+        """When per-chat debug is on, show voice-pipeline stages (Whisper runs before orchestrator)."""
+        if not enabled:
+            return
+        safe = (line or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        try:
+            await message.reply_text(f"<b>voice</b> {safe}", parse_mode="HTML")
+        except Exception as e:
+            logger.debug("voice debug line failed: %s", e)
+
     @staticmethod
     def _format_debug_trace(
         debug_events: list[dict],
@@ -1391,8 +1401,8 @@ class BalbesTelegramBot:
         if new_debug:
             await update.message.reply_text(
                 "🔍 *Debug включён*\n"
-                "После каждого ответа я буду показывать что делал:\n"
-                "LLM-запросы, инструменты, время выполнения.\n\n"
+                "— голос: этапы скачивание → Whisper → постобработка → агент\n"
+                "— текст: LLM, инструменты, время после ответа оркестратора\n\n"
                 "Отключить: /debug",
                 parse_mode="Markdown",
             )
@@ -2117,6 +2127,7 @@ class BalbesTelegramBot:
             voice = message.voice or message.audio
             if not voice:
                 return
+            voice_debug = False
             duration_sec = getattr(voice, "duration", None)
             logger.info(
                 "Voice: user=%s chat=%s duration_sec=%s file_id=%s",
@@ -2126,24 +2137,60 @@ class BalbesTelegramBot:
                 getattr(voice, "file_id", "")[:20],
             )
 
+            # Same chat resolution as text messages (settings.debug applies to voice stages too)
+            chat_id = await self._get_active_chat(str(user.id))
+            if not chat_id:
+                new_id = await self._create_chat(str(user.id), "Основной чат")
+                if new_id:
+                    await self._set_active_chat(str(user.id), new_id)
+                    chat_id = new_id
+            chat_settings = {"debug": False, "mode": "ask"}
+            if chat_id:
+                chat_settings = await self._get_chat_settings(str(user.id), chat_id)
+            voice_debug = chat_settings.get("debug", False)
+
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                "старт: скачивание файла из Telegram…",
+            )
+
             t_dl = time.monotonic()
             file = await context.bot.get_file(voice.file_id)
             ogg_bytes = bytes(await file.download_as_bytearray())
+            dl_s = time.monotonic() - t_dl
             logger.info(
                 "Voice: downloaded %s bytes in %.1fs",
                 len(ogg_bytes),
-                time.monotonic() - t_dl,
+                dl_s,
+            )
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                f"скачано {len(ogg_bytes)} байт за {dl_s:.1f} с",
             )
 
             # Transcribe
             from skills.whisper_transcribe import correct_transcription, transcribe_voice
 
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                "Whisper: распознавание (на CPU может занять много времени)…",
+            )
+
             t_tr = time.monotonic()
             raw_text = await transcribe_voice(ogg_bytes, duration_hint_sec=duration_sec)
+            tr_s = time.monotonic() - t_tr
             logger.info(
                 "Voice: transcribe done %s chars in %.1fs",
                 len(raw_text),
-                time.monotonic() - t_tr,
+                tr_s,
+            )
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                f"Whisper: готово, {len(raw_text)} символов за {tr_s:.1f} с",
             )
 
             if not raw_text.strip():
@@ -2151,12 +2198,31 @@ class BalbesTelegramBot:
                 return
 
             # Correct via LLM
+            await self._voice_debug_reply(message, voice_debug, "LLM: постобработка расшифровки…")
             t_co = time.monotonic()
             corrected = await correct_transcription(raw_text, http_client=self.http_client)
-            logger.info("Voice: LLM correction in %.1fs", time.monotonic() - t_co)
+            co_s = time.monotonic() - t_co
+            logger.info("Voice: LLM correction in %.1fs", co_s)
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                f"LLM: готово за {co_s:.1f} с"
+                + (" (длинный текст — коррекция пропущена)" if len(raw_text) > 8000 else ""),
+            )
 
             # Show what was heard (may be many messages for long audio)
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                "отправляю блок «Услышал» в чат…",
+            )
             await _reply_voice_transcription(message, corrected)
+
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                "передаю текст агенту (оркестратор)…",
+            )
 
             # Process as regular text message (starts its own typing loop)
             await self._process_user_input(
@@ -2184,6 +2250,11 @@ class BalbesTelegramBot:
             )
         except Exception as e:
             logger.error(f"Voice handling failed: {e}", exc_info=True)
+            await self._voice_debug_reply(
+                message,
+                voice_debug,
+                f"ошибка: {type(e).__name__}: {e!s}"[:500],
+            )
             err_detail = f"{type(e).__name__}: {e or '(нет описания)'}"
             if len(err_detail) > 3800:
                 err_detail = err_detail[:3797] + "..."
