@@ -57,6 +57,27 @@ Requires `ffmpeg` and `pip install openai-whisper`. Optional preload: `ENV=prod 
 
 ---
 
+## `config/agents/*.yaml` (agent manifests)
+
+Git-safe YAML per logical agent: optional per-mode tool allowlists and **`delegate_targets`** (HTTP base URLs for `delegate_to_agent`).
+
+Example [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml):
+
+```yaml
+id: balbes
+delegate_targets:
+  coder: http://127.0.0.1:8001
+  blogger: http://127.0.0.1:8105
+```
+
+Inter-service trust: when `DELEGATION_SHARED_SECRET` is set, callers must send header `X-Balbes-Delegation-Key` with that value. If unset, execute endpoints do not require the header (local dev).
+
+Loader: [`shared/agent_manifest.py`](../../shared/agent_manifest.py).
+
+Optional **`telegram:`** block toggles per-agent Telegram UI (voice, command menu, model switch, multi-chat, memory commands for the orchestrator; `posts_commands`, business group capture, etc. for blogger). See `TelegramFeatureFlags` in the same module. Example: [`config/agents/blogger.yaml`](../../config/agents/blogger.yaml).
+
+---
+
 ## `config/providers.yaml`
 
 This is the main configuration file for models, agents, and skills.

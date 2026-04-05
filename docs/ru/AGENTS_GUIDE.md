@@ -2,12 +2,13 @@
 
 ## Обзор
 
-В системе реализованы два агента, взаимодействующих через Оркестратор:
+В системе основные роли: оркестратор (Balbes), Coder и сервис Blogger. Делегирование специалистам выполняется **только по HTTP** (`POST /api/v1/agent/execute`), см. [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) и [`shared/agent_execute_contract.py`](../../shared/agent_execute_contract.py).
 
 | Агент | ID | Emoji | Назначение |
 |-------|----|-------|-----------|
-| Balbes (Оркестратор) | `orchestrator` | 🤖 | Главный ассистент пользователя, точка входа через Telegram |
-| Coder | `coder` | 💻 | Специалист по написанию, анализу и выполнению кода |
+| Balbes (Оркестратор) | `balbes` | 🤖 | Главный ассистент, точка входа через Telegram |
+| Coder | `coder` | 💻 | Код, файлы, тесты, git (микросервис) |
+| Blogger | `blogger` | ✍️ | Черновики, посты, каналы (микросервис; краткий ответ по делегированию) |
 
 ---
 
@@ -15,10 +16,10 @@
 
 ### Архитектура
 
-`OrchestratorAgent` реализован в `services/orchestrator/agent.py`. Он не является классом-наследником `BaseAgent` — это самостоятельный агент с полным набором возможностей.
+`OrchestratorAgent` реализован в [`services/orchestrator/agent.py`](../../services/orchestrator/agent.py), наследует [`BaseAgent`](../../shared/agent_base.py) и координирует инструменты, память и задачи.
 
 ```python
-class OrchestratorAgent:
+class OrchestratorAgent(BaseAgent):
     # Компоненты
     tool_dispatcher: ToolDispatcher   # регистрирует и вызывает инструменты
     _workspaces: dict[str, AgentWorkspace]  # кэш MD-файлов агентов
@@ -78,6 +79,10 @@ class OrchestratorAgent:
 - `readagentlogs` → `read_agent_logs`
 - `delegatetoagent` → `delegate_to_agent`
 - `executecommand` → `execute_command` и т.д.
+
+### Делегирование (HTTP)
+
+Инструмент `delegate_to_agent` обращается к микросервисам **только по HTTP**: `POST /api/v1/agent/execute` на базовый URL из [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) (`delegate_targets`) или из портов по умолчанию для `coder` и `blogger`. Заголовок доверия: `X-Balbes-Delegation-Key` при установленном `DELEGATION_SHARED_SECRET`. Внутрипроцессного запуска «второго агента» через LLM оркестратора больше нет.
 
 ---
 

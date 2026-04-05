@@ -32,6 +32,10 @@ from telegram.ext import (
     filters,
 )
 
+from shared.agent_manifest import get_agent_manifest
+from shared.telegram_app.text import split_long_text
+from shared.telegram_app.voice import business_bot_handle_voice
+
 from .anonymizer import AnonymizationEngine
 from .post_queue import post_content_ru_en
 
@@ -58,22 +62,6 @@ logger = logging.getLogger("blogger.business_bot")
 
 _TG_LIMIT = 4096
 
-
-def _split_long(text: str, limit: int = _TG_LIMIT) -> list[str]:
-    """Split text into Telegram-safe chunks."""
-    if len(text) <= limit:
-        return [text]
-    chunks, start = [], 0
-    while start < len(text):
-        end = start + limit
-        if end < len(text):
-            cut = text.rfind("\n", start, end)
-            end = cut if cut > start else end
-        chunks.append(text[start:end])
-        start = end
-    return chunks
-
-
 # In-memory state: are we waiting for check-in reply from owner?
 _WAITING_CHECKIN: dict[int, bool] = {}
 # In-memory state: are we waiting for edit instructions for a post?
@@ -99,28 +87,56 @@ class BusinessBot:
         self.agent = agent
         self._http = http_client
         self._app: Application | None = None
+        self._tg = get_agent_manifest("blogger").telegram
 
     def _owner_filter(self) -> filters.BaseFilter:
         """Return a filter that passes only messages from the owner."""
         return filters.User(user_id=self.owner_tg_id)
 
     async def _post_init(self, app: Application) -> None:
-        """Set bot commands menu visible in Telegram."""
-        commands = [
-            BotCommand("generate", "Сгенерировать пост по чатам"),
-            BotCommand("drafts", "Черновики постов (полный текст)"),
-            BotCommand("draft", "Один черновик по ID (8 символов)"),
-            BotCommand("published", "Опубликованные посты"),
-            BotCommand("queue", "Очередь на публикацию"),
-            BotCommand("summary", "Бизнес-саммари за день"),
-            BotCommand("model", "Выбрать LLM модель"),
-            BotCommand("chats", "Список чатов / переключить"),
-            BotCommand("newchat", "Создать новый чат"),
-            BotCommand("rename", "Переименовать чат"),
-            BotCommand("clear", "Очистить историю чата"),
-            BotCommand("list_chats", "Зарегистрированные бизнес-группы"),
-            BotCommand("help", "Справка"),
-        ]
+        """Set bot commands menu visible in Telegram (filtered by manifest)."""
+        tg = self._tg
+        if not tg.commands_menu:
+            try:
+                await app.bot.set_my_commands([])
+            except Exception as exc:
+                logger.warning("Could not clear bot commands: %s", exc)
+            return
+
+        commands: list[BotCommand] = []
+        if tg.posts_commands:
+            commands.extend(
+                [
+                    BotCommand("generate", "Сгенерировать пост по чатам"),
+                    BotCommand("drafts", "Черновики постов (полный текст)"),
+                    BotCommand("draft", "Один черновик по ID (8 символов)"),
+                    BotCommand("published", "Опубликованные посты"),
+                    BotCommand("queue", "Очередь на публикацию"),
+                    BotCommand("summary", "Бизнес-саммари за день"),
+                ]
+            )
+        if tg.model_switch:
+            commands.append(BotCommand("model", "Выбрать LLM модель"))
+        if tg.multi_chat:
+            commands.extend(
+                [
+                    BotCommand("chats", "Список чатов / переключить"),
+                    BotCommand("newchat", "Создать новый чат"),
+                    BotCommand("rename", "Переименовать чат"),
+                    BotCommand("clear", "Очистить историю чата"),
+                ]
+            )
+        if tg.business_groups:
+            commands.append(BotCommand("list_chats", "Зарегистрированные бизнес-группы"))
+        if tg.register_business_chat:
+            commands.append(
+                BotCommand("register_business_chat", "Добавить бизнес-группу"),
+            )
+        if tg.help_command:
+            commands.append(BotCommand("help", "Справка"))
+        if tg.start_command:
+            commands.insert(0, BotCommand("start", "Начать"))
+
         try:
             await app.bot.set_my_commands(commands)
             logger.info("Bot commands menu updated (%d commands)", len(commands))
@@ -132,54 +148,61 @@ class BusinessBot:
         app = Application.builder().token(self.token).post_init(self._post_init).build()
 
         owner = self._owner_filter()
+        tg = self._tg
 
-        # Commands — owner only
-        app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
-        app.add_handler(CommandHandler("help", self._cmd_help, filters=owner))
-        app.add_handler(CommandHandler("model", self._cmd_model, filters=owner))
-        app.add_handler(CommandHandler("chats", self._cmd_chats, filters=owner))
-        app.add_handler(CommandHandler("newchat", self._cmd_newchat, filters=owner))
-        app.add_handler(CommandHandler("rename", self._cmd_rename, filters=owner))
-        app.add_handler(CommandHandler("clear", self._cmd_clear, filters=owner))
-        app.add_handler(
-            CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
-        )
-        app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
-        app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
-        app.add_handler(CommandHandler("draft", self._cmd_draft_one, filters=owner))
-        app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
-        app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
-        app.add_handler(CommandHandler("generate", self._cmd_generate, filters=owner))
-        app.add_handler(CommandHandler("summary", self._cmd_summary, filters=owner))
-
-        # Inline callbacks
-        app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
-        app.add_handler(CallbackQueryHandler(self._cb_chat_selected, pattern="^bbot_chat:"))
-
-        # Group messages: anonymize and store (all users in registered groups)
-        app.add_handler(
-            MessageHandler(
-                filters.TEXT & filters.ChatType.GROUPS,
-                self._handle_group_message,
+        if tg.start_command:
+            app.add_handler(CommandHandler("start", self._cmd_start, filters=owner))
+        if tg.help_command:
+            app.add_handler(CommandHandler("help", self._cmd_help, filters=owner))
+        if tg.model_switch:
+            app.add_handler(CommandHandler("model", self._cmd_model, filters=owner))
+        if tg.multi_chat:
+            app.add_handler(CommandHandler("chats", self._cmd_chats, filters=owner))
+            app.add_handler(CommandHandler("newchat", self._cmd_newchat, filters=owner))
+            app.add_handler(CommandHandler("rename", self._cmd_rename, filters=owner))
+            app.add_handler(CommandHandler("clear", self._cmd_clear, filters=owner))
+        if tg.register_business_chat:
+            app.add_handler(
+                CommandHandler("register_business_chat", self._cmd_register_chat, filters=owner)
             )
-        )
+        if tg.business_groups:
+            app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
+        if tg.posts_commands:
+            app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
+            app.add_handler(CommandHandler("draft", self._cmd_draft_one, filters=owner))
+            app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
+            app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
+            app.add_handler(CommandHandler("generate", self._cmd_generate, filters=owner))
+            app.add_handler(CommandHandler("summary", self._cmd_summary, filters=owner))
 
-        # Voice / audio — owner private (same STT stack as main bot)
-        app.add_handler(
-            MessageHandler(
-                (filters.VOICE | filters.AUDIO) & filters.ChatType.PRIVATE & owner,
-                self._handle_voice,
-            )
-        )
-        # Private messages — ONLY from owner (skip lines starting with / so commands go to CommandHandler)
-        app.add_handler(
-            MessageHandler(
-                filters.TEXT & filters.Regex(r"^(?!/).") & filters.ChatType.PRIVATE & owner,
-                self._handle_private_message,
-            )
-        )
+        if tg.model_switch:
+            app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
+        if tg.multi_chat:
+            app.add_handler(CallbackQueryHandler(self._cb_chat_selected, pattern="^bbot_chat:"))
 
-        # Catch-all for private messages from strangers — log and ignore
+        if tg.business_group_capture:
+            app.add_handler(
+                MessageHandler(
+                    filters.TEXT & filters.ChatType.GROUPS,
+                    self._handle_group_message,
+                )
+            )
+
+        if tg.voice:
+            app.add_handler(
+                MessageHandler(
+                    (filters.VOICE | filters.AUDIO) & filters.ChatType.PRIVATE & owner,
+                    self._handle_voice,
+                )
+            )
+        if tg.private_conversation:
+            app.add_handler(
+                MessageHandler(
+                    filters.TEXT & filters.Regex(r"^(?!/).") & filters.ChatType.PRIVATE & owner,
+                    self._handle_private_message,
+                )
+            )
+
         app.add_handler(
             MessageHandler(
                 filters.ChatType.PRIVATE & ~owner,
@@ -300,7 +323,7 @@ class BusinessBot:
                     f"{p.get('post_type', '')} · {p.get('status', '')} ──\n\n"
                 )
                 body = f"RU:\n{ru or '(пусто)'}\n\nEN:\n{en or '(пусто)'}"
-                for chunk in _split_long(head + body, limit=_TG_LIMIT):
+                for chunk in split_long_text(head + body, limit=_TG_LIMIT):
                     await msg.reply_text(chunk)
         except Exception as exc:
             logger.exception("_cmd_drafts: %s", exc)
@@ -335,7 +358,7 @@ class BusinessBot:
                 f"{p.get('post_type', '')} · {p.get('status', '')} ──\n\n"
             )
             body = f"RU:\n{ru or '(пусто)'}\n\nEN:\n{en or '(пусто)'}"
-            for chunk in _split_long(head + body, limit=_TG_LIMIT):
+            for chunk in split_long_text(head + body, limit=_TG_LIMIT):
                 await msg.reply_text(chunk)
         except Exception as exc:
             logger.exception("_cmd_draft_one: %s", exc)
@@ -436,7 +459,7 @@ class BusinessBot:
                 "Добавь меня в рабочие группы командой /register_business_chat"
             )
             return
-        for chunk in _split_long(summary):
+        for chunk in split_long_text(summary):
             await msg.reply_text(chunk, parse_mode="Markdown")
 
     # ── Multi-chat commands ───────────────────────────────────────────────────
@@ -638,7 +661,7 @@ class BusinessBot:
         await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
 
         async def reply_fn(t: str) -> None:
-            for chunk in _split_long(t):
+            for chunk in split_long_text(t):
                 await msg.reply_text(chunk, parse_mode="Markdown")
 
         await self.agent.handle_owner_message(owner_id, text, reply_fn)
@@ -656,68 +679,24 @@ class BusinessBot:
         await self._route_owner_natural_language(user.id, msg.text or "", msg, context)
 
     async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Transcribe voice/audio and route like text (same stack as main Telegram bot)."""
+        """Transcribe voice/audio via shared pipeline, then route like text (как у оркестратора)."""
         msg = update.effective_message
         user = update.effective_user
         if not msg or not user:
             return
 
         owner_id = user.id
-        voice = msg.voice or msg.audio
-        if not voice:
-            return
-
-        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.RECORD_VOICE)
-        try:
-            from services.orchestrator.skills.whisper_transcribe import (
-                correct_transcription,
-                transcribe_voice,
-            )
-        except ImportError:
-            await msg.reply_text(
-                "Голосовые недоступны: установите зависимости оркестратора "
-                "(openai-whisper, ffmpeg) на сервере blogger."
-            )
-            return
-
-        duration_sec = getattr(voice, "duration", None)
-        try:
-            file = await context.bot.get_file(voice.file_id)
-            ogg_bytes = bytes(await file.download_as_bytearray())
-        except Exception as exc:
-            logger.exception("business_bot voice download: %s", exc)
-            await msg.reply_text(f"Не удалось скачать аудио: {exc!s:.200}")
-            return
-
-        http = self._http or httpx.AsyncClient(timeout=300.0)
-        own_http = self._http is None
-        try:
-            tr = await transcribe_voice(
-                ogg_bytes,
-                duration_hint_sec=duration_sec,
-                http_client=http,
-            )
-            text = (tr.text or "").strip()
-            if not text:
-                await msg.reply_text("Пустая расшифровка.")
-                return
-            try:
-                chat_id = await self.agent.bbot_get_active_chat(owner_id)
-                model_id = await self.agent.bbot_get_chat_model(owner_id, chat_id)
-                text = await correct_transcription(
-                    text,
-                    http_client=http,
-                    chat_model_id=model_id,
-                )
-            except Exception as exc:
-                logger.warning("business_bot correct_transcription: %s", exc)
-            await self._route_owner_natural_language(owner_id, text, msg, context)
-        except Exception as exc:
-            logger.exception("business_bot transcribe_voice: %s", exc)
-            await msg.reply_text(f"Ошибка расшифровки: {exc!s:.400}")
-        finally:
-            if own_http:
-                await http.aclose()
+        chat_id = await self.agent.bbot_get_active_chat(owner_id)
+        model_id = await self.agent.bbot_get_chat_model(owner_id, chat_id)
+        tg = self._tg
+        await business_bot_handle_voice(
+            msg,
+            context,
+            http_client=self._http,
+            chat_model_id=model_id,
+            route_text_callback=self._route_owner_natural_language,
+            show_preview=tg.voice_transcription_preview,
+        )
 
     async def _handle_stranger(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Silently ignore private messages from anyone who is not the owner.

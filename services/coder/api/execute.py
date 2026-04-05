@@ -5,26 +5,20 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from shared.agent_execute_contract import (
+    AgentExecuteRequest,
+    verify_delegation_optional,
+)
 
 logger = logging.getLogger("coder.api.execute")
 
 router = APIRouter(tags=["agent"])
 
 
-class ExecuteRequest(BaseModel):
-    task: str = Field(..., min_length=1)
-    user_id: str = "unknown"
-    chat_id: str = "default"
-    model_id: str | None = None
-    mode: str = "agent"
-    trace_id: str | None = None
-    debug: bool = False
-
-
-@router.post("/api/v1/agent/execute")
-async def agent_execute(request: Request, body: ExecuteRequest) -> dict[str, Any]:
+@router.post("/api/v1/agent/execute", dependencies=[Depends(verify_delegation_optional)])
+async def agent_execute(request: Request, body: AgentExecuteRequest) -> dict[str, Any]:
     engine = getattr(request.app.state, "coding_engine", None)
     if engine is None:
         raise HTTPException(status_code=503, detail="Coder LLM engine not initialized")

@@ -162,6 +162,13 @@ class Settings(BaseSettings):
         default=None,
         description="Base URL for coder microservice (default http://127.0.0.1:{coder_port})",
     )
+    delegation_shared_secret: str | None = Field(
+        default=None,
+        description=(
+            "If set, POST /api/v1/agent/execute on delegate targets must send "
+            "header X-Balbes-Delegation-Key with this value (inter-service trust)."
+        ),
+    )
     memory_service_port: int = Field(default=8100)
     memory_service_url: str = Field(default="http://localhost:8100")
     skills_registry_port: int = Field(default=8101)
@@ -213,6 +220,13 @@ class Settings(BaseSettings):
         if self.coder_service_url:
             return self.coder_service_url.rstrip("/")
         return f"http://127.0.0.1:{self.coder_port}"
+
+    @property
+    def blogger_base_url(self) -> str:
+        """HTTP base URL for the blogger microservice (delegation / tools)."""
+        if self.blogger_service_url:
+            return self.blogger_service_url.rstrip("/")
+        return f"http://127.0.0.1:{self.blogger_service_port}"
 
     # =============================================================================
     # Whisper voice transcription (openai-whisper package, local inference)
@@ -319,6 +333,10 @@ class Settings(BaseSettings):
     # Blogger service
     # =============================================================================
     blogger_service_port: int = Field(default=8105)
+    blogger_service_url: str | None = Field(
+        default=None,
+        description="Base URL for blogger microservice (default http://127.0.0.1:{blogger_service_port})",
+    )
     business_bot_token: str | None = Field(
         default=None, description="Telegram bot token for silent business chat watcher + check-in"
     )

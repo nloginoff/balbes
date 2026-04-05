@@ -12,7 +12,7 @@ Balbes has three active agents that work together:
 | **Coder** | Development agent — reads/writes code, runs commands, works in background | 18103 |
 | **Blogger** | Content agent — generates blog posts, monitors business chats, publishes to Telegram channels | 18105 |
 
-The Orchestrator receives every message. For coding tasks it delegates to Coder; for content generation it delegates to the Blogger service via REST API.
+The Orchestrator receives every message. Delegation to Coder and Blogger uses **`POST /api/v1/agent/execute`** only (see [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) and [`shared/agent_execute_contract.py`](../../shared/agent_execute_contract.py)). Optional shared secret: `DELEGATION_SHARED_SECRET` + header `X-Balbes-Delegation-Key`.
 
 ---
 

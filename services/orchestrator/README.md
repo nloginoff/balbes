@@ -52,7 +52,7 @@ The **Orchestrator** is the central coordination hub of the Balbes Multi-Agent S
    - Queries Skills Registry
    - Manages context and results
 
-2. **TelegramBot** (`telegram_bot.py`)
+2. **TelegramBot** (`telegram_bot.py` → реализация в `shared/telegram_app/balbes_bot.py`)
    - `/start` - Initialize conversation
    - `/help` - Show commands
    - `/status` - Check service status

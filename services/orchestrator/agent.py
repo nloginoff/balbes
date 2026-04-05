@@ -29,9 +29,7 @@ from tools import (
     AVAILABLE_TOOLS,
     ToolDispatcher,
     build_heartbeat_tools,
-    build_subagent_tools,
     get_tools_for_mode,
-    resolve_tools_for_agent,
 )
 from workspace import AgentWorkspace
 
@@ -57,6 +55,8 @@ class _LiveDebugList(list):
 
 
 from shared.agent_base import BaseAgent
+from shared.agent_execute_contract import delegation_headers
+from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent_with_manifest
 from shared.config import get_settings
 
 settings = get_settings()
@@ -545,7 +545,7 @@ class OrchestratorAgent(BaseAgent):
             mode: str = ctx.get("mode", "agent")
 
             _pc = get_providers_config()
-            resolved_tools = resolve_tools_for_agent(effective_agent_id, _pc)
+            resolved_tools = resolve_tools_for_agent_with_manifest(effective_agent_id, mode, _pc)
 
             # For heartbeat: read inter-round delay from config (guards against rate limits)
             between_rounds_delay: float = 0.0
@@ -887,17 +887,24 @@ class OrchestratorAgent(BaseAgent):
                 return a["default_model"]
         return fallback
 
-    async def _invoke_coder_http(
+    async def _invoke_agent_http(
         self,
+        agent_id: str,
         task: str,
         context: dict[str, Any],
         mode: str = "agent",
         debug_events: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Run the coder LLM loop via the coder microservice."""
+        """Run a sub-agent via its microservice POST /api/v1/agent/execute."""
         if not self.http_client:
-            return "Coder HTTP: HTTP client not configured."
-        url = f"{settings.coder_base_url}/api/v1/agent/execute"
+            return "HTTP delegation: HTTP client not configured."
+        base = get_delegate_base_url(agent_id)
+        if not base:
+            return (
+                f"HTTP delegation: agent '{agent_id}' has no base URL. "
+                "Configure delegate_targets in config/agents/balbes.yaml (or coder/blogger ports in .env)."
+            )
+        url = f"{base}/api/v1/agent/execute"
         payload = {
             "task": task,
             "user_id": context.get("user_id", "unknown"),
@@ -906,19 +913,25 @@ class OrchestratorAgent(BaseAgent):
             "mode": mode,
             "debug": bool(context.get("debug")),
         }
+        headers = delegation_headers(settings.delegation_shared_secret)
         try:
-            resp = await self.http_client.post(url, json=payload, timeout=600.0)
+            resp = await self.http_client.post(url, json=payload, headers=headers, timeout=600.0)
             resp.raise_for_status()
             data = resp.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Coder HTTP {e.response.status_code}: {e.response.text[:500]}")
-            return f"Coder service HTTP error: {e.response.status_code}"
+            logger.error(
+                "Agent HTTP %s %s: %s",
+                agent_id,
+                e.response.status_code,
+                e.response.text[:500],
+            )
+            return f"Agent '{agent_id}' HTTP error: {e.response.status_code}"
         except Exception as e:
-            logger.error(f"Coder HTTP request failed: {e}", exc_info=True)
-            return f"Coder service unreachable: {type(e).__name__}: {e}"
+            logger.error("Agent HTTP %s request failed: %s", agent_id, e, exc_info=True)
+            return f"Agent '{agent_id}' unreachable: {type(e).__name__}: {e}"
 
         if data.get("status") != "success":
-            return data.get("error") or str(data)
+            return str(data.get("error") or data)
         out = data.get("output") or ""
         ev = data.get("debug_events")
         if debug_events is not None and isinstance(ev, list):
@@ -934,41 +947,17 @@ class OrchestratorAgent(BaseAgent):
     ) -> str:
         """
         Synchronous delegation — blocks until the sub-agent finishes.
-        Uses an isolated ToolDispatcher so concurrent background calls are safe.
-        Coder runs in a separate microservice (HTTP).
+        All specialist agents run in separate microservices (HTTP only).
         """
-        if agent_id == "coder":
-            parent_debug = self.tool_dispatcher._debug_collector if self.tool_dispatcher else None
-            logger.info(f"Delegating to 'coder' via HTTP (mode={mode}): {task[:60]}…")
-            text = await self._invoke_coder_http(task, context, mode, parent_debug)
-            return f"[Agent coder]:\n{text}"
-
-        model_id = self._resolve_agent_model(
-            agent_id, context.get("model_id") or settings.default_chat_model
-        )
+        if not get_delegate_base_url(agent_id):
+            return (
+                f"Delegation to '{agent_id}' is not available: no HTTP endpoint configured. "
+                "Add delegate_targets in config/agents/balbes.yaml (or use default coder/blogger ports)."
+            )
         parent_debug = self.tool_dispatcher._debug_collector if self.tool_dispatcher else None
-        sub_dispatcher = self._make_sub_dispatcher(agent_id, parent_debug_collector=parent_debug)
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._get_workspace(agent_id).config.system_prompt},
-            {"role": "user", "content": task},
-        ]
-        logger.info(f"Delegating to '{agent_id}' (mode={mode}, model={model_id}): {task[:60]}…")
-        response_text, _, _usage = await self._run_llm_with_tools(
-            messages=messages,
-            model_id=model_id,
-            user_id=context.get("user_id", "unknown"),
-            chat_id=context.get("chat_id", "default"),
-            task_id=f"sub-{agent_id}-{uuid4().hex[:8]}",
-            source=context.get("source", "user"),
-            agent_id=agent_id,
-            debug_events=sub_dispatcher._debug_collector,
-            mode=mode,
-            override_tools=build_subagent_tools(
-                resolve_tools_for_agent(agent_id, get_providers_config())
-            ),
-            dispatcher=sub_dispatcher,
-        )
-        return response_text
+        logger.info(f"Delegating to '{agent_id}' via HTTP (mode={mode}): {task[:60]}…")
+        text = await self._invoke_agent_http(agent_id, task, context, mode, parent_debug)
+        return f"[Agent {agent_id}]:\n{text}"
 
     async def run_agent_background(
         self,
@@ -990,14 +979,6 @@ class OrchestratorAgent(BaseAgent):
             existing.cancel()
             logger.info(f"Cancelled previous background task for {key}")
 
-        model_id = self._resolve_agent_model(
-            agent_id, context.get("model_id") or settings.default_chat_model
-        )
-        sub_dispatcher = self._make_sub_dispatcher(agent_id)
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._get_workspace(agent_id).config.system_prompt},
-            {"role": "user", "content": task},
-        ]
         task_id = f"bg-{agent_id}-{uuid4().hex[:8]}"
 
         # Shared debug buffer: events are appended by _run_llm_with_tools and
@@ -1007,25 +988,15 @@ class OrchestratorAgent(BaseAgent):
         async def _run_bg() -> None:
             status, result_text = "completed", ""
             try:
-                if agent_id == "coder":
-                    result_text = await self._invoke_coder_http(
-                        task, context, mode, debug_events=bg_debug
+                if not get_delegate_base_url(agent_id):
+                    result_text = (
+                        f"Delegation to '{agent_id}' unavailable: no HTTP endpoint. "
+                        "Configure config/agents/balbes.yaml delegate_targets."
                     )
+                    status = "error"
                 else:
-                    result_text, _, _bg_usage = await self._run_llm_with_tools(
-                        messages=messages,
-                        model_id=model_id,
-                        user_id=user_id,
-                        chat_id=context.get("chat_id", "default"),
-                        task_id=task_id,
-                        source=context.get("source", "user"),
-                        agent_id=agent_id,
-                        mode=mode,
-                        override_tools=build_subagent_tools(
-                            resolve_tools_for_agent(agent_id, get_providers_config())
-                        ),
-                        dispatcher=sub_dispatcher,
-                        debug_events=bg_debug,
+                    result_text = await self._invoke_agent_http(
+                        agent_id, task, context, mode, debug_events=bg_debug
                     )
             except asyncio.CancelledError:
                 status, result_text = "cancelled", "Задача отменена."

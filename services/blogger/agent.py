@@ -1090,6 +1090,23 @@ class BloggerAgent:
             logger.error("_dispatch_conversation_tool %s error: %s", name, exc)
             return f"Ошибка при выполнении {name}: {exc}"
 
+    async def execute_delegate_task(self, task: str, user_id: str = "unknown") -> str:
+        """
+        Single LLM response for HTTP delegation from the orchestrator (POST /api/v1/agent/execute).
+        Does not use the business-bot tool loop; answers as the blogger persona from workspace MD.
+        """
+        identity = _read_workspace_file("IDENTITY.md")
+        soul = _read_workspace_file("SOUL.md")
+        system = (
+            f"{identity}\n\n{soul}\n\n"
+            "Задача пришла от главного оркестратора (делегирование). "
+            "Отвечай по существу на русском, в стиле блогера: черновики, посты, каналы, саммари — "
+            "если нужно уточнение, скажи что именно."
+        )
+        msgs = _llm_messages(system, task)
+        out = await self._call_llm(msgs, self.model)
+        return (out or "").strip() or "(пустой ответ модели)"
+
     async def close(self) -> None:
         if self._http:
             await self._http.aclose()

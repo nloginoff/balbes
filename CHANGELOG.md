@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Telegram UI по манифесту** — `TelegramFeatureFlags` в [`shared/agent_manifest.py`](shared/agent_manifest.py), блок `telegram:` в [`config/agents/balbes.yaml`](config/agents/balbes.yaml) / [`config/agents/blogger.yaml`](config/agents/blogger.yaml). Оркестраторский бот и бизнес-бот блогера регистрируют команды и хендлеры по флагам; общие [`shared/telegram_app/text.py`](shared/telegram_app/text.py) и [`shared/telegram_app/voice.py`](shared/telegram_app/voice.py) для текста и STT.
+- **Единая архитектура делегирования** — `delegate_to_agent` вызывает только HTTP `POST /api/v1/agent/execute` (Coder и Blogger); общий контракт [`shared/agent_execute_contract.py`](shared/agent_execute_contract.py), опциональный заголовок `X-Balbes-Delegation-Key` при заданном `DELEGATION_SHARED_SECRET`. Манифест оркестратора [`config/agents/balbes.yaml`](config/agents/balbes.yaml): `delegate_targets` и пер-режимные allowlist инструментов через [`shared/agent_manifest.py`](shared/agent_manifest.py).
+- **Blogger execute API** — [`services/blogger/api/execute.py`](services/blogger/api/execute.py) и метод `BloggerAgent.execute_delegate_task()` для ответов по делегированию.
+- **Telegram UI оркестратора** — реализация перенесена в [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py); [`services/orchestrator/telegram_bot.py`](services/orchestrator/telegram_bot.py) остаётся точкой входа (`python -m services.orchestrator.telegram_bot`).
+- Пример второго бота: [`scripts/run_second_orchestrator_bot.example.sh`](scripts/run_second_orchestrator_bot.example.sh).
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
 
 ### Changed

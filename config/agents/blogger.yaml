@@ -1,0 +1,25 @@
+# Blogger business bot (config/agents — без секретов).
+# Все ключи `telegram:` по умолчанию true; задайте false, чтобы отключить фичу только у этого агента.
+
+id: blogger
+
+# UI Telegram: голос, меню, команды постов, бизнес-группы и т.д.
+# Пример для «облегчённого» бота второго блогера:
+# telegram:
+#   voice: false
+#   posts_commands: true
+#   business_groups: false
+
+telegram:
+  voice: true
+  commands_menu: true
+  model_switch: true
+  multi_chat: true
+  posts_commands: true
+  business_groups: true
+  business_group_capture: true
+  private_conversation: true
+  register_business_chat: true
+  start_command: true
+  help_command: true
+  voice_transcription_preview: true
