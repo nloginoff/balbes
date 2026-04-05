@@ -1142,6 +1142,15 @@ docker exec balbes-redis redis-cli --scan --pattern "context:*" | xargs docker e
 # Или настроить eviction policy (уже в docker-compose: allkeys-lru)
 ```
 
+**Экспорт всех чатов Memory (Redis) на диск** — скрипт обходит ключи `chats:*`, сохраняет метаданные и полную историю в каталоги вида `{agent_id}__{chat_id}/` (см. `meta.json`, `history.json` внутри):
+
+```bash
+cd /path/to/balbes-agents
+PYTHONPATH=. python scripts/export_memory_chats_to_data_for_agent.py --output /data_for_agent
+```
+
+Используются те же переменные Redis, что и у сервисов (`REDIS_*` / `.env.prod`), либо явно `--redis-url`.
+
 ### Qdrant
 
 ```python
