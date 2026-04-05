@@ -26,6 +26,7 @@ help:
 	@echo "  make prod-restart    - Restart all production services"
 	@echo "  make prod-logs       - Show all production logs"
 	@echo "  make prod-status     - Show production services status"
+	@echo "  make whisper-prefetch - Download/load Whisper weights (ENV=prod); avoids first-voice delay"
 	@echo ""
 	@echo "🗄️  Database:"
 	@echo "  make db-init         - Initialize PostgreSQL schema"
@@ -138,6 +139,11 @@ prod-logs:
 prod-status:
 	@echo "📊 Production Services Status:"
 	@docker-compose -f docker-compose.prod.yml ps
+
+# Pre-download openai-whisper weights (same WHISPER_* as orchestrator; may download multi-GB)
+whisper-prefetch:
+	@echo "🎤 Prefetching Whisper model (ENV=prod)..."
+	@cd "$(CURDIR)" && ENV=prod . .venv/bin/activate && python scripts/prefetch_whisper.py --env prod
 
 # =============================================================================
 # Database Operations
