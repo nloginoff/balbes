@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Скрипт **`scripts/export_memory_chats_to_data_for_agent.py`** — выгрузка всех чатов Memory из Redis в каталог (по умолчанию `/data_for_agent`), папки `{agent_id}__{chat_id}/` с `meta.json` и полной `history.json`. Документация: [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md) (раздел Redis).
+- Скрипт **`scripts/export_memory_chats_to_data_for_agent.py`** (+ обёртка **`scripts/export_chats_for_agent.sh`**) — выгрузка всех чатов Memory из Redis в `/data_for_agent`, папки `{agent_id}__{chat_id}/`. Документация: [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md) (раздел Redis).
 - **Единая матрица slash-команд Telegram** — [`shared/telegram_app/telegram_command_matrix.py`](shared/telegram_app/telegram_command_matrix.py): порядок меню и регистрация обработчиков для оркестратора и бизнес-бота блогера по `TelegramFeatureFlags` и [`config/agents/*.yaml`](config/agents/balbes.yaml).
 - **Memory namespace для Telegram-агентов** — [`shared/telegram_app/memory_namespace.py`](shared/telegram_app/memory_namespace.py): канонический ключ `{agent_id}_{telegram_user_id}`; для блогера запись в `blogger_<id>`, чтение с fallback на legacy `bbot_<id>`. Класс `TelegramMemoryNamespace` для подключения новых сервисов без дублирования формулы `user_id`.
 - **Паритет команд блогера** с оркестратором (через те же флаги `telegram:`): status, tasks, agents, mode, remember, recall, heartbeat и др.; `/debug` для блогера с настройками чата в Memory.
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
 
 ### Changed
-- Документация: [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md) — экспорт чатов Memory в `/data_for_agent` через `scripts/export_memory_chats_to_data_for_agent.py`.
+- Экспорт чатов Memory: запуск без `PYTHONPATH`, обёртка [`scripts/export_chats_for_agent.sh`](scripts/export_chats_for_agent.sh); [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md).
 - Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) — секция Blogger (Memory `blogger_*`, матрица команд); [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) / [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md) — `memory_namespace`, `/debug` для блогера; [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — namespaces.
 - Документация (CONFIGURATION, GETTING_STARTED, README): описание голоса приведено к openai-whisper + облачный STT вместо устаревших упоминаний faster-whisper.
 

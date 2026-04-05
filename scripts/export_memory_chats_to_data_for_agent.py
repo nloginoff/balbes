@@ -15,12 +15,15 @@
 При коллизии имён каталога (редко) используется
 ``{memory_user_id}__{agent_id}__{chat_id}``.
 
-Запуск на проде из корня репозитория с теми же переменными, что и сервисы::
+Запуск (каталог по умолчанию уже ``/data_for_agent``, ``PYTHONPATH`` не нужен)::
 
-    PYTHONPATH=. python scripts/export_memory_chats_to_data_for_agent.py --output /data_for_agent
+    python3 scripts/export_memory_chats_to_data_for_agent.py
 
-Переменные окружения: как у ``shared.config`` (REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB).
-Опционально: ``--redis-url`` переопределяет URL Redis.
+или обёртка::
+
+    ./scripts/export_chats_for_agent.sh
+
+Переменные окружения: как у сервисов — ``REDIS_*`` (см. ``shared.config``). Или ``--redis-url``.
 """
 
 from __future__ import annotations
@@ -33,6 +36,14 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+
+
+def _ensure_project_root_on_path() -> None:
+    """Добавляет корень репозитория в sys.path — скрипт можно вызывать без PYTHONPATH=."""
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
 
 import redis.asyncio as aioredis
 
@@ -175,6 +186,7 @@ async def export_all(
 
 
 def main() -> int:
+    _ensure_project_root_on_path()
     parser = argparse.ArgumentParser(
         description="Экспорт всех чатов Memory из Redis в каталог (агент + chat_id)."
     )
