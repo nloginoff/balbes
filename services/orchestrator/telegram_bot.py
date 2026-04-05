@@ -21,6 +21,7 @@ Voice messages are automatically transcribed via Whisper and corrected via LLM.
 import asyncio
 import contextlib
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -88,6 +89,16 @@ def _split_message(text: str, limit: int = 4096) -> list[str]:
 
 # Reserve room for «🎤 Услышал (NN/NN):» header when splitting transcription for Telegram (4096 max).
 _VOICE_HEARD_BODY_LIMIT = 3950
+
+
+async def _chat_typing_refresh_loop(bot, chat_id: int) -> None:
+    """Telegram clears the typing indicator after ~5s; keep refreshing until task is cancelled."""
+    while True:
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        except Exception as e:
+            logger.debug("send_chat_action(TYPING) failed: %s", e)
+        await asyncio.sleep(4)
 
 
 async def _reply_voice_transcription(message, corrected: str) -> None:
@@ -2098,34 +2109,56 @@ class BalbesTelegramBot:
         user_id = str(user.id)
         self._active_tasks[user_id] = asyncio.current_task()  # type: ignore[assignment]
 
-        await context.bot.send_chat_action(
-            chat_id=update.effective_chat.id, action=ChatAction.TYPING
-        )
+        chat_tg_id = update.effective_chat.id
+        typing_task = asyncio.create_task(_chat_typing_refresh_loop(context.bot, chat_tg_id))
 
         try:
             # Download voice file
             voice = message.voice or message.audio
             if not voice:
                 return
+            duration_sec = getattr(voice, "duration", None)
+            logger.info(
+                "Voice: user=%s chat=%s duration_sec=%s file_id=%s",
+                user.id,
+                chat_tg_id,
+                duration_sec,
+                getattr(voice, "file_id", "")[:20],
+            )
+
+            t_dl = time.monotonic()
             file = await context.bot.get_file(voice.file_id)
             ogg_bytes = bytes(await file.download_as_bytearray())
+            logger.info(
+                "Voice: downloaded %s bytes in %.1fs",
+                len(ogg_bytes),
+                time.monotonic() - t_dl,
+            )
 
             # Transcribe
             from skills.whisper_transcribe import correct_transcription, transcribe_voice
 
-            raw_text = await transcribe_voice(ogg_bytes)
+            t_tr = time.monotonic()
+            raw_text = await transcribe_voice(ogg_bytes, duration_hint_sec=duration_sec)
+            logger.info(
+                "Voice: transcribe done %s chars in %.1fs",
+                len(raw_text),
+                time.monotonic() - t_tr,
+            )
 
             if not raw_text.strip():
                 await message.reply_text("🎤 Не удалось распознать голосовое сообщение")
                 return
 
             # Correct via LLM
+            t_co = time.monotonic()
             corrected = await correct_transcription(raw_text, http_client=self.http_client)
+            logger.info("Voice: LLM correction in %.1fs", time.monotonic() - t_co)
 
             # Show what was heard (may be many messages for long audio)
             await _reply_voice_transcription(message, corrected)
 
-            # Process as regular text message
+            # Process as regular text message (starts its own typing loop)
             await self._process_user_input(
                 update=update,
                 context=context,
@@ -2137,7 +2170,7 @@ class BalbesTelegramBot:
             with contextlib.suppress(Exception):
                 await message.reply_text("✋ Выполнение остановлено")
         except RuntimeError as e:
-            if "ffmpeg" in str(e).lower():
+            if "ffmpeg not found" in str(e):
                 await message.reply_text(
                     "❌ ffmpeg не установлен. Запусти: `sudo apt install ffmpeg`",
                     parse_mode="Markdown",
@@ -2156,6 +2189,9 @@ class BalbesTelegramBot:
                 err_detail = err_detail[:3797] + "..."
             await message.reply_text(f"❌ Ошибка обработки голоса: {err_detail}")
         finally:
+            typing_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await typing_task
             self._active_tasks.pop(user_id, None)
 
     async def _process_user_input(

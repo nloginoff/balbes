@@ -12,6 +12,7 @@ The WhisperModel is loaded once and reused across requests.
 """
 
 import asyncio
+import contextlib
 import logging
 import tempfile
 from pathlib import Path
@@ -58,8 +59,29 @@ async def get_whisper_model():
     return _whisper_model
 
 
-async def _ogg_to_wav(ogg_bytes: bytes) -> Path:
+def _ffmpeg_timeout_seconds(ogg_bytes: bytes, duration_hint_sec: int | None) -> float:
+    """
+    Long voice messages need more than a fixed short timeout: ffmpeg can run
+    many seconds on large OPUS files or slow disks.
+    """
+    if duration_hint_sec is not None and duration_hint_sec > 0:
+        # Up to 15 min cap; at least 4× realtime for slow CPUs
+        return float(min(900, max(60.0, duration_hint_sec * 4.0)))
+    size = len(ogg_bytes)
+    # ~20 KB/s voice ballpark → generous margin
+    return float(min(900, max(90.0, size / 1500.0)))
+
+
+async def _ogg_to_wav(ogg_bytes: bytes, duration_hint_sec: int | None) -> Path:
     """Convert OGG/OPUS bytes to a WAV temp file using ffmpeg."""
+    timeout_sec = _ffmpeg_timeout_seconds(ogg_bytes, duration_hint_sec)
+    logger.debug(
+        "ffmpeg ogg→wav: %s bytes, duration_hint=%s, timeout=%.0fs",
+        len(ogg_bytes),
+        duration_hint_sec,
+        timeout_sec,
+    )
+
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as ogg_file:
         ogg_file.write(ogg_bytes)
         ogg_path = Path(ogg_file.name)
@@ -81,7 +103,15 @@ async def _ogg_to_wav(ogg_bytes: bytes) -> Path:
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
     )
-    await asyncio.wait_for(proc.communicate(), timeout=30)
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except TimeoutError as e:
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        raise RuntimeError(
+            f"Конвертация аудио превысила {timeout_sec:.0f} с "
+            "(очень длинное сообщение или перегрузка диска/CPU). Попробуйте короче или повторите позже."
+        ) from e
 
     ogg_path.unlink(missing_ok=True)
 
@@ -94,6 +124,7 @@ async def _ogg_to_wav(ogg_bytes: bytes) -> Path:
 async def transcribe_voice(
     ogg_bytes: bytes,
     language: str | None = None,
+    duration_hint_sec: int | None = None,
 ) -> str:
     """
     Transcribe a voice message.
@@ -101,6 +132,7 @@ async def transcribe_voice(
     Args:
         ogg_bytes: Raw OGG/OPUS audio bytes from Telegram
         language: Language code (default from settings.whisper_language)
+        duration_hint_sec: Telegram-reported duration (seconds), used to scale ffmpeg timeout
 
     Returns:
         Transcribed text string
@@ -111,7 +143,7 @@ async def transcribe_voice(
     try:
         model = await get_whisper_model()
 
-        wav_path = await _ogg_to_wav(ogg_bytes)
+        wav_path = await _ogg_to_wav(ogg_bytes, duration_hint_sec)
         logger.debug(f"Transcribing WAV: {wav_path}, language={lang}")
 
         # Run in thread pool to avoid blocking event loop
@@ -156,6 +188,11 @@ async def correct_transcription(text: str, http_client=None) -> str:
         Corrected text, or original if correction fails
     """
     if not text or not settings.openrouter_api_key:
+        return text
+
+    # Long audio → huge text; LLM correction uses max_tokens=500 anyway and can stall the HTTP client.
+    if len(text) > 8000:
+        logger.info("Skipping LLM correction for long transcription (%s chars)", len(text))
         return text
 
     import httpx as _httpx
