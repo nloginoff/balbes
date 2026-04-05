@@ -5,6 +5,7 @@ Manages the draft → pending_approval → approved → scheduled → published 
 Enforces a daily publishing quota (default: 3 posts/day).
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -12,6 +13,24 @@ from datetime import datetime
 import asyncpg
 
 logger = logging.getLogger("blogger.post_queue")
+
+
+def post_content_ru_en(post: dict | None) -> tuple[str, str, str]:
+    """Extract title, RU and EN body from a ``blog_posts`` row (``content`` is JSONB)."""
+    if not post:
+        return "", "", ""
+    title = str(post.get("title") or "")
+    raw = post.get("content")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    ru = str(raw.get("ru") or "")
+    en = str(raw.get("en") or "")
+    return title, ru, en
 
 
 class PostQueue:

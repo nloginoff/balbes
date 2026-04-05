@@ -14,7 +14,7 @@ from pathlib import Path
 import asyncpg
 import httpx
 
-from .post_queue import PostQueue
+from .post_queue import PostQueue, post_content_ru_en
 from .publisher import TelegramPublisher
 from .reader import BusinessChatReader, ChatReader, CursorFileReader
 
@@ -1009,12 +1009,18 @@ class BloggerAgent:
                 posts = await self.queue.list_posts(status=status, limit=10)
                 if not posts:
                     return f"Нет постов со статусом '{status}'."
-                lines = [f"Посты ({status}):"]
+                lines = [f"Посты ({status}), полный текст RU/EN (обрезка при длине):"]
                 for p in posts:
+                    pid = str(p.get("id", ""))
+                    full = await self.queue.get_post(pid)
+                    _title, ru, en = post_content_ru_en(full)
+                    ru_s = (ru or "")[:4000] + ("…" if len(ru or "") > 4000 else "")
+                    en_s = (en or "")[:4000] + ("…" if len(en or "") > 4000 else "")
                     lines.append(
-                        f"• [{p.get('id', '')[:8]}] {p.get('title', '(без названия)')} "
+                        f"• [{pid[:8]}] {p.get('title', '(без названия)')} "
                         f"— {p.get('post_type', '')} ({p.get('status', '')})"
                     )
+                    lines.append(f"  RU:\n{ru_s}\n  EN:\n{en_s}")
                 return "\n".join(lines)
 
             elif name == "approve_post":

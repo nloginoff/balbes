@@ -208,6 +208,7 @@ async def lifespan(app: FastAPI):
             owner_tg_id=owner_id,
             db=_db,
             agent=_agent,
+            http_client=_http,
         )
         _agent.business_bot = _business_bot
         logger.info("Business bot configured")
@@ -276,7 +277,8 @@ async def _run_business_bot(bot_app) -> None:
 
             commands = [
                 BotCommand("generate", "Сгенерировать пост по чатам"),
-                BotCommand("drafts", "Черновики постов"),
+                BotCommand("drafts", "Черновики с полным текстом"),
+                BotCommand("draft", "Один черновик по ID"),
                 BotCommand("published", "Опубликованные посты"),
                 BotCommand("queue", "Очередь на публикацию"),
                 BotCommand("summary", "Бизнес-саммари за день"),

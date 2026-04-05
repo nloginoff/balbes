@@ -3,6 +3,8 @@ Business bot — silent Telegram bot with dual role:
   1. In group chats: anonymizes and stores messages to business_messages table.
   2. In private chat with owner: handles evening check-in conversation and
      approval replies for personal blog posts.
+  3. Voice messages from the owner are transcribed (same hybrid STT as orchestrator)
+     and processed like text.
 
 SECURITY:
   - All private messages from non-owner users are silently ignored.
@@ -17,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import asyncpg
+import httpx
 import yaml
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
@@ -30,6 +33,7 @@ from telegram.ext import (
 )
 
 from .anonymizer import AnonymizationEngine
+from .post_queue import post_content_ru_en
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 
@@ -87,11 +91,13 @@ class BusinessBot:
         owner_tg_id: int,
         db: asyncpg.Pool,
         agent: "BloggerAgent",
+        http_client: httpx.AsyncClient | None = None,
     ):
         self.token = token
         self.owner_tg_id = owner_tg_id
         self.db = db
         self.agent = agent
+        self._http = http_client
         self._app: Application | None = None
 
     def _owner_filter(self) -> filters.BaseFilter:
@@ -102,7 +108,8 @@ class BusinessBot:
         """Set bot commands menu visible in Telegram."""
         commands = [
             BotCommand("generate", "Сгенерировать пост по чатам"),
-            BotCommand("drafts", "Черновики постов"),
+            BotCommand("drafts", "Черновики постов (полный текст)"),
+            BotCommand("draft", "Один черновик по ID (8 символов)"),
             BotCommand("published", "Опубликованные посты"),
             BotCommand("queue", "Очередь на публикацию"),
             BotCommand("summary", "Бизнес-саммари за день"),
@@ -139,6 +146,7 @@ class BusinessBot:
         )
         app.add_handler(CommandHandler("list_chats", self._cmd_list_chats, filters=owner))
         app.add_handler(CommandHandler("drafts", self._cmd_drafts, filters=owner))
+        app.add_handler(CommandHandler("draft", self._cmd_draft_one, filters=owner))
         app.add_handler(CommandHandler("published", self._cmd_published, filters=owner))
         app.add_handler(CommandHandler("queue", self._cmd_queue, filters=owner))
         app.add_handler(CommandHandler("generate", self._cmd_generate, filters=owner))
@@ -156,6 +164,13 @@ class BusinessBot:
             )
         )
 
+        # Voice / audio — owner private (same STT stack as main bot)
+        app.add_handler(
+            MessageHandler(
+                (filters.VOICE | filters.AUDIO) & filters.ChatType.PRIVATE & owner,
+                self._handle_voice,
+            )
+        )
         # Private messages — ONLY from owner (skip lines starting with / so commands go to CommandHandler)
         app.add_handler(
             MessageHandler(
@@ -207,7 +222,8 @@ class BusinessBot:
             "/generate — сгенерировать пост по последним чатам\n"
             "/summary — бизнес-саммари за сегодня\n\n"
             "📝 *Посты*\n"
-            "/drafts — черновики\n"
+            "/drafts — черновики с полным текстом RU/EN\n"
+            "/draft \\[id\\] — один черновик по первым 8 символам UUID\n"
             "/published — опубликованные\n"
             "/queue — очередь на публикацию\n\n"
             "🤖 *Модель*\n"
@@ -220,6 +236,7 @@ class BusinessBot:
             "⚙️ *Бизнес-наблюдение*\n"
             "/list\\_chats — зарегистрированные группы\n"
             "/register\\_business\\_chat — добавить группу\n\n"
+            "*Голосом:* можно надиктовать пост или команду — распознаём как в основном боте.\n\n"
             "*Просто пиши текстом:*\n"
             "— «придумай пост о запуске продукта»\n"
             "— «одобри пост abc12345»\n"
@@ -260,7 +277,7 @@ class BusinessBot:
         await query.edit_message_text(f"✅ Модель чата: *{label}*", parse_mode="Markdown")
 
     async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """List drafts (draft + pending_approval). HTML escape — Markdown broke on titles."""
+        """List drafts with full RU/EN body (split across messages if long)."""
         msg = update.effective_message
         if not msg:
             return
@@ -269,17 +286,60 @@ class BusinessBot:
             if not posts:
                 await msg.reply_text("Нет черновиков.")
                 return
-            lines = ["Черновики (draft / pending_approval):\n"]
+            lines = [
+                f"Черновиков: {len(posts)}. Ниже — полный текст каждого (RU/EN).",
+                "Один пост: /draft <8_символов_id>",
+            ]
+            await msg.reply_text("\n".join(lines))
             for p in posts:
-                lines.append(
-                    f"• {str(p.get('id', ''))[:8]} — "
-                    f"{escape(str(p.get('title') or '(без названия)'))} — "
-                    f"{escape(str(p.get('post_type', '')))} — {escape(str(p.get('status', '')))}"
+                pid = str(p.get("id", ""))
+                full = await self.agent.queue.get_post(pid)
+                title, ru, en = post_content_ru_en(full)
+                head = (
+                    f"── {title or '(без названия)'} · {pid[:8]} · "
+                    f"{p.get('post_type', '')} · {p.get('status', '')} ──\n\n"
                 )
-            await msg.reply_text("\n".join(lines), parse_mode="HTML")
+                body = f"RU:\n{ru or '(пусто)'}\n\nEN:\n{en or '(пусто)'}"
+                for chunk in _split_long(head + body, limit=_TG_LIMIT):
+                    await msg.reply_text(chunk)
         except Exception as exc:
             logger.exception("_cmd_drafts: %s", exc)
             await msg.reply_text(f"Не удалось загрузить черновики: {exc!s:.300}")
+
+    async def _cmd_draft_one(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Show one draft by UUID prefix (first 8 chars from /drafts)."""
+        msg = update.effective_message
+        if not msg:
+            return
+        args = context.args or []
+        if not args:
+            await msg.reply_text("Использование: /draft abc12def — первые 8 символов ID из /drafts")
+            return
+        prefix = args[0].strip().lower()
+        try:
+            posts = await self.agent.queue.list_posts(status="draft", limit=50)
+            matches = [p for p in posts if str(p.get("id", "")).lower().startswith(prefix)]
+            if not matches:
+                await msg.reply_text("Черновик с таким префиксом не найден.")
+                return
+            if len(matches) > 1:
+                ids = ", ".join(str(p.get("id", ""))[:8] for p in matches[:5])
+                await msg.reply_text(f"Несколько совпадений: {ids} — уточни ID.")
+                return
+            p = matches[0]
+            pid = str(p.get("id", ""))
+            full = await self.agent.queue.get_post(pid)
+            title, ru, en = post_content_ru_en(full)
+            head = (
+                f"── {title or '(без названия)'} · {pid[:8]} · "
+                f"{p.get('post_type', '')} · {p.get('status', '')} ──\n\n"
+            )
+            body = f"RU:\n{ru or '(пусто)'}\n\nEN:\n{en or '(пусто)'}"
+            for chunk in _split_long(head + body, limit=_TG_LIMIT):
+                await msg.reply_text(chunk)
+        except Exception as exc:
+            logger.exception("_cmd_draft_one: %s", exc)
+            await msg.reply_text(f"Ошибка: {exc!s:.300}")
 
     async def _cmd_published(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         msg = update.effective_message
@@ -552,6 +612,37 @@ class BusinessBot:
         except Exception as exc:
             logger.error("_handle_group_message error: %s", exc)
 
+    async def _route_owner_natural_language(
+        self,
+        owner_id: int,
+        text: str,
+        msg,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Check-in / edit / default LLM — shared by text and voice."""
+        text = (text or "").strip()
+        if not text:
+            return
+
+        if _WAITING_CHECKIN.get(owner_id):
+            _WAITING_CHECKIN[owner_id] = False
+            await self.agent.handle_checkin_reply(owner_id, text)
+            return
+
+        post_id = _WAITING_EDIT.get(owner_id)
+        if post_id:
+            _WAITING_EDIT[owner_id] = None
+            await self.agent.handle_edit_instruction(owner_id, post_id, text)
+            return
+
+        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+
+        async def reply_fn(t: str) -> None:
+            for chunk in _split_long(t):
+                await msg.reply_text(chunk, parse_mode="Markdown")
+
+        await self.agent.handle_owner_message(owner_id, text, reply_fn)
+
     async def _handle_private_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -562,30 +653,71 @@ class BusinessBot:
         if not msg or not user:
             return
 
+        await self._route_owner_natural_language(user.id, msg.text or "", msg, context)
+
+    async def _handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Transcribe voice/audio and route like text (same stack as main Telegram bot)."""
+        msg = update.effective_message
+        user = update.effective_user
+        if not msg or not user:
+            return
+
         owner_id = user.id
-        text = (msg.text or "").strip()
-
-        # Check-in reply mode
-        if _WAITING_CHECKIN.get(owner_id):
-            _WAITING_CHECKIN[owner_id] = False
-            await self.agent.handle_checkin_reply(owner_id, text)
+        voice = msg.voice or msg.audio
+        if not voice:
             return
 
-        # Edit instruction mode
-        post_id = _WAITING_EDIT.get(owner_id)
-        if post_id:
-            _WAITING_EDIT[owner_id] = None
-            await self.agent.handle_edit_instruction(owner_id, post_id, text)
+        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.RECORD_VOICE)
+        try:
+            from services.orchestrator.skills.whisper_transcribe import (
+                correct_transcription,
+                transcribe_voice,
+            )
+        except ImportError:
+            await msg.reply_text(
+                "Голосовые недоступны: установите зависимости оркестратора "
+                "(openai-whisper, ffmpeg) на сервере blogger."
+            )
             return
 
-        # Default: full LLM conversation
-        await context.bot.send_chat_action(chat_id=msg.chat_id, action=ChatAction.TYPING)
+        duration_sec = getattr(voice, "duration", None)
+        try:
+            file = await context.bot.get_file(voice.file_id)
+            ogg_bytes = bytes(await file.download_as_bytearray())
+        except Exception as exc:
+            logger.exception("business_bot voice download: %s", exc)
+            await msg.reply_text(f"Не удалось скачать аудио: {exc!s:.200}")
+            return
 
-        async def reply_fn(text: str) -> None:
-            for chunk in _split_long(text):
-                await msg.reply_text(chunk, parse_mode="Markdown")
-
-        await self.agent.handle_owner_message(owner_id, text, reply_fn)
+        http = self._http or httpx.AsyncClient(timeout=300.0)
+        own_http = self._http is None
+        try:
+            tr = await transcribe_voice(
+                ogg_bytes,
+                duration_hint_sec=duration_sec,
+                http_client=http,
+            )
+            text = (tr.text or "").strip()
+            if not text:
+                await msg.reply_text("Пустая расшифровка.")
+                return
+            try:
+                chat_id = await self.agent.bbot_get_active_chat(owner_id)
+                model_id = await self.agent.bbot_get_chat_model(owner_id, chat_id)
+                text = await correct_transcription(
+                    text,
+                    http_client=http,
+                    chat_model_id=model_id,
+                )
+            except Exception as exc:
+                logger.warning("business_bot correct_transcription: %s", exc)
+            await self._route_owner_natural_language(owner_id, text, msg, context)
+        except Exception as exc:
+            logger.exception("business_bot transcribe_voice: %s", exc)
+            await msg.reply_text(f"Ошибка расшифровки: {exc!s:.400}")
+        finally:
+            if own_http:
+                await http.aclose()
 
     async def _handle_stranger(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Silently ignore private messages from anyone who is not the owner.
