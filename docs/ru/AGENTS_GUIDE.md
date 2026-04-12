@@ -379,6 +379,8 @@ GET /api/v1/tasks/bg/events?user_id=YOUR_TELEGRAM_USER_ID&agent_id=coder&consume
   6. meta-llama/llama-3.1-8b-instruct (cheapest paid, последний резерв)
   7. Если все недоступны — отправить сообщение об ошибке пользователю
 - Работает только в часы `active_hours_start`–`active_hours_end` (локальное серверное время)
+- Если модель вернула пустой текст, пользователю **не** показывается стандартное сообщение «модель вернула пустой ответ» (оно остаётся для обычных задач, не heartbeat)
+- Ответ `HEARTBEAT_OK` в кавычках или с обёртками не дублируется в Telegram
 
 ---
 

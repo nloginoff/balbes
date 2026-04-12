@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Пример второго бота: [`scripts/run_second_orchestrator_bot.example.sh`](scripts/run_second_orchestrator_bot.example.sh).
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
 
+### Fixed
+- **Heartbeat** — при `source=heartbeat` пустой ответ LLM не подменяется на пользовательское сообщение «модель вернула пустой ответ» ([`services/orchestrator/agent.py`](services/orchestrator/agent.py)); для обычных задач текст подсказки без изменений. Доставка в Telegram: подавление `HEARTBEAT_OK` с внешними кавычками/обёртками ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)).
+
 ### Changed
 - Экспорт чатов Memory: каталоги `{memory_user_id}__{agent_id}__{chat_id}/` (видно `blogger_<tg>` vs числовой id); лог namespace блогера; загрузка env и подсказки Redis — [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md).
 - Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) — секция Blogger (Memory `blogger_*`, матрица команд); [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) / [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md) — `memory_namespace`, `/debug` для блогера; [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — namespaces.

@@ -786,7 +786,11 @@ class OrchestratorAgent(BaseAgent):
                         f" (round={round_num + 1}, model={model_used},"
                         f" finish_reason={choice.get('finish_reason', '?')})"
                     )
-                return content_text or self._fallback_text(model_used), model_used, total_usage
+                if content_text:
+                    return content_text, model_used, total_usage
+                if source == "heartbeat":
+                    return "", model_used, total_usage
+                return self._fallback_text(model_used), model_used, total_usage
 
             # Process tool calls
             messages.append(
@@ -850,7 +854,11 @@ class OrchestratorAgent(BaseAgent):
                 logger.warning(
                     f"[{task_id}] Final no-tools response also empty (model={model_used})"
                 )
-            return text or self._fallback_text(model_used), model_used, total_usage
+            if text:
+                return text, model_used, total_usage
+            if source == "heartbeat":
+                return "", model_used, total_usage
+            return self._fallback_text(model_used), model_used, total_usage
         raise LLMUnavailableError(llm_error)
 
     def _make_sub_dispatcher(

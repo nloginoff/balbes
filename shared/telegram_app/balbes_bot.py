@@ -228,6 +228,23 @@ def _is_within_active_hours(start: str, end: str) -> bool:
 
 
 HEARTBEAT_OK = "HEARTBEAT_OK"
+
+
+def _unwrap_outer_quotes(text: str) -> str:
+    """Strip matching outer \" ' ` so HEARTBEAT_OK survives model wrappers like '\"HEARTBEAT_OK\"'."""
+    t = text.strip()
+    for _ in range(4):
+        if len(t) >= 2 and (
+            (t[0] == '"' and t[-1] == '"')
+            or (t[0] == "'" and t[-1] == "'")
+            or (t[0] == "`" and t[-1] == "`")
+        ):
+            t = t[1:-1].strip()
+        else:
+            break
+    return t
+
+
 HEARTBEAT_PROMPT = (
     "SYSTEM HEARTBEAT RUN.\n"
     "Read HEARTBEAT.md from your workspace if it exists and follow it strictly.\n"
@@ -716,8 +733,10 @@ class BalbesTelegramBot:
             logger.warning(f"Heartbeat: suppressed output — {text[:120]}")
             return
 
-        # Suppress HEARTBEAT_OK responses
-        stripped = text.strip()
+        # Suppress HEARTBEAT_OK responses (incl. model-wrapped \"HEARTBEAT_OK\")
+        stripped = _unwrap_outer_quotes(text)
+        if stripped.endswith("."):
+            stripped = stripped[:-1].strip()
         if stripped.startswith(HEARTBEAT_OK) or stripped.endswith(HEARTBEAT_OK):
             remaining = stripped.replace(HEARTBEAT_OK, "").strip()
             if len(remaining) <= 300:
