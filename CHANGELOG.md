@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Сервис `services/webhooks_gateway`** — отдельный FastAPI от дашборда: `POST /webhook/telegram` (PTB webhook при `TELEGRAM_BOT_MODE=webhook`), `POST /webhook/max` (проверка `MAX_WEBHOOK_SECRET`), `POST /api/webhooks/notify` и `/webhook/notify` (перенесено с web-backend). Порт `WEBHOOKS_GATEWAY_PORT`. При `TELEGRAM_BOT_MODE=webhook` процесс `telegram_bot.py` polling не запускается ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)). [`shared/max_inbound.py`](shared/max_inbound.py).
 - **Документация notify**: [`docs/ru/WEBHOOK_NOTIFY.md`](docs/ru/WEBHOOK_NOTIFY.md) — запуск, nginx, настройка источника на RU-сервере; в [`TODO.md`](TODO.md) добавлен блок «Следующие этапы (multi-messenger / webhooks)».
 - **Мониторинг: входящий webhook** — `POST /api/webhooks/notify` на web-backend (`Authorization: Bearer WEBHOOK_NOTIFY_API_KEY`), лимит запросов по IP (`NOTIFY_RATE_LIMIT_PER_MINUTE`), доставка в Telegram (HTML с экранированием) и опционально в MAX API при настроенных `MAX_BOT_TOKEN` + `NOTIFY_MAX_CHAT_ID`. Код: [`shared/notify/`](shared/notify/), [`services/web-backend/api/notify.py`](services/web-backend/api/notify.py). Скрипты запуска web-backend задают `PYTHONPATH` к корню репозитория.
 - Скрипт **`scripts/export_memory_chats_to_data_for_agent.py`** (+ обёртка **`scripts/export_chats_for_agent.sh`**) — выгрузка всех чатов Memory из Redis в `data_for_agent/` у корня деплоя, папки `{memory_user_id}__{agent_id}__{chat_id}/`. Документация: [`docs/ru/DEPLOYMENT.md`](docs/ru/DEPLOYMENT.md) (раздел Redis).
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram UI оркестратора** — реализация перенесена в [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py); [`services/orchestrator/telegram_bot.py`](services/orchestrator/telegram_bot.py) остаётся точкой входа (`python -m services.orchestrator.telegram_bot`).
 - Пример второго бота: [`scripts/run_second_orchestrator_bot.example.sh`](scripts/run_second_orchestrator_bot.example.sh).
 - **Гибридная транскрипция голоса (Telegram)** — короткие сообщения: локально **openai-whisper** (`WHISPER_LOCAL_MODEL`, по умолчанию `medium`); длинные или без `duration`: облако — **OpenRouter** (multimodal `input_audio`) и/или **Yandex SpeechKit** (`WHISPER_REMOTE_BACKEND`: `openrouter` · `yandex` · `openrouter_then_yandex`). Новые модули `whisper_remote_stt.py`, расширен `shared/config` и `.env.example`; в режиме `/debug` в чат выводится выбранный STT-путь.
+
+### Changed
+- **Мониторинг notify** перенесён с web-backend на [`services/webhooks_gateway`](services/webhooks_gateway); дашборд больше не содержит `POST /api/webhooks/notify`.
 
 ### Fixed
 - **Heartbeat** — при `source=heartbeat` пустой ответ LLM не подменяется на пользовательское сообщение «модель вернула пустой ответ» ([`services/orchestrator/agent.py`](services/orchestrator/agent.py)); для обычных задач текст подсказки без изменений. Доставка в Telegram: подавление `HEARTBEAT_OK` с внешними кавычками/обёртками ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)).

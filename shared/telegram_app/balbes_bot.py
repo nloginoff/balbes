@@ -362,6 +362,31 @@ class BalbesTelegramBot:
         logger.info("Starting bot polling...")
         self.app.run_polling(drop_pending_updates=True)
 
+    async def start_webhook_mode(self) -> None:
+        """Initialize PTB application for inbound webhook processing (no polling)."""
+        if not self.app:
+            raise RuntimeError("Bot not initialized")
+        await self.app.initialize()
+        await self.app.start()
+        logger.info("Telegram bot webhook mode: application started (process_update ready)")
+
+    async def stop_webhook_mode(self) -> None:
+        """Shut down PTB application started via start_webhook_mode."""
+        if not self.app:
+            return
+        await self.app.stop()
+        await self.app.shutdown()
+        logger.info("Telegram bot webhook mode: application stopped")
+
+    async def process_webhook_update(self, data: dict) -> None:
+        """Feed one Telegram Update dict (from setWebhook POST body) into handlers."""
+        from telegram import Update
+
+        if not self.app:
+            raise RuntimeError("Bot not initialized")
+        update = Update.de_json(data, self.app.bot)
+        await self.app.process_update(update)
+
     # -------------------------------------------------------------------------
     # Heartbeat
     # -------------------------------------------------------------------------
@@ -2543,6 +2568,13 @@ def run_bot() -> None:
 
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured, skipping")
+        return
+
+    if settings.telegram_bot_mode == "webhook":
+        logger.info(
+            "telegram_bot_mode=webhook: polling disabled here — use services/webhooks-gateway "
+            "for Telegram, notify, and MAX inbound webhooks"
+        )
         return
 
     if settings.telegram_secondary_bot_token:

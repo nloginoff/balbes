@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 
 from api import agents as agents_api
 from api import dashboard as dashboard_api
-from api import notify as notify_api
 from api import skills as skills_api
 from api import tasks as tasks_api
 from auth import (
@@ -184,8 +183,6 @@ app.include_router(agents_api.router, dependencies=[Depends(get_current_user)])
 app.include_router(tasks_api.router, dependencies=[Depends(get_current_user)])
 app.include_router(skills_api.router, dependencies=[Depends(get_current_user)])
 app.include_router(dashboard_api.router, dependencies=[Depends(get_current_user)])
-# Monitoring: Bearer WEBHOOK_NOTIFY_API_KEY (not dashboard JWT)
-app.include_router(notify_api.router)
 
 
 # ============================================================================

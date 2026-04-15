@@ -1,7 +1,7 @@
 """
-Inbound monitoring webhook: external servers POST alerts; we deliver via configured channels.
+Inbound monitoring webhook: external servers POST alerts; delivery via shared/notify.
 
-Not protected by dashboard JWT — uses WEBHOOK_NOTIFY_API_KEY (Bearer).
+Moved from web-backend — same behavior, served by webhooks-gateway only.
 """
 
 import logging
@@ -18,7 +18,7 @@ from shared.notify.rate_limit import SlidingWindowRateLimiter, client_ip
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+router = APIRouter(tags=["notify"])
 
 _rate_limiter = SlidingWindowRateLimiter(max_requests=60, window_seconds=60.0)
 
@@ -36,7 +36,17 @@ class NotifyOkResponse(BaseModel):
 
 
 @router.post(
-    "/notify",
+    "/api/webhooks/notify",
+    response_model=NotifyOkResponse,
+    responses={
+        401: {"model": NotifyErrorResponse},
+        403: {"model": NotifyErrorResponse},
+        429: {"model": NotifyErrorResponse},
+        503: {"model": NotifyErrorResponse},
+    },
+)
+@router.post(
+    "/webhook/notify",
     response_model=NotifyOkResponse,
     responses={
         401: {"model": NotifyErrorResponse},

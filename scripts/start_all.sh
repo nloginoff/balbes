@@ -74,6 +74,15 @@ BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 sleep 2
 
+# Webhooks Gateway (Telegram / MAX / monitoring notify)
+echo ""
+echo "🔔 Starting Webhooks Gateway (port 8180)..."
+cd "$PROJECT_ROOT/services/webhooks_gateway"
+PYTHONPATH="$PROJECT_ROOT" uvicorn main:app --host 0.0.0.0 --port 8180 > /tmp/balbes-webhooks.log 2>&1 &
+WEBHOOKS_PID=$!
+echo "   PID: $WEBHOOKS_PID"
+sleep 2
+
 # Start Blogger (posts API + business bot)
 echo ""
 echo "📝 Starting Blogger Service (port ${BLOGGER_SERVICE_PORT:-8105})..."
@@ -89,6 +98,7 @@ echo "$SKILLS_PID" >> /tmp/balbes-pids.txt
 echo "$ORCH_PID" >> /tmp/balbes-pids.txt
 echo "$CODER_PID" >> /tmp/balbes-pids.txt
 echo "$BACKEND_PID" >> /tmp/balbes-pids.txt
+echo "$WEBHOOKS_PID" >> /tmp/balbes-pids.txt
 echo "$BLOGGER_PID" >> /tmp/balbes-pids.txt
 
 # Verify services

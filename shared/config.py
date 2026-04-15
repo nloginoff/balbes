@@ -7,6 +7,8 @@ Loads configuration from environment variables (from .env file).
 from pathlib import Path
 from typing import Any, Literal
 
+TelegramBotMode = Literal["polling", "webhook"]
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -83,6 +85,14 @@ class Settings(BaseSettings):
     telegram_bot_token: str | None = Field(
         default=None, description="Telegram bot token from @BotFather"
     )
+    telegram_bot_mode: TelegramBotMode = Field(
+        default="polling",
+        description="polling = telegram_bot.py uses long polling; webhook = use webhooks-gateway",
+    )
+    telegram_webhook_secret: str | None = Field(
+        default=None,
+        description="Optional secret_token for Telegram setWebhook; verify X-Telegram-Bot-Api-Secret-Token",
+    )
     telegram_user_id: int | None = Field(default=None, description="Your Telegram user ID")
     telegram_allowed_users: list[int] = Field(
         default_factory=list,
@@ -94,12 +104,16 @@ class Settings(BaseSettings):
     )
 
     # =============================================================================
-    # Inbound monitoring webhook (POST /api/webhooks/notify on web-backend)
+    # Webhooks gateway (services/webhooks-gateway): Telegram, MAX, monitoring notify
     # =============================================================================
+    webhooks_gateway_port: int = Field(
+        default=8180,
+        description="HTTP port for inbound webhooks service (not the dashboard web-backend)",
+    )
     webhook_notify_api_key: str | None = Field(
         default=None,
         description=(
-            "Bearer token for external monitoring (RU server). If unset, /api/webhooks/notify is disabled."
+            "Bearer token for external monitoring (RU server). If unset, notify endpoint is disabled."
         ),
     )
     notify_delivery_channels: str = Field(
@@ -129,6 +143,10 @@ class Settings(BaseSettings):
     notify_max_chat_id: str | None = Field(
         default=None,
         description="MAX chat_id for notify when delivery channel includes max",
+    )
+    max_webhook_secret: str | None = Field(
+        default=None,
+        description="Optional HMAC secret for inbound MAX platform webhooks (X-Signature)",
     )
 
     # =============================================================================
@@ -410,6 +428,8 @@ class Settings(BaseSettings):
         "webhook_notify_api_key",
         "max_bot_token",
         "notify_max_chat_id",
+        "telegram_webhook_secret",
+        "max_webhook_secret",
         "blogger_channel_ru",
         "blogger_channel_en",
         "blogger_channel_personal",

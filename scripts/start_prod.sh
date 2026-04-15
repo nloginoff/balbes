@@ -105,16 +105,25 @@ else
     PYTHONPATH="$PROJECT_ROOT" ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
 
+    cd "$PROJECT_ROOT/services/webhooks_gateway"
+    PYTHONPATH="$PROJECT_ROOT" ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEBHOOKS_GATEWAY_PORT:-18180}" --workers 2 > "$LOG_DIR/webhooks-gateway.log" 2>&1 &
+    echo "$!" >> "$PID_FILE"
+    echo "Started Webhooks Gateway (Telegram / MAX / notify)"
+
     cd "$PROJECT_ROOT"
     ENV=prod PYTHONPATH="$PROJECT_ROOT" uvicorn services.blogger.main:app --host 0.0.0.0 --port "${BLOGGER_SERVICE_PORT:-18105}" --workers 1 > "$LOG_DIR/blogger.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
     cd "$PROJECT_ROOT"
 
     if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-        cd "$PROJECT_ROOT/services/orchestrator"
-        ENV=prod PYTHONUNBUFFERED=1 python -u telegram_bot.py > "$LOG_DIR/telegram-bot.log" 2>&1 &
-        echo "$!" >> "$PID_FILE"
-        echo "Started Telegram bot polling"
+        if [ "${TELEGRAM_BOT_MODE:-polling}" = "webhook" ]; then
+            echo "TELEGRAM_BOT_MODE=webhook: skipping telegram_bot.py polling (use webhooks-gateway + setWebhook)"
+        else
+            cd "$PROJECT_ROOT/services/orchestrator"
+            ENV=prod PYTHONUNBUFFERED=1 python -u telegram_bot.py > "$LOG_DIR/telegram-bot.log" 2>&1 &
+            echo "$!" >> "$PID_FILE"
+            echo "Started Telegram bot polling"
+        fi
     else
         echo "Skipping Telegram bot (TELEGRAM_BOT_TOKEN is empty)"
     fi
@@ -144,10 +153,13 @@ check_service "http://localhost:${SKILLS_REGISTRY_PORT:-18101}/health" "Skills R
 check_service "http://localhost:${ORCHESTRATOR_PORT:-18102}/health" "Orchestrator"
 check_service "http://localhost:${CODER_PORT:-18103}/health" "Coder Agent"
 check_service "http://localhost:${WEB_BACKEND_PORT:-18200}/health" "Web Backend"
+check_service "http://localhost:${WEBHOOKS_GATEWAY_PORT:-18180}/health" "Webhooks Gateway"
 check_service "http://localhost:${BLOGGER_SERVICE_PORT:-18105}/health" "Blogger Service"
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-    if pgrep -f "python telegram_bot.py" > /dev/null 2>&1; then
-        echo "   ✅ Telegram Bot"
+    if [ "${TELEGRAM_BOT_MODE:-polling}" = "webhook" ]; then
+        echo "   ✅ Telegram Bot (webhook mode — webhooks-gateway)"
+    elif pgrep -f "python telegram_bot.py" > /dev/null 2>&1; then
+        echo "   ✅ Telegram Bot (polling)"
     else
         echo "   ❌ Telegram Bot FAILED"
     fi

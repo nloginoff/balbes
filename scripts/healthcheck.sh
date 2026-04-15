@@ -94,6 +94,7 @@ if [[ "$MODE" == "dev" ]]; then
     check_http "Orchestrator" "http://localhost:8102/health"
     check_http "Coder Agent" "http://localhost:8103/health"
     check_http "Web Backend" "http://localhost:8200/health"
+    check_http "Webhooks Gateway" "http://localhost:8180/health"
     check_http "Blogger Service" "http://localhost:8105/health"
 elif [[ "$MODE" == "test" ]]; then
     check_http "Memory Service" "http://localhost:9100/health"
@@ -101,6 +102,7 @@ elif [[ "$MODE" == "test" ]]; then
     check_http "Orchestrator" "http://localhost:9102/health"
     check_http "Coder Agent" "http://localhost:9103/health"
     check_http "Web Backend" "http://localhost:9200/health"
+    check_http "Webhooks Gateway" "http://localhost:9180/health"
     check_http "Blogger Service" "http://localhost:9105/health"
 else
     check_http "Memory Service" "http://localhost:18100/health"
@@ -108,12 +110,17 @@ else
     check_http "Orchestrator" "http://localhost:18102/health"
     check_http "Coder Agent" "http://localhost:18103/health"
     check_http "Web Backend" "http://localhost:18200/health"
+    check_http "Webhooks Gateway" "http://localhost:${WEBHOOKS_GATEWAY_PORT:-18180}/health"
     check_http "Blogger Service" "http://localhost:18105/health"
     if [ -f .env.prod ]; then
         # shellcheck disable=SC2046
         export $(cat .env.prod | grep -v '^#' | xargs)
         if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
-            check_process "Telegram Bot Polling" "telegram_bot.py"
+            if [ "${TELEGRAM_BOT_MODE:-polling}" = "webhook" ]; then
+                echo -e "${GREEN}✅${NC} Telegram Bot (webhook via Webhooks Gateway)"
+            else
+                check_process "Telegram Bot Polling" "telegram_bot.py"
+            fi
         fi
         if [ -n "$BUSINESS_BOT_TOKEN" ]; then
             check_process "Business Bot (Blogger)" "uvicorn.*blogger"

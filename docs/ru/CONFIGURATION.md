@@ -73,9 +73,9 @@ PYTHONUNBUFFERED=1
 > **Важно**: `TZ` намеренно не устанавливается — контейнеры монтируют `/etc/localtime`
 > и `/etc/timezone` с хоста, Python использует `datetime.now().astimezone()`.
 
-### Мониторинг (`POST /api/webhooks/notify`)
+### Входящие webhooks (`services/webhooks_gateway`)
 
-Переменные: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_DELIVERY_CHANNELS`, `NOTIFY_TELEGRAM_CHAT_ID`, `NOTIFY_RATE_LIMIT_PER_MINUTE`, `MAX_BOT_TOKEN`, `MAX_API_URL`, `NOTIFY_MAX_CHAT_ID` — см. [`.env.example`](../../.env.example) и подробности в [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md).
+Порт: `WEBHOOKS_GATEWAY_PORT`. Режим Telegram: `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), секреты `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET`. Мониторинг: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_BOT_TOKEN` — см. [`.env.example`](../../.env.example) и [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md).
 
 ---
 

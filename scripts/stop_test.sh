@@ -21,7 +21,7 @@ if [ -f /tmp/balbes-test-pids.txt ]; then
 fi
 
 # Kill by port (test ports)
-for port in 9100 9101 9102 9103 9105 9200; do
+for port in 9100 9101 9102 9103 9105 9180 9200; do
     pid=$(lsof -ti:$port 2>/dev/null || true)
     if [ -n "$pid" ]; then
         echo "   Stopping service on port $port (PID: $pid)"

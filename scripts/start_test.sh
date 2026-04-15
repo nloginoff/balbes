@@ -81,6 +81,14 @@ PYTHONPATH="$PROJECT_ROOT" uvicorn main:app --host 0.0.0.0 --port 9200 > /tmp/ba
 BACKEND_PID=$!
 sleep 2
 
+# Webhooks Gateway (test port 9180)
+echo ""
+echo "🔔 Starting Webhooks Gateway (port 9180)..."
+cd "$PROJECT_ROOT/services/webhooks_gateway"
+PYTHONPATH="$PROJECT_ROOT" uvicorn main:app --host 0.0.0.0 --port 9180 > /tmp/balbes-test-webhooks.log 2>&1 &
+WEBHOOKS_PID=$!
+sleep 2
+
 # Start Blogger (test port)
 echo ""
 echo "📝 Starting Blogger Service (port ${BLOGGER_SERVICE_PORT:-9105})..."
@@ -95,6 +103,7 @@ echo "$SKILLS_PID" >> /tmp/balbes-test-pids.txt
 echo "$ORCH_PID" >> /tmp/balbes-test-pids.txt
 echo "$CODER_PID" >> /tmp/balbes-test-pids.txt
 echo "$BACKEND_PID" >> /tmp/balbes-test-pids.txt
+echo "$WEBHOOKS_PID" >> /tmp/balbes-test-pids.txt
 echo "$BLOGGER_PID" >> /tmp/balbes-test-pids.txt
 
 # Verify
@@ -122,6 +131,7 @@ check_service "http://localhost:9101/health" "Skills (9101)"
 check_service "http://localhost:9102/health" "Orchestrator (9102)"
 check_service "http://localhost:9103/health" "Coder (9103)"
 check_service "http://localhost:9200/health" "Web Backend (9200)"
+check_service "http://localhost:9180/health" "Webhooks Gateway (9180)"
 check_service "http://localhost:${BLOGGER_SERVICE_PORT:-9105}/health" "Blogger (${BLOGGER_SERVICE_PORT:-9105})"
 
 echo ""
@@ -139,6 +149,7 @@ echo "   Skills:   http://localhost:9101/docs"
 echo "   Orch:     http://localhost:9102/docs"
 echo "   Coder:    http://localhost:9103/docs"
 echo "   Backend:  http://localhost:9200/docs"
+echo "   Webhooks: http://localhost:9180/docs"
 echo "   Blogger:  http://localhost:${BLOGGER_SERVICE_PORT:-9105}/docs"
 echo ""
 echo "🛑 Stop & cleanup:"

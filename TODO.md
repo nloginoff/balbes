@@ -11,8 +11,8 @@
 ### Следующие этапы (multi-messenger / webhooks)
 
 - **Единый логический чат и каналы Telegram + MAX** — привязка `logical_chat` к `telegram_chat_id` / `max_chat_id`, fan-out исходящих сообщений агента и системных notify по настройкам агента/чата (не только переменные `NOTIFY_*` в `.env`).
-- **MAX Messenger — полная интеграция** — входящий webhook платформы, клиент `platform-api.max.ru`, общий адаптер исходящих с [`shared/notify/delivery.py`](shared/notify/delivery.py); сценарий блогера: чтение summary рабочих чатов через MAX API.
-- **Telegram Bot: webhook вместо long polling** — оркестратор, блогер и др.: единый базовый URL, секрет Telegram и деплой за reverse proxy (см. также пункт в Backlog ниже).
+- **MAX Messenger — полная интеграция** — обработка тела `POST /webhook/max` (сейчас verify + ack), клиент `platform-api.max.ru`, общий адаптер исходящих; сценарий блогера: чтение summary рабочих чатов через MAX API.
+- **Telegram webhook для остальных ботов** — блогер и др.: при необходимости тот же паттерн, что [`services/webhooks_gateway`](services/webhooks_gateway) для оркестратора (`TELEGRAM_BOT_MODE=webhook`).
 
 ## Идеи / Backlog
 
