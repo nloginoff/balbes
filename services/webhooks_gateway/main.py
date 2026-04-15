@@ -3,7 +3,7 @@ Webhooks Gateway — inbound HTTP endpoints only (no dashboard).
 
 - POST /webhook/telegram — Telegram Bot API updates (when TELEGRAM_BOT_MODE=webhook)
 - POST /webhook/max — MAX platform webhooks
-- POST /api/webhooks/notify and POST /webhook/notify — monitoring alerts (Bearer key)
+- POST /webhook/notify — monitoring alerts (Bearer key)
 
 Add future inbound webhooks here, not on web-backend.
 """
@@ -99,7 +99,6 @@ async def root() -> dict:
         "routes": [
             "POST /webhook/telegram",
             "POST /webhook/max",
-            "POST /api/webhooks/notify",
             "POST /webhook/notify",
         ],
     }

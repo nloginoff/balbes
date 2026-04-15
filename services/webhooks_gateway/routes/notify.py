@@ -36,16 +36,6 @@ class NotifyOkResponse(BaseModel):
 
 
 @router.post(
-    "/api/webhooks/notify",
-    response_model=NotifyOkResponse,
-    responses={
-        401: {"model": NotifyErrorResponse},
-        403: {"model": NotifyErrorResponse},
-        429: {"model": NotifyErrorResponse},
-        503: {"model": NotifyErrorResponse},
-    },
-)
-@router.post(
     "/webhook/notify",
     response_model=NotifyOkResponse,
     responses={

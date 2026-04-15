@@ -1,4 +1,4 @@
-# Входящие webhooks: мониторинг (`/api/webhooks/notify`)
+# Входящие webhooks: мониторинг (`POST /webhook/notify`)
 
 Все **входящие** webhooks (Telegram, MAX, мониторинг) обслуживает отдельный сервис **[`services/webhooks_gateway`](../../services/webhooks_gateway)** — **не** web-backend (дашборд).
 
@@ -8,8 +8,7 @@
 
 | Метод | Путь | Назначение |
 |--------|------|------------|
-| POST | `/api/webhooks/notify` | Алерты мониторинга (дубликат пути: `/webhook/notify`) |
-| POST | `/webhook/notify` | То же |
+| POST | `/webhook/notify` | Алерты мониторинга |
 | POST | `/webhook/telegram` | Обновления Telegram Bot API при `TELEGRAM_BOT_MODE=webhook` |
 | POST | `/webhook/max` | Входящие события MAX (подпись `X-Signature`, если задан `MAX_WEBHOOK_SECRET`) |
 | GET | `/health` | Проверка живости |
@@ -37,7 +36,7 @@
 3. Проверка:
    ```bash
    curl -sS "http://127.0.0.1:${WEBHOOKS_GATEWAY_PORT:-8180}/health"
-   curl -sS -X POST "http://127.0.0.1:${WEBHOOKS_GATEWAY_PORT:-8180}/api/webhooks/notify" \
+   curl -sS -X POST "http://127.0.0.1:${WEBHOOKS_GATEWAY_PORT:-8180}/webhook/notify" \
      -H "Authorization: Bearer $WEBHOOK_NOTIFY_API_KEY" \
      -H "Content-Type: application/json" \
      -d '{"event_type":"info","service":"test","severity":"low","message":"ping","timestamp":"2026-04-15T12:00:00Z"}'
@@ -70,15 +69,6 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 60s;
-    }
-
-    location /api/webhooks/ {
-        proxy_pass http://balbes_webhooks;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     location / {
@@ -116,7 +106,7 @@ set -euo pipefail
 # shellcheck source=/dev/null
 . /etc/balbes/notify.env
 TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-curl -fsS -X POST "https://balbes.example.com/api/webhooks/notify" \
+curl -fsS -X POST "https://balbes.example.com/webhook/notify" \
   -H "Authorization: Bearer ${WEBHOOK_NOTIFY_API_KEY}" \
   -H "Content-Type: application/json" \
   -d "{\"event_type\":\"info\",\"service\":\"ru_ping\",\"severity\":\"low\",\"message\":\"RU ping OK\",\"timestamp\":\"${TS}\"}"
