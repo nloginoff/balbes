@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Мониторинг notify** — только `POST /webhook/notify` на [`services/webhooks_gateway`](services/webhooks_gateway); путь `POST /api/webhooks/notify` удалён; дашборд без endpoint мониторинга.
+- **Prod + systemd**: [`scripts/start_prod.sh`](scripts/start_prod.sh) запускает **`balbes-webhooks-gateway`**, если установлен unit; иначе — предупреждение в логе. Пример unit и `enable` — [`DEPLOYMENT.md`](DEPLOYMENT.md). [`scripts/stop_prod.sh`](scripts/stop_prod.sh): остановка gateway и порт **18180** в fallback. [`docs/ru/WEBHOOK_NOTIFY.md`](docs/ru/WEBHOOK_NOTIFY.md) — пояснение про `Connection refused` без unit.
 
 ### Added
 - **Сервис `services/webhooks_gateway`** — отдельный FastAPI от дашборда: `POST /webhook/telegram` (PTB webhook при `TELEGRAM_BOT_MODE=webhook`), `POST /webhook/max` (проверка `MAX_WEBHOOK_SECRET`), `POST /webhook/notify` (перенесено с web-backend). Порт `WEBHOOKS_GATEWAY_PORT`. При `TELEGRAM_BOT_MODE=webhook` процесс `telegram_bot.py` polling не запускается ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)). [`shared/max_inbound.py`](shared/max_inbound.py).

@@ -75,6 +75,9 @@ if systemctl list-unit-files 2>/dev/null | grep -q balbes-memory; then
     printf "│ Orchestrator (systemd)     : %s                            │\n" "$(systemctl is-active balbes-orchestrator 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
     printf "│ Coder Agent (systemd)      : %s                            │\n" "$(systemctl is-active balbes-coder 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
     printf "│ Web Backend (systemd)      : %s                            │\n" "$(systemctl is-active balbes-web-backend 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
+    if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-webhooks-gateway.service'; then
+        printf "│ Webhooks Gateway (systemd) : %s                            │\n" "$(systemctl is-active balbes-webhooks-gateway 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
+    fi
     if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-blogger.service'; then
         printf "│ Blogger (systemd)          : %s                            │\n" "$(systemctl is-active balbes-blogger 2>/dev/null | grep -q active && echo ✅ || echo ❌)"
     fi
@@ -84,6 +87,7 @@ else
     printf "│ Orchestrator (18102)       : %s                            │\n" "$(check_service http://localhost:18102/health)"
     printf "│ Coder Agent (18103)        : %s                            │\n" "$(check_service http://localhost:18103/health)"
     printf "│ Web Backend (18200)        : %s                            │\n" "$(check_service http://localhost:18200/health)"
+    printf "│ Webhooks Gateway (18180)   : %s                            │\n" "$(check_service http://localhost:18180/health)"
     printf "│ Blogger (18105)            : %s                            │\n" "$(check_service http://localhost:18105/health)"
 fi
 

@@ -17,6 +17,9 @@ echo "Proceeding without interactive confirmation (script mode)."
 # Stop systemd services if they exist
 if systemctl list-unit-files | grep -q balbes-memory; then
     echo "Stopping systemd services..."
+    if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-webhooks-gateway.service'; then
+        sudo systemctl stop balbes-webhooks-gateway
+    fi
     sudo systemctl stop balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
     if systemctl list-unit-files 2>/dev/null | grep -q '^balbes-blogger.service'; then
         sudo systemctl stop balbes-blogger
@@ -58,7 +61,7 @@ fi
 
 # Fallback: kill anything still bound to prod ports
 echo "Checking for leftover prod processes on ports..."
-for port in 18100 18101 18102 18103 18105 18200; do
+for port in 18100 18101 18102 18103 18105 18180 18200; do
     pids=$(lsof -ti:"$port" 2>/dev/null || true)
     if [ -n "$pids" ]; then
         for pid in $pids; do
@@ -71,7 +74,7 @@ done
 sleep 1
 
 # Last pass with SIGKILL for stubborn workers
-for port in 18100 18101 18102 18103 18105 18200; do
+for port in 18100 18101 18102 18103 18105 18180 18200; do
     pids=$(lsof -ti:"$port" 2>/dev/null || true)
     if [ -n "$pids" ]; then
         for pid in $pids; do

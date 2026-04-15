@@ -33,6 +33,10 @@
 
 1. Переменные — [`.env.example`](../../.env.example): `WEBHOOK_NOTIFY_API_KEY`, `WEBHOOKS_GATEWAY_PORT`, `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), при webhook — `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET` для входящих MAX.
 2. Поднять процесс: [`scripts/start_dev.sh`](../../scripts/start_dev.sh) / [`scripts/start_prod.sh`](../../scripts/start_prod.sh) запускают **webhooks_gateway**; для Telegram в режиме **webhook** процесс **`telegram_bot.py` (polling) не стартует**.
+
+### Prod + systemd: `Connection refused` на порту webhooks
+
+Если сервисы поднимаются через **systemd**, отдельного unit для gateway раньше не было в инструкции: **`balbes-webhooks-gateway`** нужно создать и включить (пример — [`DEPLOYMENT.md`](../../DEPLOYMENT.md), раздел systemd). Пока unit не установлен, [`scripts/start_prod.sh`](../../scripts/start_prod.sh) выведет предупреждение, а `curl` на `127.0.0.1:18180` даст **connection refused**. После установки unit: `sudo systemctl enable --now balbes-webhooks-gateway` и снова `curl …/health`.
 3. Проверка:
    ```bash
    curl -sS "http://127.0.0.1:${WEBHOOKS_GATEWAY_PORT:-8180}/health"

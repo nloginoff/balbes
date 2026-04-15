@@ -331,6 +331,7 @@ curl -fsS http://localhost:18100/health
 curl -fsS http://localhost:18101/health
 curl -fsS http://localhost:18102/health
 curl -fsS http://localhost:18103/health
+curl -fsS "http://localhost:${WEBHOOKS_GATEWAY_PORT:-18180}/health"
 curl -fsS http://localhost:18200/health
 rg -n "ERROR|CRITICAL|Traceback|Exception" logs/prod/*.log
 ```
@@ -378,13 +379,38 @@ Create similar files for:
 - `balbes-orchestrator.service` (port 18102)
 - `balbes-coder.service` (port 18103)
 - `balbes-web-backend.service` (port 18200)
+- **`balbes-webhooks-gateway.service`** (port **18180** by default) — входящие `POST /webhook/notify`, `/webhook/telegram`, `/webhook/max`. Без этого unit `restart_prod.sh` в режиме systemd **не** поднимает webhooks (см. предупреждение в логе `start_prod.sh`).
+
+**`/etc/systemd/system/balbes-webhooks-gateway.service`** (подставьте `User` и пути к деплою):
+
+```ini
+[Unit]
+Description=Balbes Webhooks Gateway (Telegram, MAX, monitoring notify)
+After=network.target
+
+[Service]
+Type=simple
+User=balbes
+WorkingDirectory=/opt/balbes/services/webhooks_gateway
+Environment="PATH=/opt/balbes/.venv/bin:/usr/local/bin:/usr/bin"
+Environment="PYTHONPATH=/opt/balbes"
+Environment="ENV=prod"
+ExecStart=/opt/balbes/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 18180 --workers 2
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+При нестандартном `WEBHOOKS_GATEWAY_PORT` задайте порт в `ExecStart` или подключите `EnvironmentFile=/opt/balbes/.env.prod`.
 
 Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
-sudo systemctl start balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend
+sudo systemctl enable balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend balbes-webhooks-gateway
+sudo systemctl start balbes-memory balbes-skills balbes-orchestrator balbes-coder balbes-web-backend balbes-webhooks-gateway
 
 # Check status
 sudo systemctl status balbes-*
