@@ -4,6 +4,8 @@
 
 ### .env.prod (продакшн)
 
+Полный перечень переменных для продакшена — **`.env.prod.example`** в корне репозитория (включая **`services/webhooks_gateway`**: `WEBHOOKS_GATEWAY_PORT`, `TELEGRAM_BOT_MODE`, `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_*`). Ниже — сокращённая выжимка.
+
 ```bash
 # =============================================================================
 # LLM Providers

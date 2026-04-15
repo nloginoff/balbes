@@ -9,7 +9,7 @@ from typing import Any, Literal
 
 TelegramBotMode = Literal["polling", "webhook"]
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -153,7 +153,11 @@ class Settings(BaseSettings):
     # Web UI Authentication
     # =============================================================================
     web_auth_token: str = Field(..., description="Secret token for web login")
-    jwt_secret: str = Field(..., description="JWT secret key")
+    jwt_secret: str = Field(
+        ...,
+        description="JWT secret key",
+        validation_alias=AliasChoices("JWT_SECRET", "JWT_SECRET_KEY"),
+    )
     jwt_expiration_hours: int = Field(default=24, description="JWT token expiration")
     web_admin_username: str = Field(default="admin", description="Default web admin username")
     web_admin_password: str = Field(default="admin123", description="Default web admin password")

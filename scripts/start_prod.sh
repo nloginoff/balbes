@@ -36,7 +36,7 @@ else
 fi
 
 # Verify critical configs
-if [ -z "$POSTGRES_PASSWORD" ] || [ -z "$JWT_SECRET_KEY" ]; then
+if [ -z "$POSTGRES_PASSWORD" ] || { [ -z "${JWT_SECRET:-}" ] && [ -z "${JWT_SECRET_KEY:-}" ]; }; then
     echo "❌ ERROR: Missing critical configuration!"
     exit 1
 fi

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Конфигурация**: `jwt_secret` в [`shared/config.py`](shared/config.py) принимает **`JWT_SECRET` или `JWT_SECRET_KEY`**; [`scripts/start_prod.sh`](scripts/start_prod.sh) требует наличие хотя бы одного. **`.env.prod.example`**, шаблон **`dev/.env.prod`** и **`balbes/.env.prod`** дополнены блоком webhooks и `BLOGGER_SERVICE_URL` (вместо устаревшего `BLOGGER_URL`). [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) — ссылка на `.env.prod.example`.
 - **Мониторинг notify** — только `POST /webhook/notify` на [`services/webhooks_gateway`](services/webhooks_gateway); путь `POST /api/webhooks/notify` удалён; дашборд без endpoint мониторинга.
 - **Prod + systemd**: [`scripts/start_prod.sh`](scripts/start_prod.sh) запускает **`balbes-webhooks-gateway`**, если установлен unit; иначе — предупреждение в логе. Пример unit и `enable` — [`DEPLOYMENT.md`](DEPLOYMENT.md). [`scripts/stop_prod.sh`](scripts/stop_prod.sh): остановка gateway и порт **18180** в fallback. [`docs/ru/WEBHOOK_NOTIFY.md`](docs/ru/WEBHOOK_NOTIFY.md) — пояснение про `Connection refused` без unit.
 
