@@ -102,7 +102,7 @@ else
     echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT/services/web-backend"
-    ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
+    PYTHONPATH="$PROJECT_ROOT" ENV=prod uvicorn main:app --host 0.0.0.0 --port "${WEB_BACKEND_PORT:-18200}" --workers 4 > "$LOG_DIR/web-backend.log" 2>&1 &
     echo "$!" >> "$PID_FILE"
 
     cd "$PROJECT_ROOT"

@@ -850,6 +850,16 @@ CMD ["python", "main.py"]
 
 ---
 
+## ADR-012: Входящий webhook мониторинга и общий слой доставки (Telegram / MAX)
+
+**Решение**: HTTP `POST /api/webhooks/notify` на **web-backend** с `Authorization: Bearer WEBHOOK_NOTIFY_API_KEY`; форматирование и отправка вынесены в [`shared/notify/`](../../shared/notify/). Каналы исходящей доставки задаются `NOTIFY_DELIVERY_CHANNELS` (`telegram`, `max` или оба); Telegram использует `TELEGRAM_BOT_TOKEN` и целевой чат (`NOTIFY_TELEGRAM_CHAT_ID` или личный `TELEGRAM_USER_ID`). MAX — при наличии `MAX_BOT_TOKEN` и `NOTIFY_MAX_CHAT_ID`.
+
+**Контекст**: внешний мониторинг (в т.ч. с RU-сервера) должен слать алерты без JWT дашборда; MAX и Telegram — разные транспорты, но один сценарий «доставить текст пользователю».
+
+**Не в scope этого ADR**: перевод оркестратора с long polling на Telegram Bot webhook, унифицированный «логический чат» для одновременной связи TG+MAX — отдельные этапы.
+
+---
+
 ## Lessons Learned (будут добавляться)
 
 Этот раздел будет заполняться по мере разработки.

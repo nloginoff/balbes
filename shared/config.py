@@ -94,6 +94,44 @@ class Settings(BaseSettings):
     )
 
     # =============================================================================
+    # Inbound monitoring webhook (POST /api/webhooks/notify on web-backend)
+    # =============================================================================
+    webhook_notify_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Bearer token for external monitoring (RU server). If unset, /api/webhooks/notify is disabled."
+        ),
+    )
+    notify_delivery_channels: str = Field(
+        default="telegram",
+        description="Comma-separated outbound channels: telegram, max (max is optional / stub until MAX client is wired).",
+    )
+    notify_telegram_chat_id: int | None = Field(
+        default=None,
+        description=(
+            "Telegram chat_id for notify messages. If unset, TELEGRAM_USER_ID is used (private chat with bot)."
+        ),
+    )
+    notify_rate_limit_per_minute: int = Field(
+        default=60,
+        ge=1,
+        le=10_000,
+        description="Max notify POST requests per client IP per minute",
+    )
+    max_bot_token: str | None = Field(
+        default=None,
+        description="MAX messenger bot token (optional; outbound notify to MAX when channel enabled)",
+    )
+    max_api_url: str = Field(
+        default="https://platform-api.max.ru",
+        description="MAX HTTP API base URL",
+    )
+    notify_max_chat_id: str | None = Field(
+        default=None,
+        description="MAX chat_id for notify when delivery channel includes max",
+    )
+
+    # =============================================================================
     # Web UI Authentication
     # =============================================================================
     web_auth_token: str = Field(..., description="Secret token for web login")
@@ -213,6 +251,11 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins as list"""
         return [origin.strip() for origin in self.cors_origins.split(",")]
+
+    @property
+    def notify_delivery_channels_list(self) -> list[str]:
+        """Parsed NOTIFY_DELIVERY_CHANNELS — lowercase tokens: telegram, max."""
+        return [x.strip().lower() for x in self.notify_delivery_channels.split(",") if x.strip()]
 
     @property
     def coder_base_url(self) -> str:
@@ -364,6 +407,9 @@ class Settings(BaseSettings):
         "telegram_bot_token",
         "telegram_secondary_bot_token",
         "business_bot_token",
+        "webhook_notify_api_key",
+        "max_bot_token",
+        "notify_max_chat_id",
         "blogger_channel_ru",
         "blogger_channel_en",
         "blogger_channel_personal",
@@ -384,7 +430,7 @@ class Settings(BaseSettings):
             return None
         return v
 
-    @field_validator("telegram_user_id", mode="before")
+    @field_validator("telegram_user_id", "notify_telegram_chat_id", mode="before")
     @classmethod
     def empty_int_to_none(cls, v: Any) -> int | None:
         """Convert empty strings to None for optional int fields"""

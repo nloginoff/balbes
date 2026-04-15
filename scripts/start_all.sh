@@ -69,7 +69,7 @@ sleep 2
 echo ""
 echo "🌐 Starting Web Backend (port 8200)..."
 cd "$PROJECT_ROOT/services/web-backend"
-uvicorn main:app --host 0.0.0.0 --port 8200 > /tmp/balbes-web-backend.log 2>&1 &
+PYTHONPATH="$PROJECT_ROOT" uvicorn main:app --host 0.0.0.0 --port 8200 > /tmp/balbes-web-backend.log 2>&1 &
 BACKEND_PID=$!
 echo "   PID: $BACKEND_PID"
 sleep 2

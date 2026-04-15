@@ -46,6 +46,19 @@ Voice uses **openai-whisper** locally for short messages and **cloud STT** (Open
 
 Requires `ffmpeg` and `pip install openai-whisper`. Optional preload: `ENV=prod python scripts/prefetch_whisper.py`.
 
+### Optional — Monitoring webhook (web-backend)
+
+| Variable | Description |
+|----------|-------------|
+| `WEBHOOK_NOTIFY_API_KEY` | Bearer secret for `POST /api/webhooks/notify`; if unset, endpoint is disabled (503) |
+| `NOTIFY_DELIVERY_CHANNELS` | Comma-separated: `telegram`, `max` |
+| `NOTIFY_TELEGRAM_CHAT_ID` | Optional Telegram `chat_id`; defaults to private chat via `TELEGRAM_USER_ID` |
+| `NOTIFY_RATE_LIMIT_PER_MINUTE` | Per-IP rate limit | `60` |
+| `MAX_BOT_TOKEN` / `NOTIFY_MAX_CHAT_ID` | Required when `max` is in delivery channels |
+| `MAX_API_URL` | MAX HTTP API base | `https://platform-api.max.ru` |
+
+See [`docs/ru/WEBHOOK_NOTIFY.md`](../ru/WEBHOOK_NOTIFY.md) (Russian).
+
 ### Optional — Infrastructure
 
 | Variable | Description | Default |
