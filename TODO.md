@@ -7,7 +7,12 @@
 ## Запланировано
 
 - Добавить `app_name` (Balbes Multi Agent) в запросы к OpenRouter API для отслеживания статистики токенов по агентам в дашборде OpenRouter
-*(пусто — всё из первоначального backlog выполнено)*
+
+### Следующие этапы (multi-messenger / webhooks)
+
+- **Единый логический чат и каналы Telegram + MAX** — привязка `logical_chat` к `telegram_chat_id` / `max_chat_id`, fan-out исходящих сообщений агента и системных notify по настройкам агента/чата (не только переменные `NOTIFY_*` в `.env`).
+- **MAX Messenger — полная интеграция** — входящий webhook платформы, клиент `platform-api.max.ru`, общий адаптер исходящих с [`shared/notify/delivery.py`](shared/notify/delivery.py); сценарий блогера: чтение summary рабочих чатов через MAX API.
+- **Telegram Bot: webhook вместо long polling** — оркестратор, блогер и др.: единый базовый URL, секрет Telegram и деплой за reverse proxy (см. также пункт в Backlog ниже).
 
 ## Идеи / Backlog
 
