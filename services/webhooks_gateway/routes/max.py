@@ -47,7 +47,15 @@ async def _max_run_orchestrator_and_reply(
 
     reply_text: str
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # Explicit connect/read timeouts: long LLM runs need a generous read; avoid
+        # "Server disconnected without sending a response" from default short read timeouts.
+        httpx_timeout = httpx.Timeout(
+            connect=30.0,
+            read=timeout,
+            write=120.0,
+            pool=30.0,
+        )
+        async with httpx.AsyncClient(timeout=httpx_timeout) as client:
             resp = await client.post(url, params=params)
             if resp.status_code != 200:
                 reply_text = f"Ошибка оркестратора: HTTP {resp.status_code}"

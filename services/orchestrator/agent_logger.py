@@ -108,19 +108,28 @@ class AgentActivityLogger:
         end_date:    range end   "YYYY-MM-DD" (inclusive)
         tool_filter: only entries for this tool name
         limit:       max entries returned (most recent first)
+
+        Raises ValueError if a date string is not today/yesterday/YYYY-MM-DD.
         """
         today = _now_local().date()
 
         # Resolve keyword dates
         def _parse(s: str):
-            s = s.strip().lower()
+            s = (s or "").strip().lower()
+            if not s:
+                raise ValueError("пустая дата")
             if s == "today":
                 return today
             if s == "yesterday":
                 from datetime import timedelta
 
                 return today - timedelta(days=1)
-            return datetime.strptime(s, "%Y-%m-%d").date()
+            try:
+                return datetime.strptime(s, "%Y-%m-%d").date()
+            except ValueError as e:
+                raise ValueError(
+                    f"ожидается YYYY-MM-DD, today или yesterday; получено: {s!r}"
+                ) from e
 
         if date:
             d = _parse(date)

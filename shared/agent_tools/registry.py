@@ -409,14 +409,14 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "tool_filter": {
                         "type": "string",
                         "description": (
-                            "Show only calls to this tool: web_search | fetch_url | "
-                            "execute_command | workspace_read | workspace_write | "
-                            "rename_chat | save_to_memory"
+                            "Optional: show only this tool name (e.g. web_search). "
+                            "Omit the parameter entirely when not filtering — do not pass null, "
+                            "empty string, or the word 'null'."
                         ),
                     },
                     "limit": {
                         "type": "integer",
-                        "description": "Max entries to return (default 50, max 200).",
+                        "description": "Max entries to return (default 50, max 200). Use a number, not a string.",
                         "default": 50,
                     },
                 },
@@ -927,6 +927,51 @@ def build_subagent_tools(resolved: list[dict[str, Any]] | None = None) -> list[d
 # Default subsets over full catalog (backward compatibility).
 HEARTBEAT_TOOLS: list[dict[str, Any]] = build_heartbeat_tools()
 AGENT_TOOLS: list[dict[str, Any]] = build_subagent_tools()
+
+
+def normalize_read_agent_logs_args(raw: dict[str, Any]) -> dict[str, Any]:
+    """
+    Coerce LLM / client quirks: string 'null', quoted numbers, empty strings.
+
+    MAX and other clients sometimes send tool_filter='null' or limit='10'.
+    """
+
+    def _str_or_none(v: Any) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, (int, float)):
+            if isinstance(v, float) and not v.is_integer():
+                return str(v)
+            return str(int(v))
+        s = str(v).strip()
+        if not s or s.lower() in ("null", "none", "undefined", "n/a", "[]", "{}"):
+            return None
+        return s
+
+    def _limit(v: Any) -> int:
+        if v is None:
+            return 50
+        if isinstance(v, bool):
+            return 50
+        try:
+            if isinstance(v, str):
+                t = v.strip().lower()
+                if not t or t in ("null", "none", "undefined"):
+                    return 50
+                return max(1, min(int(t), 200))
+            return max(1, min(int(v), 200))
+        except (TypeError, ValueError):
+            return 50
+
+    return {
+        "date": _str_or_none(raw.get("date")),
+        "start_date": _str_or_none(raw.get("start_date")),
+        "end_date": _str_or_none(raw.get("end_date")),
+        "tool_filter": _str_or_none(raw.get("tool_filter")),
+        "limit": _limit(raw.get("limit")),
+    }
 
 
 def get_tools_for_mode(mode: str) -> list[dict[str, Any]]:
@@ -1601,24 +1646,31 @@ class ToolDispatcher:
     def _do_read_agent_logs(self, args: dict[str, Any]) -> str:
         if not self._logger:
             return "Activity logging is not configured."
-        entries = self._logger.read_logs(
-            date=args.get("date"),
-            start_date=args.get("start_date"),
-            end_date=args.get("end_date"),
-            tool_filter=args.get("tool_filter"),
-            limit=min(int(args.get("limit", 50)), 200),
-        )
+        norm = normalize_read_agent_logs_args(args)
+        try:
+            entries = self._logger.read_logs(
+                date=norm["date"],
+                start_date=norm["start_date"],
+                end_date=norm["end_date"],
+                tool_filter=norm["tool_filter"],
+                limit=norm["limit"],
+            )
+        except ValueError as e:
+            return (
+                f"Некорректные параметры даты для read_agent_logs: {e}. "
+                "Используйте YYYY-MM-DD, today или yesterday; для одного дня достаточно поля date."
+            )
         # Build title
-        if args.get("date"):
-            title = f"Логи за {args['date']}"
-        elif args.get("start_date") or args.get("end_date"):
-            sd = args.get("start_date", "начало")
-            ed = args.get("end_date", "сегодня")
+        if norm.get("date"):
+            title = f"Логи за {norm['date']}"
+        elif norm.get("start_date") or norm.get("end_date"):
+            sd = norm.get("start_date") or "начало"
+            ed = norm.get("end_date") or "сегодня"
             title = f"Логи {sd} — {ed}"
         else:
             title = "Логи за сегодня"
-        if args.get("tool_filter"):
-            title += f" (фильтр: {args['tool_filter']})"
+        if norm.get("tool_filter"):
+            title += f" (фильтр: {norm['tool_filter']})"
 
         available = self._logger.list_log_dates()
         result = self._logger.format_for_chat(entries, title=title)
