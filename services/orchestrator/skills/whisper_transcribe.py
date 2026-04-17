@@ -20,6 +20,7 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from shared.config import get_settings
 from shared.openrouter_http import openrouter_json_headers
@@ -94,6 +95,8 @@ async def _transcribe_remote_stt(
     ogg_bytes: bytes,
     language: str | None,
     http_client,
+    *,
+    openrouter_user_end_id: str | None = None,
 ) -> tuple[str, str]:
     """Cloud STT; returns (text, Russian debug label)."""
     from skills.whisper_remote_stt import transcribe_openrouter, transcribe_yandex
@@ -102,14 +105,24 @@ async def _transcribe_remote_stt(
     mode = s.whisper_remote_backend
 
     if mode == "openrouter":
-        text = await transcribe_openrouter(ogg_bytes, language=language, http_client=http_client)
+        text = await transcribe_openrouter(
+            ogg_bytes,
+            language=language,
+            http_client=http_client,
+            openrouter_user_end_id=openrouter_user_end_id,
+        )
         return text, "OpenRouter STT"
     if mode == "yandex":
         text = await transcribe_yandex(ogg_bytes, language=language, http_client=http_client)
         return text, "Yandex STT"
 
     try:
-        text = await transcribe_openrouter(ogg_bytes, language=language, http_client=http_client)
+        text = await transcribe_openrouter(
+            ogg_bytes,
+            language=language,
+            http_client=http_client,
+            openrouter_user_end_id=openrouter_user_end_id,
+        )
         return text, "OpenRouter STT"
     except Exception as e:
         logger.warning("OpenRouter STT failed, falling back to Yandex: %s", e)
@@ -203,6 +216,7 @@ async def transcribe_voice(
     duration_hint_sec: int | None = None,
     *,
     http_client=None,
+    openrouter_user_end_id: str | None = None,
 ) -> VoiceTranscribeResult:
     """
     Transcribe a voice message (local Whisper for short audio, cloud STT otherwise).
@@ -237,7 +251,12 @@ async def transcribe_voice(
             )
         )
         try:
-            text, label = await _transcribe_remote_stt(ogg_bytes, lang, client)
+            text, label = await _transcribe_remote_stt(
+                ogg_bytes,
+                lang,
+                client,
+                openrouter_user_end_id=openrouter_user_end_id,
+            )
             logger.info("Cloud transcription done: %s chars, label=%s", len(text), label)
             return VoiceTranscribeResult(text=text, stt_label_ru=label)
         finally:
@@ -291,6 +310,7 @@ async def correct_transcription(
     http_client=None,
     *,
     chat_model_id: str | None = None,
+    openrouter_user_end_id: str | None = None,
 ) -> str:
     """
     Fix common speech recognition errors via OpenRouter.
@@ -348,10 +368,15 @@ async def correct_transcription(
     try:
         for attempt, model_id in enumerate(models):
             try:
+                body: dict[str, Any] = {**payload_base, "model": model_id}
+                if openrouter_user_end_id:
+                    body["user"] = openrouter_user_end_id
+                else:
+                    body["user"] = settings.openrouter_service_user
                 response = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=openrouter_json_headers(settings),
-                    json={**payload_base, "model": model_id},
+                    json=body,
                     timeout=timeout,
                 )
             except Exception as e:

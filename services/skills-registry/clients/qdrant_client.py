@@ -132,6 +132,7 @@ class QdrantClient:
                 json={
                     "model": "openai/text-embedding-3-small",
                     "input": text,
+                    "user": settings.openrouter_service_user,
                 },
             )
 

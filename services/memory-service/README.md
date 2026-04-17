@@ -11,7 +11,7 @@ Memory management service for Balbes Multi-Agent System.
 - **Task Tracking** (PostgreSQL) - Task lifecycle and results
 - **Action Logs** (PostgreSQL) - Detailed audit trail
 - **Token Tracking** (PostgreSQL + Redis) - Usage statistics and budgets
-- **Identity** (Redis) - `GET /api/v1/identity/resolve` maps `telegram` / `max` external ids to a stable canonical UUID; legacy per-user Redis keys are renamed on first resolve
+- **Identity** (Redis) - `GET /api/v1/identity/resolve` maps `telegram` / `max` external ids to a stable canonical UUID; legacy per-user Redis keys are renamed on first resolve; `POST /api/v1/identity/link` attaches a second channel to an existing canonical id (optional `IDENTITY_LINK_SECRET`)
 
 ## Architecture
 

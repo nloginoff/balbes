@@ -2253,6 +2253,7 @@ class BalbesTelegramBot:
                 ogg_bytes,
                 duration_hint_sec=duration_sec,
                 http_client=self._get_http(),
+                openrouter_user_end_id=mem_uid,
             )
             raw_text = tr_result.text
             tr_s = time.monotonic() - t_tr
@@ -2280,6 +2281,7 @@ class BalbesTelegramBot:
                 raw_text,
                 http_client=self.http_client,
                 chat_model_id=chat_model_id,
+                openrouter_user_end_id=mem_uid,
             )
             co_s = time.monotonic() - t_co
             logger.info("Voice: LLM correction in %.1fs", co_s)

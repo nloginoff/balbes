@@ -82,6 +82,21 @@ class Settings(BaseSettings):
         default=None,
         description="Optional comma-separated X-OpenRouter-Categories",
     )
+    openrouter_service_user: str = Field(
+        default="balbes-service",
+        validation_alias=AliasChoices("OPENROUTER_SERVICE_USER", "openrouter_service_user"),
+        description=(
+            "OpenRouter `user` for calls without an end-user session "
+            "(embeddings in Memory/skills-registry, optional)"
+        ),
+    )
+    identity_link_secret: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IDENTITY_LINK_SECRET", "identity_link_secret"),
+        description=(
+            "If set, POST /api/v1/identity/link requires X-Balbes-Identity-Link-Secret header"
+        ),
+    )
 
     # =============================================================================
     # Telegram Bot

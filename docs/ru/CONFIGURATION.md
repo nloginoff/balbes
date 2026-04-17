@@ -15,6 +15,11 @@ OPENROUTER_API_KEY=sk-or-v1-your-key-here
 # OPENROUTER_HTTP_REFERER=https://github.com/nloginoff/balbes
 # OPENROUTER_APP_TITLE=Balbes Multi Agent
 # OPENROUTER_CATEGORIES=
+# Поле `user` в OpenRouter для вызовов без «личного» id (эмбеддинги в Memory/skills-registry, STT/коррекция когда не передан uuid пользователя). См. [IDENTITY_AND_OPENROUTER_USER.md](IDENTITY_AND_OPENROUTER_USER.md).
+# OPENROUTER_SERVICE_USER=balbes-service
+# Если задан — защита POST /api/v1/identity/link (слияние Telegram и MAX в один uuid):
+# IDENTITY_LINK_SECRET=long-random-string
+
 AITUNNEL_API_KEY=                           # Не используется, оставить пустым
 
 # =============================================================================

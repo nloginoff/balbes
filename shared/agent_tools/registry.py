@@ -1502,17 +1502,22 @@ class ToolDispatcher:
 
     def _get_code_indexer(self, context: dict[str, Any]):
         """Lazy-load the CodeIndexer, reusing across calls."""
-        if not hasattr(self, "_code_indexer") or self._code_indexer is None:
-            from skills.code_indexer import CodeIndexer
+        from skills.code_indexer import CodeIndexer
 
-            from shared.config import get_settings
+        from shared.config import get_settings
 
-            s = get_settings()
+        s = get_settings()
+        uid = context.get("user_id")
+        uid_str = uid if isinstance(uid, str) else ""
+        prev = getattr(self, "_code_indexer_user_id", None)
+        if not hasattr(self, "_code_indexer") or self._code_indexer is None or prev != uid_str:
             self._code_indexer = CodeIndexer(
                 openrouter_api_key=context.get("openrouter_api_key") or s.openrouter_api_key or "",
                 qdrant_host=s.qdrant_host,
                 qdrant_port=s.qdrant_port,
+                openrouter_user_end_id=uid_str or None,
             )
+            self._code_indexer_user_id = uid_str
         return self._code_indexer
 
     async def _do_code_search(self, args: dict[str, Any], context: dict[str, Any]) -> str:

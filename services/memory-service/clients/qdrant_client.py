@@ -148,13 +148,15 @@ class QdrantClient:
             raise MemoryStorageError("OpenRouter API key not configured")
 
         try:
+            emb: dict[str, Any] = {
+                "model": "openai/text-embedding-3-small",
+                "input": text,
+                "user": settings.openrouter_service_user,
+            }
             response = await self.http_client.post(
                 "https://openrouter.ai/api/v1/embeddings",
                 headers=openrouter_json_headers(settings, api_key=self._openrouter_key),
-                json={
-                    "model": "openai/text-embedding-3-small",
-                    "input": text,
-                },
+                json=emb,
             )
 
             response.raise_for_status()

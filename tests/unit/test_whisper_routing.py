@@ -16,6 +16,7 @@ class _Settings:
     whisper_yandex_stt_timeout_seconds = 60.0
     whisper_language = "ru"
     openrouter_api_key = "k"
+    openrouter_service_user = "balbes-service"
     whisper_openrouter_stt_model = "test/audio-model"
     yandex_speech_api_key = None
     yandex_search_key = "yk"
@@ -45,7 +46,7 @@ async def test_transcribe_voice_remote_branch(monkeypatch):
 
     monkeypatch.setattr(wt, "use_local_whisper_for_duration", lambda _d: False)
 
-    async def _remote(ogg_bytes, language, http_client):
+    async def _remote(ogg_bytes, language, http_client, *, openrouter_user_end_id=None):
         assert ogg_bytes == b"ogg"
         return "remote transcript", "OpenRouter STT"
 

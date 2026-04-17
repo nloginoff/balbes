@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 
@@ -556,6 +556,104 @@ class RedisClient:
                 return existing3, False
 
         raise MemoryStorageError("could not acquire identity lock")
+
+    async def _user_has_memory_data(self, user_id: str) -> bool:
+        """True if user_id has multi-chat records, active chat, or agent_session keys."""
+        if not self.client:
+            return False
+        try:
+            if await self.client.exists(self._chats_key(user_id)):
+                if await self.client.hlen(self._chats_key(user_id)) > 0:
+                    return True
+            if await self.client.exists(self._active_chat_key(user_id)):
+                return True
+            cur = 0
+            while True:
+                cur, keys = await self.client.scan(
+                    cursor=cur, match=f"agent_session:{user_id}:*", count=30
+                )
+                if keys:
+                    return True
+                if cur == 0:
+                    break
+        except Exception:
+            return False
+        return False
+
+    async def link_identity_to_canonical(
+        self, provider: str, external_id: str, to_canonical: str
+    ) -> dict[str, Any]:
+        """
+        Point identity:link:{provider}:{external_id} to an existing canonical UUID.
+
+        Migrates Redis data from the prior mapping (or legacy max: / tg id layout)
+        when needed. Raises if both source and target already have non-empty data
+        (merge not implemented).
+        """
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+
+        try:
+            UUID(to_canonical)
+        except ValueError as e:
+            raise MemoryStorageError("canonical_user_id must be a UUID string") from e
+
+        p = provider.lower().strip()
+        if p not in ("telegram", "max"):
+            raise MemoryStorageError(f"unsupported provider: {provider}")
+        ext = external_id.strip()
+        if not ext:
+            raise MemoryStorageError("external_id is required")
+
+        link_key = self._identity_link_key(p, ext)
+        legacy = self._legacy_user_id(p, ext)
+        lock_key = self._identity_lock_key(p, ext)
+
+        for _ in range(50):
+            if await self.client.set(lock_key, "1", nx=True, ex=30):
+                try:
+                    old_link = await self.client.get(link_key)
+                    if old_link == to_canonical:
+                        return {
+                            "canonical_user_id": to_canonical,
+                            "migrated": False,
+                            "detail": "already linked",
+                        }
+
+                    primary_src: str | None = old_link
+                    if not primary_src and await self._user_has_memory_data(legacy):
+                        primary_src = legacy
+
+                    migrated = False
+                    if primary_src and primary_src != to_canonical:
+                        has_t = await self._user_has_memory_data(to_canonical)
+                        has_s = await self._user_has_memory_data(primary_src)
+                        if has_t and has_s:
+                            raise MemoryStorageError(
+                                "both the target canonical id and the other identity have chat data; "
+                                "merge is not supported — clear or export one side first"
+                            )
+                        await self._migrate_user_redis_keys(primary_src, to_canonical)
+                        migrated = True
+
+                    await self.client.set(link_key, to_canonical)
+                    return {
+                        "canonical_user_id": to_canonical,
+                        "migrated": migrated,
+                        "detail": "linked",
+                    }
+                finally:
+                    await self.client.delete(lock_key)
+            await asyncio.sleep(0.05)
+            cur = await self.client.get(link_key)
+            if cur == to_canonical:
+                return {
+                    "canonical_user_id": to_canonical,
+                    "migrated": False,
+                    "detail": "already linked",
+                }
+
+        raise MemoryStorageError("could not acquire identity lock for link")
 
     # =========================================================================
     # Per-agent session (last chat + bot used for this logical agent)

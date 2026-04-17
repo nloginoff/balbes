@@ -61,10 +61,17 @@ class CodeIndexer:
     Uses file-level granularity: each file is one vector point.
     """
 
-    def __init__(self, openrouter_api_key: str, qdrant_host: str, qdrant_port: int):
+    def __init__(
+        self,
+        openrouter_api_key: str,
+        qdrant_host: str,
+        qdrant_port: int,
+        openrouter_user_end_id: str | None = None,
+    ):
         self.openrouter_api_key = openrouter_api_key
         self.qdrant_host = qdrant_host
         self.qdrant_port = qdrant_port
+        self.openrouter_user_end_id = openrouter_user_end_id
         self._http: httpx.AsyncClient | None = None
         self._qdrant: Any | None = None  # qdrant_client.AsyncQdrantClient
 
@@ -110,10 +117,16 @@ class CodeIndexer:
         http = await self._get_http()
         # Truncate to avoid token limits
         truncated = text[:MAX_EMBED_CHARS]
+        emb_body: dict[str, Any] = {"model": EMBEDDING_MODEL, "input": truncated}
+        uid = self.openrouter_user_end_id
+        if uid:
+            emb_body["user"] = uid
+        else:
+            emb_body["user"] = get_settings().openrouter_service_user
         resp = await http.post(
             "https://openrouter.ai/api/v1/embeddings",
             headers=openrouter_json_headers(get_settings(), api_key=self.openrouter_api_key),
-            json={"model": EMBEDDING_MODEL, "input": truncated},
+            json=emb_body,
             timeout=30.0,
         )
         if resp.status_code != 200:

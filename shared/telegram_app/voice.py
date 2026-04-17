@@ -24,6 +24,7 @@ async def transcribe_telegram_voice(
     chat_model_id: str | None,
     voice_debug: bool = False,
     debug_reply: Callable[[Any, bool, str], Awaitable[None]] | None = None,
+    openrouter_user_end_id: str | None = None,
 ) -> str:
     """
     Download voice/audio, run transcribe_voice + correct_transcription.
@@ -58,6 +59,7 @@ async def transcribe_telegram_voice(
         ogg_bytes,
         duration_hint_sec=duration_sec,
         http_client=http_client,
+        openrouter_user_end_id=openrouter_user_end_id,
     )
     raw_text = tr_result.text or ""
     tr_s = time.monotonic() - t_tr
@@ -80,6 +82,7 @@ async def transcribe_telegram_voice(
         raw_text,
         http_client=http_client,
         chat_model_id=chat_model_id,
+        openrouter_user_end_id=openrouter_user_end_id,
     )
     co_s = time.monotonic() - t_co
     logger.info("Voice: LLM correction in %.1fs", co_s)

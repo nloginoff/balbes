@@ -24,6 +24,7 @@ async def transcribe_openrouter(
     *,
     language: str | None,
     http_client,
+    openrouter_user_end_id: str | None = None,
 ) -> str:
     """
     Transcribe via OpenRouter chat/completions with input_audio (base64 + format).
@@ -67,6 +68,11 @@ async def transcribe_openrouter(
         "temperature": 0.0,
         "max_tokens": 4096,
     }
+    ou = openrouter_user_end_id
+    if ou:
+        payload["user"] = ou
+    else:
+        payload["user"] = settings.openrouter_service_user
 
     timeout = settings.whisper_openrouter_stt_timeout_seconds
     logger.info(
