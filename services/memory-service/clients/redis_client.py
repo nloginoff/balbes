@@ -12,6 +12,8 @@ Provides methods for:
 import asyncio
 import json
 import logging
+import secrets
+import string
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -25,6 +27,8 @@ settings = get_settings()
 logger = logging.getLogger("memory-service.redis")
 
 CHAT_TTL_SECONDS = 7 * 24 * 3600  # 7 days
+PAIRING_CODE_TTL_SECONDS = 600  # 10 minutes
+PAIRING_CODE_LENGTH = 8
 
 
 class RedisClient:
@@ -579,6 +583,155 @@ class RedisClient:
         except Exception:
             return False
         return False
+
+    async def delete_all_user_memory_data(self, user_id: str) -> None:
+        """
+        Remove all multi-chat Redis keys for this user id namespace (chats, meta, history, sessions).
+        Does not touch identity:link:* or pairing keys.
+        """
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        uid = user_id.strip()
+        if not uid:
+            return
+
+        cids = await self.client.hkeys(self._chats_key(uid))
+        pipe = self.client.pipeline()
+        for cid in cids or []:
+            pipe.delete(self._chat_meta_key(uid, cid))
+            pipe.delete(self._history_key(uid, cid))
+        pipe.delete(self._chats_key(uid))
+        pipe.delete(self._active_chat_key(uid))
+        await pipe.execute()
+
+        cur = 0
+        while True:
+            cur, keys = await self.client.scan(
+                cursor=cur, match=f"agent_session:{uid}:*", count=100
+            )
+            if keys:
+                await self.client.delete(*keys)
+            if cur == 0:
+                break
+
+        logger.info("Deleted all Redis memory keys for user namespace %s", uid)
+
+    def _pairing_key(self, code: str) -> str:
+        return f"identity:pair:{code.strip().upper()}"
+
+    def _random_pairing_code(self) -> str:
+        alphabet = string.ascii_uppercase + string.digits
+        return "".join(secrets.choice(alphabet) for _ in range(PAIRING_CODE_LENGTH))
+
+    async def create_pairing_code(
+        self, target_canonical_id: str, intended_provider: str
+    ) -> tuple[str, int]:
+        """
+        Create a one-time code. The user must redeem it from `intended_provider`
+        (telegram or max) to attach that account to target_canonical_id.
+        """
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        try:
+            UUID(target_canonical_id.strip())
+        except ValueError as e:
+            raise MemoryStorageError("target_canonical_id must be a UUID string") from e
+
+        ip = intended_provider.lower().strip()
+        if ip not in ("telegram", "max"):
+            raise MemoryStorageError("intended_provider must be telegram or max")
+
+        for _ in range(64):
+            code = self._random_pairing_code()
+            key = self._pairing_key(code)
+            payload = json.dumps(
+                {"target_canonical_id": target_canonical_id.strip(), "intended_provider": ip},
+                ensure_ascii=False,
+            )
+            ok = await self.client.set(
+                key,
+                payload,
+                nx=True,
+                ex=PAIRING_CODE_TTL_SECONDS,
+            )
+            if ok:
+                return code, PAIRING_CODE_TTL_SECONDS
+
+        raise MemoryStorageError("failed to allocate a unique pairing code")
+
+    async def redeem_pairing_code(
+        self, code: str, provider: str, external_id: str
+    ) -> dict[str, Any]:
+        """
+        Attach identity:link:{provider}:{external_id} to the canonical id from the code.
+
+        Deletes all Memory data for the secondary namespace before linking (so the initiator's
+        history is kept; the redeemer's old isolated history is removed).
+        """
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+
+        p = provider.lower().strip()
+        ext = external_id.strip()
+        if p not in ("telegram", "max") or not ext:
+            raise MemoryStorageError("unsupported provider or empty external_id")
+
+        key = self._pairing_key(code)
+        raw = await self.client.get(key)
+        if not raw:
+            raise MemoryStorageError("invalid or expired pairing code")
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise MemoryStorageError("corrupt pairing record") from e
+
+        intended = data.get("intended_provider")
+        target = data.get("target_canonical_id")
+        if not target or not isinstance(target, str):
+            raise MemoryStorageError("corrupt pairing record")
+        if intended != p:
+            raise MemoryStorageError(
+                f"this code must be entered in {intended}, not another messenger"
+            )
+
+        try:
+            UUID(target)
+        except ValueError as e:
+            raise MemoryStorageError("corrupt pairing target id") from e
+
+        lock_key = self._identity_lock_key(p, ext)
+        for _ in range(50):
+            if await self.client.set(lock_key, "1", nx=True, ex=30):
+                try:
+                    link_key = self._identity_link_key(p, ext)
+                    legacy = self._legacy_user_id(p, ext)
+                    old_link = await self.client.get(link_key)
+
+                    to_wipe: set[str] = set()
+                    if old_link:
+                        to_wipe.add(old_link)
+                    to_wipe.add(legacy)
+
+                    wiped_any = False
+                    for uid in to_wipe:
+                        if not uid or uid == target:
+                            continue
+                        await self.delete_all_user_memory_data(uid)
+                        wiped_any = True
+
+                    await self.client.set(link_key, target)
+                    await self.client.delete(key)
+                    return {
+                        "canonical_user_id": target,
+                        "linked_provider": p,
+                        "secondary_data_wiped": wiped_any,
+                    }
+                finally:
+                    await self.client.delete(lock_key)
+            await asyncio.sleep(0.05)
+
+        raise MemoryStorageError("could not acquire identity lock for redeem")
 
     async def link_identity_to_canonical(
         self, provider: str, external_id: str, to_canonical: str

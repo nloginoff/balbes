@@ -7,9 +7,11 @@ Uses Memory Service HTTP API and providers.yaml (same as Telegram bot).
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
+from shared.config import get_settings
 from shared.max_bot_ui import (
     CB_AGENT,
     CB_CHAT,
@@ -42,6 +44,7 @@ _SLASH_HANDLED = frozenset(
         "rename",
         "clear",
         "status",
+        "link",
     }
 )
 
@@ -173,6 +176,7 @@ async def run_max_slash_command(
     memory_url: str,
     orchestrator_url: str,
     client: httpx.AsyncClient,
+    sender_max_user_id: int | None = None,
 ) -> MaxUiReply:
     cmd = command.lower().strip()
 
@@ -197,6 +201,71 @@ async def run_max_slash_command(
             text=MAX_HELP_TEXT,
             attachments=[inline_keyboard_attachment(build_main_menu_keyboard())],
         )
+
+    if cmd == "link":
+        settings = get_settings()
+        rest_s = (rest or "").strip()
+        mem = memory_url.rstrip("/")
+        if not rest_s:
+            return MaxUiReply(
+                text=(
+                    "**Привязка канала**\n\n"
+                    "• `/link telegram` — код для ввода в Telegram\n"
+                    "• `/link КОД` — код из Telegram (привязать MAX)\n\n"
+                    "История **вторичного** канала при успешной привязке удаляется."
+                )
+            )
+        tok = rest_s.split()[0]
+        low = tok.lower()
+        if low == "telegram":
+            hdr = {}
+            if settings.identity_link_secret:
+                hdr["X-Balbes-Identity-Link-Secret"] = settings.identity_link_secret
+            try:
+                r = await client.post(
+                    f"{mem}/api/v1/identity/pairing/create",
+                    json={"canonical_user_id": user_key, "intended_provider": "telegram"},
+                    headers=hdr,
+                )
+                if r.status_code != 200:
+                    return MaxUiReply(text=f"❌ Ошибка: HTTP {r.status_code}\n{r.text[:350]}")
+                data = r.json()
+                code = data.get("code")
+                ttl_s = int(data.get("expires_in_seconds", 600))
+            except Exception as e:
+                return MaxUiReply(text=f"❌ {e!s}"[:3500])
+            return MaxUiReply(
+                text=(
+                    f"**Код:** `{code}` (~{ttl_s // 60} мин)\n\n"
+                    "В Telegram отправь боту:\n"
+                    f"`/link {code}`\n\n"
+                    "После привязки **история в Telegram** будет удалена, "
+                    "останется контекст из **MAX**."
+                )
+            )
+        if re.fullmatch(r"[A-Za-z0-9]{6,12}", tok) and len(tok) >= 6:
+            if sender_max_user_id is None:
+                return MaxUiReply(text="❌ Не удалось определить user_id MAX.")
+            try:
+                r = await client.post(
+                    f"{mem}/api/v1/identity/pairing/redeem",
+                    json={
+                        "code": tok.upper(),
+                        "provider": "max",
+                        "external_id": str(sender_max_user_id),
+                    },
+                )
+                if r.status_code != 200:
+                    return MaxUiReply(text=f"❌ HTTP {r.status_code}\n{r.text[:400]}")
+            except Exception as e:
+                return MaxUiReply(text=f"❌ {e!s}"[:3500])
+            return MaxUiReply(
+                text=(
+                    "✅ **MAX** привязан к основному аккаунту.\n\n"
+                    "Локальная история в MAX очищена; дальше один контекст с Telegram."
+                )
+            )
+        return MaxUiReply(text="Использование: `/link telegram` или `/link КОД` из Telegram.")
 
     if cmd == "status":
         try:

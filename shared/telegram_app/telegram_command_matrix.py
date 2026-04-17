@@ -50,6 +50,12 @@ SLASH_COMMANDS_ORCHESTRATOR: tuple[SlashCommandRow, ...] = (
     ),
     SlashCommandRow("tasks_command", "tasks", "📋 Список задач агентов (реестр)", "cmd_tasks"),
     SlashCommandRow("status_command", "status", "Статус системы", "cmd_status"),
+    SlashCommandRow(
+        "link_command",
+        "link",
+        "Привязать MAX / ввести код (один аккаунт)",
+        "cmd_link",
+    ),
 )
 
 SLASH_COMMANDS_BLOGGER: tuple[SlashCommandRow, ...] = (

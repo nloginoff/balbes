@@ -10,6 +10,17 @@ from shared.config import get_settings
 router = APIRouter()
 
 
+def _require_identity_secret(x_balbes_identity_link_secret: str | None) -> None:
+    """Backend-only operations (manual link, pairing create) when IDENTITY_LINK_SECRET is set."""
+    settings = get_settings()
+    secret = settings.identity_link_secret
+    if secret and (not x_balbes_identity_link_secret or x_balbes_identity_link_secret != secret):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing X-Balbes-Identity-Link-Secret",
+        )
+
+
 def _get_redis():
     import main as memory_main
 
@@ -72,19 +83,79 @@ async def link_identity(
     When `IDENTITY_LINK_SECRET` is set in the environment, requests must send the
     same value in the `X-Balbes-Identity-Link-Secret` header.
     """
-    settings = get_settings()
-    secret = settings.identity_link_secret
-    if secret and (not x_balbes_identity_link_secret or x_balbes_identity_link_secret != secret):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid or missing X-Balbes-Identity-Link-Secret",
-        )
+    _require_identity_secret(x_balbes_identity_link_secret)
 
     redis_client = _get_redis()
     try:
         return await redis_client.link_identity_to_canonical(
             body.provider, body.external_id, body.canonical_user_id
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+class PairingCreateRequest(BaseModel):
+    """Create a code; redeem from the other messenger (see intended_provider)."""
+
+    canonical_user_id: str = Field(
+        ...,
+        description="Initiator's canonical id (primary account whose history is kept)",
+    )
+    intended_provider: str = Field(
+        ...,
+        description="Where the partner must enter the code: telegram | max",
+    )
+
+
+class PairingRedeemRequest(BaseModel):
+    """Redeem a pairing code from the secondary messenger."""
+
+    code: str = Field(..., min_length=4, max_length=32)
+    provider: str = Field(..., description="telegram | max")
+    external_id: str = Field(..., description="Redeemer's id on this platform")
+
+
+@router.post("/identity/pairing/create")
+async def create_pairing(
+    body: PairingCreateRequest,
+    x_balbes_identity_link_secret: str | None = Header(
+        None,
+        alias="X-Balbes-Identity-Link-Secret",
+    ),
+) -> dict[str, Any]:
+    """
+    Issue a one-time code. Bots send the initiator's canonical id and which app
+    must redeem (`intended_provider` = max → user enters code in MAX).
+
+    If `IDENTITY_LINK_SECRET` is set, the same header as for `/identity/link` is required.
+    """
+    _require_identity_secret(x_balbes_identity_link_secret)
+
+    redis_client = _get_redis()
+    try:
+        code, ttl = await redis_client.create_pairing_code(
+            body.canonical_user_id, body.intended_provider
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    return {"code": code, "expires_in_seconds": ttl}
+
+
+@router.post("/identity/pairing/redeem")
+async def redeem_pairing(body: PairingRedeemRequest) -> dict[str, Any]:
+    """
+    Complete linking: wipes the redeemer's isolated Memory data, then points
+    identity:link to the initiator's canonical id.
+    """
+    redis_client = _get_redis()
+    try:
+        return await redis_client.redeem_pairing_code(body.code, body.provider, body.external_id)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

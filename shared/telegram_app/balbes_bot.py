@@ -22,6 +22,7 @@ unknown duration uses cloud STT (OpenRouter / Yandex SpeechKit), then optional L
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -50,7 +51,11 @@ from telegram.ext import (
 
 from shared.agent_manifest import get_agent_manifest
 from shared.config import get_settings
-from shared.identity_client import resolve_canonical_user_id
+from shared.identity_client import (
+    create_pairing_code,
+    redeem_pairing_code,
+    resolve_canonical_user_id,
+)
 from shared.telegram_app.telegram_command_matrix import (
     build_slash_bot_commands,
     register_slash_command_handlers,
@@ -1145,11 +1150,96 @@ class BalbesTelegramBot:
             "/recall запрос — найти в долгосрочной памяти\n"
             "/heartbeat — запустить проверку сейчас\n"
             "/status — статус системы\n"
+            "/link — привязать MAX \\(/link max\\) или ввести код\n"
             "/help — эта справка\n\n"
             "🎤 *Голосовые сообщения* принимаются автоматически\\.\n"
             "📎 Отправь ссылку — прочту страницу\\.\n"
         )
         await update.message.reply_text(text, parse_mode="MarkdownV2")
+
+    async def cmd_link(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Pairing: primary account (this chat) keeps history; secondary history is wiped on redeem."""
+        user = update.effective_user
+        if not user or not update.message:
+            return
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Привязка второго канала к **этому** Telegram-аккаунту "
+                "(здесь история **сохранится**).\n\n"
+                "• `/link max` — пришлю код; в MAX отправь боту `/link КОД`.\n"
+                "  После привязки **вся история чатов в MAX** (отдельный аккаунт) будет **удалена**.\n\n"
+                "• Если привязку начал в MAX (`/link telegram`), сюда пришли: `/link КОД`.\n"
+                "  Тогда **история в Telegram** будет удалена, останется та, что в MAX.\n\n"
+                "Код действует около 10 минут.",
+                parse_mode="Markdown",
+            )
+            return
+
+        mem_uid = await self._memory_user_id(user)
+        first = (args[0] or "").strip()
+        low = first.lower()
+
+        async def _redeem_tg(code: str) -> None:
+            try:
+                out = await redeem_pairing_code(
+                    self.memory_url,
+                    code,
+                    "telegram",
+                    str(user.id),
+                    client=self._get_http(),
+                )
+                cu = out.get("canonical_user_id", "")
+                await update.message.reply_text(
+                    f"✅ Готово. Один аккаунт для Telegram и MAX.\n"
+                    f"Идентификатор: `{cu[:8]}…`\n\n"
+                    "История на стороне **второго** канала при привязке была очищена; "
+                    "дальше один контекст в обоих мессенджерах."
+                )
+                self._canonical_cache.pop(str(user.id), None)
+            except Exception as e:
+                await update.message.reply_text(
+                    f"❌ Не удалось применить код: `{e!s}`"[:3500],
+                    parse_mode="Markdown",
+                )
+
+        if re.fullmatch(r"[A-Za-z0-9]{6,12}", first):
+            await _redeem_tg(first.upper())
+            return
+
+        if low == "max":
+            try:
+                s = get_settings()
+                code, ttl = await create_pairing_code(
+                    self.memory_url,
+                    mem_uid,
+                    "max",
+                    identity_link_secret=s.identity_link_secret,
+                    client=self._get_http(),
+                )
+            except Exception as e:
+                await update.message.reply_text(f"❌ {e!s}"[:3500])
+                return
+            await update.message.reply_text(
+                f"**Код привязки:** `{code}`\n"
+                f"Действует ~{ttl // 60} мин.\n\n"
+                "В MAX отправь боту (одной строкой):\n"
+                f"`/link {code}`\n\n"
+                "После успешной привязки **история чатов в MAX будет удалена**, "
+                "останется контекст из Telegram.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if low == "telegram":
+            await update.message.reply_text(
+                "Чтобы сделать **Telegram** вторичным каналом, начни в MAX команду `/link telegram` — "
+                "там покажут код, затем введи его здесь: `/link КОД`.\n\n"
+                "⚠️ История в Telegram после привязки будет **стёрта**, основой станет аккаунт из MAX."
+            )
+            return
+
+        await update.message.reply_text("Не понял. Используй `/link`, `/link max` или `/link КОД`.")
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         try:

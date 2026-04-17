@@ -101,6 +101,7 @@ async def _max_run_slash_command_task(
                 memory_url=mem,
                 orchestrator_url=orch,
                 client=client,
+                sender_max_user_id=sender_user_id,
             )
         await _max_send_ui_reply(
             reply=reply,
