@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(default=None, description="OpenRouter API key")
     aitunnel_api_key: str | None = Field(default=None, description="AiTunnel API key")
     default_chat_model: str = Field(
-        default="openrouter/stepfun/step-3.5-flash:free",
+        default="openrouter/minimax/minimax-m2.5:free",
         description="Default model — overridden by first entry in providers.yaml active_models",
     )
     openrouter_http_referer: str = Field(

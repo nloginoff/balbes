@@ -142,7 +142,7 @@ timeouts:           # Таймауты LLM, skills, БД
 
 ```yaml
 # Тир free — дефолт, heartbeat, первый fallback (бесплатные)
-- id: "stepfun/step-3.5-flash:free"      # StepFun Step 3.5 Flash (65K ctx)
+- id: "minimax/minimax-m2.5:free"       # MiniMax M2.5 Free (1M ctx) — дефолт
 - id: "minimax/minimax-m2.5:free"        # MiniMax M2.5 (1M ctx)
 - id: "z-ai/glm-4.5-air:free"           # GLM-4.5 Air (32K ctx)
 - id: "arcee-ai/trinity-mini:free"       # Trinity Mini (32K ctx)
@@ -172,14 +172,14 @@ agents:
   - id: "orchestrator"
     display_name: "Balbes"
     emoji: "🤖"
-    # default_model: не задан → берётся первый из active_models (stepfun:free)
+    # default_model: не задан → берётся первый из active_models (minimax:free)
 
     # false = показать ошибку API пользователю (рекомендуется)
     # true  = тихо пробовать следующую модель из fallback_chain
     fallback_enabled: false
 
     fallback_chain:
-      - "openrouter/stepfun/step-3.5-flash:free"
+      - "openrouter/minimax/minimax-m2.5:free"
       - "openrouter/meta-llama/llama-3.3-70b-instruct"
       - "openrouter/minimax/minimax-m2.5"
 
@@ -247,7 +247,7 @@ agents:
 heartbeat:
   enabled: true
   every_minutes: 5
-  model: "openrouter/stepfun/step-3.5-flash:free"
+  model: "openrouter/minimax/minimax-m2.5:free"
   fallback_models:
     - "openrouter/minimax/minimax-m2.5:free"
     - "openrouter/z-ai/glm-4.5-air:free"

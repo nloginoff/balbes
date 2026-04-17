@@ -19,7 +19,7 @@
 | `MAX_WEBHOOK_SECRET` | Секрет, который вы задаёте при **подписке** на webhook (поле `secret` в `POST /subscriptions`). Проверяется заголовок **`X-Max-Bot-Api-Secret`** (как в доке MAX). Дополнительно поддерживается устаревший вариант **`X-Signature`** (HMAC-SHA256 тела). |
 | `ORCHESTRATOR_URL` | Базовый URL оркестратора для фонового `POST .../api/v1/tasks`. |
 | `WEBHOOKS_GATEWAY_PORT` | Порт gateway (dev **8180**, prod часто **18180**). |
-| `MAX_ALLOWED_USER_IDS` | Опционально: через запятую `user_id` MAX; пусто = все пользователи. |
+| `MAX_ALLOWED_USER_IDS` | Whitelist: через запятую числовые `user_id` MAX; **пусто = любой пользователь**. Для закрытого бота задайте список (как `TELEGRAM_ALLOWED_USERS`). |
 
 Секрет в API MAX: **5–256 символов**, только `[a-zA-Z0-9_-]` (см. документацию).
 

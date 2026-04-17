@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Дефолтная LLM (OpenRouter)** — первая free-модель и цепочки fallback переведены на **`minimax/minimax-m2.5:free`**: `stepfun/step-3.5-flash:free` больше не доступен на OpenRouter (`404 No endpoints found`). Агент **balbes**: `fallback_enabled: true` и повтор при **HTTP 404** в [`services/orchestrator/agent.py`](services/orchestrator/agent.py). Heartbeat и `DEFAULT_CHAT_MODEL` обновлены.
+
 ### Added
 - **Скрипт `scripts/max_subscriptions.py`** — `list` (GET /subscriptions), `delete` (DELETE по `url`), `apply` (POST + проверка списка; опция `--delete-first` при смене секрета). Документация: [`docs/ru/MAX_WEBHOOK.md`](docs/ru/MAX_WEBHOOK.md).
 

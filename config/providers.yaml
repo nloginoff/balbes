@@ -16,13 +16,6 @@ providers:
 
     models:
       # ── Free ────────────────────────────────────────────────────────────────
-      - id: "stepfun/step-3.5-flash:free"
-        display_name: "StepFun Step 3.5 Flash"
-        tier: free
-        cost_per_1k_tokens: 0.0
-        context_window: 65536
-        capabilities: ["chat", "fast"]
-
       - id: "minimax/minimax-m2.5:free"
         display_name: "MiniMax M2.5 (Free)"
         tier: free
@@ -50,6 +43,13 @@ providers:
         cost_per_1k_tokens: 0.0
         context_window: 128000
         capabilities: ["chat", "code"]
+
+      - id: "stepfun/step-3.5-flash:free"
+        display_name: "StepFun Step 3.5 Flash"
+        tier: free
+        cost_per_1k_tokens: 0.0
+        context_window: 65536
+        capabilities: ["chat", "fast"]
 
       # ── Cheap ───────────────────────────────────────────────────────────────
       - id: "meta-llama/llama-3.1-8b-instruct"
@@ -130,13 +130,13 @@ agents:
     # Default model when no chat model is configured (inherits active_models[0] if absent)
     # default_model: "openrouter/stepfun/step-3.5-flash:free"
 
-    # If false (default): use only the selected model; on error show the actual
-    # API error to the user. If true: silently try models in fallback_chain.
-    fallback_enabled: false
+    # If false: only the chat model is tried. If true: on 404/429/5xx try fallback_chain
+    # (needed when a free model disappears from OpenRouter).
+    fallback_enabled: true
 
     # Fallback chain (only used when fallback_enabled: true)
     fallback_chain:
-      - "openrouter/stepfun/step-3.5-flash:free"
+      - "openrouter/minimax/minimax-m2.5:free"
       - "openrouter/meta-llama/llama-3.3-70b-instruct"
       - "openrouter/minimax/minimax-m2.5"
 
@@ -263,7 +263,7 @@ agents:
 
     # Fallback chain (only used when fallback_enabled: true)
     fallback_chain:
-      - "openrouter/stepfun/step-3.5-flash:free"
+      - "openrouter/minimax/minimax-m2.5:free"
       - "openrouter/moonshotai/kimi-k2.5"
       - "openrouter/meta-llama/llama-3.3-70b-instruct"
       - "openrouter/minimax/minimax-m2.5"
@@ -447,17 +447,17 @@ agents:
 # Sorted by tier: free → cheap → medium → premium
 active_models:
   # ── Free ──────────────────────────────────────────────────────────────────
-  - id: "openrouter/stepfun/step-3.5-flash:free"
-    display_name: "🆓 StepFun Step 3.5 Flash"
-    tier: free
-    provider: openrouter
-    context_window: 65536
-
   - id: "openrouter/minimax/minimax-m2.5:free"
     display_name: "🆓 MiniMax M2.5 (Free)"
     tier: free
     provider: openrouter
     context_window: 1000000
+
+  - id: "openrouter/stepfun/step-3.5-flash:free"
+    display_name: "🆓 StepFun Step 3.5 Flash"
+    tier: free
+    provider: openrouter
+    context_window: 65536
 
   - id: "openrouter/z-ai/glm-4.5-air:free"
     display_name: "🆓 GLM-4.5 Air (Free)"
@@ -548,7 +548,7 @@ fallback_strategy:
 # Medium and premium are NEVER used as automatic fallback — only by explicit user choice
 default_fallback_chain:
   - provider: openrouter
-    model: "openrouter/stepfun/step-3.5-flash:free"
+    model: "openrouter/minimax/minimax-m2.5:free"
 
   - provider: openrouter
     model: "openrouter/meta-llama/llama-3.3-70b-instruct"
@@ -560,7 +560,7 @@ default_fallback_chain:
 # Cheap models for automatic fallback on token limit
 cheap_models:
   - provider: openrouter
-    model: "openrouter/stepfun/step-3.5-flash:free"
+    model: "openrouter/minimax/minimax-m2.5:free"
 
   - provider: openrouter
     model: "openrouter/meta-llama/llama-3.3-70b-instruct"
@@ -661,7 +661,7 @@ heartbeat:
   every_minutes: 15
   # Primary model (free). On 429/error, tries fallback_models in order.
   # Last fallback is the cheapest paid model. If all fail → error sent to user.
-  model: "openrouter/stepfun/step-3.5-flash:free"
+  model: "openrouter/minimax/minimax-m2.5:free"
   fallback_models:
     - "openrouter/minimax/minimax-m2.5:free"
     - "openrouter/z-ai/glm-4.5-air:free"

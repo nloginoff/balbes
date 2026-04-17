@@ -380,7 +380,7 @@ async def seed_initial_agents(conn: asyncpg.Connection):
             'orchestrator',
             'Orchestrator',
             'idle',
-            'openrouter/stepfun/step-3.5-flash:free',
+            'openrouter/minimax/minimax-m2.5:free',
             '{
                 "agent_id": "orchestrator",
                 "token_limits": {"daily": 100000, "hourly": 15000}
@@ -397,7 +397,7 @@ async def seed_initial_agents(conn: asyncpg.Connection):
             'coder',
             'Coder Agent',
             'idle',
-            'openrouter/stepfun/step-3.5-flash:free',
+            'openrouter/minimax/minimax-m2.5:free',
             '{
                 "agent_id": "coder",
                 "token_limits": {"daily": 100000, "hourly": 15000}
@@ -414,7 +414,7 @@ async def seed_initial_agents(conn: asyncpg.Connection):
             'blogger',
             'Blogger Agent',
             'idle',
-            'openrouter/stepfun/step-3.5-flash:free',
+            'openrouter/minimax/minimax-m2.5:free',
             '{
                 "agent_id": "blogger",
                 "token_limits": {"daily": 150000, "hourly": 20000}

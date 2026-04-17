@@ -1294,7 +1294,8 @@ class OrchestratorAgent(BaseAgent):
                 logger.warning(f"LLM error on {candidate}: {last_error}")
 
                 # Retriable errors — try next candidate if fallback enabled
-                if response.status_code in (429, 500, 502, 503, 504):
+                # 404: model removed from OpenRouter ("No endpoints found") — try next
+                if response.status_code in (404, 429, 500, 502, 503, 504):
                     continue
 
                 # Non-retriable error — stop immediately
