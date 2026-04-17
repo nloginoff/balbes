@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from shared.config import get_settings
+from shared.openrouter_http import openrouter_json_headers
 
 logger = logging.getLogger("orchestrator.skills.whisper_remote")
 
@@ -77,10 +78,7 @@ async def transcribe_openrouter(
 
     response = await http_client.post(
         _openrouter_base_url(),
-        headers={
-            "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=openrouter_json_headers(settings),
         json=payload,
         timeout=timeout,
     )

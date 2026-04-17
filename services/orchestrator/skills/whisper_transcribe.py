@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shared.config import get_settings
+from shared.openrouter_http import openrouter_json_headers
 
 logger = logging.getLogger("orchestrator.skills.whisper")
 settings = get_settings()
@@ -349,10 +350,7 @@ async def correct_transcription(
             try:
                 response = await client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.openrouter_api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=openrouter_json_headers(settings),
                     json={**payload_base, "model": model_id},
                     timeout=timeout,
                 )

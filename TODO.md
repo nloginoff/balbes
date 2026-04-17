@@ -6,12 +6,10 @@
 
 ## Запланировано
 
-- Добавить `app_name` (Balbes Multi Agent) в запросы к OpenRouter API для отслеживания статистики токенов по агентам в дашборде OpenRouter
-
 ### Следующие этапы (multi-messenger / webhooks)
 
 - **Единый логический чат и каналы Telegram + MAX** — привязка `logical_chat` к `telegram_chat_id` / `max_chat_id`, fan-out исходящих сообщений агента и системных notify по настройкам агента/чата (не только переменные `NOTIFY_*` в `.env`).
-- **MAX Messenger — полная интеграция** — обработка тела `POST /webhook/max` (сейчас verify + ack), клиент `platform-api.max.ru`, общий адаптер исходящих; сценарий блогера: чтение summary рабочих чатов через MAX API.
+- **MAX Messenger — расширение** — сценарий блогера: чтение summary рабочих чатов через MAX API; общий адаптер исходящих для всех агентов (сейчас: оркестратор через webhook + notify в [`shared/max_api.py`](shared/max_api.py)).
 - **Telegram webhook для остальных ботов** — блогер и др.: при необходимости тот же паттерн, что [`services/webhooks_gateway`](services/webhooks_gateway) для оркестратора (`TELEGRAM_BOT_MODE=webhook`).
 
 ## Идеи / Backlog
@@ -41,6 +39,8 @@
 
 ## Выполнено (архив)
 
+- ✅ **OpenRouter app attribution** — `HTTP-Referer`, `X-OpenRouter-Title` и опционально категории для chat/embeddings/STT (см. [`shared/openrouter_http.py`](shared/openrouter_http.py), `.env.example`).
+- ✅ **MAX webhook → оркестратор** — `POST /webhook/max`, `message_created`, фоновый `POST {ORCHESTRATOR_URL}/api/v1/tasks`, ответ в чат через `platform-api.max.ru` (`MAX_BOT_TOKEN`, опционально `MAX_ALLOWED_USER_IDS`).
 - ✅ `file_patch` инструмент для точечных правок файлов
 - ✅ Persist task registry в Redis (восстановление после перезапуска)
 - ✅ Streaming progress в Telegram (без debug mode)

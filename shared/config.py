@@ -70,6 +70,18 @@ class Settings(BaseSettings):
         default="openrouter/stepfun/step-3.5-flash:free",
         description="Default model — overridden by first entry in providers.yaml active_models",
     )
+    openrouter_http_referer: str = Field(
+        default="https://github.com/nloginoff/balbes",
+        description="HTTP-Referer for OpenRouter app attribution (dashboard rankings)",
+    )
+    openrouter_app_title: str = Field(
+        default="Balbes Multi Agent",
+        description="X-OpenRouter-Title / X-Title for OpenRouter app attribution",
+    )
+    openrouter_categories: str | None = Field(
+        default=None,
+        description="Optional comma-separated X-OpenRouter-Categories",
+    )
 
     # =============================================================================
     # Telegram Bot
@@ -148,6 +160,13 @@ class Settings(BaseSettings):
         default=None,
         description="Optional HMAC secret for inbound MAX platform webhooks (X-Signature)",
     )
+    max_allowed_user_ids: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Whitelist of MAX user_id allowed to trigger orchestrator via webhook. "
+            "Set via MAX_ALLOWED_USER_IDS as comma-separated IDs. Empty = no restriction."
+        ),
+    )
 
     # =============================================================================
     # Web UI Authentication
@@ -217,6 +236,10 @@ class Settings(BaseSettings):
     # Service Ports
     # =============================================================================
     orchestrator_port: int = Field(default=8102)
+    orchestrator_url: str = Field(
+        default="http://127.0.0.1:8102",
+        description="Base URL for orchestrator HTTP API (tasks); webhooks-gateway uses for MAX",
+    )
     coder_port: int = Field(default=8001)
     coder_service_url: str | None = Field(
         default=None,
@@ -466,6 +489,16 @@ class Settings(BaseSettings):
     @classmethod
     def parse_allowed_users(cls, v: Any) -> list[int]:
         """Parse TELEGRAM_ALLOWED_USERS='123,456' into [123, 456]."""
+        if not v or v == "":
+            return []
+        if isinstance(v, list):
+            return [int(x) for x in v if str(x).strip()]
+        return [int(x.strip()) for x in str(v).split(",") if x.strip()]
+
+    @field_validator("max_allowed_user_ids", mode="before")
+    @classmethod
+    def parse_max_allowed_user_ids(cls, v: Any) -> list[int]:
+        """Parse MAX_ALLOWED_USER_IDS='123,456' into [123, 456]."""
         if not v or v == "":
             return []
         if isinstance(v, list):

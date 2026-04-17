@@ -18,6 +18,7 @@ from qdrant_client.models import (
 
 from shared.config import get_settings
 from shared.exceptions import MemorySearchError, MemoryStorageError
+from shared.openrouter_http import openrouter_json_headers
 
 settings = get_settings()
 logger = logging.getLogger("skills-registry.qdrant")
@@ -127,10 +128,7 @@ class QdrantClient:
         try:
             response = await self.http_client.post(
                 "https://openrouter.ai/api/v1/embeddings",
-                headers={
-                    "Authorization": f"Bearer {self._openrouter_key}",
-                    "Content-Type": "application/json",
-                },
+                headers=openrouter_json_headers(settings, api_key=self._openrouter_key),
                 json={
                     "model": "openai/text-embedding-3-small",
                     "input": text,

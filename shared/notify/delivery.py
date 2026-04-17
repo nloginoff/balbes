@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from shared.config import Settings
+from shared.max_api import send_max_message_text
 from shared.notify.payload import NotificationFormatter, WebhookPayload
 
 logger = logging.getLogger(__name__)
@@ -86,30 +87,15 @@ async def _max_send_text(
     chat_id: str,
     text: str,
 ) -> str | None:
-    """Send plain text to MAX; return platform message id if present."""
-    base = api_url.rstrip("/")
-    url = f"{base}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    payload = {"chat_id": chat_id, "text": text}
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        resp = await client.post(url, json=payload, headers=headers)
-        if resp.status_code >= 400:
-            logger.warning(
-                "MAX send_message failed: %s %s",
-                resp.status_code,
-                resp.text[:500],
-            )
-            resp.raise_for_status()
-        try:
-            data = resp.json()
-        except Exception:
-            return None
-        if isinstance(data, dict):
-            return str(data.get("message_id") or data.get("id") or "") or None
-    return None
+    """Send plain text to MAX (chat_id as query param per platform API)."""
+    return await send_max_message_text(
+        api_url=api_url,
+        token=token,
+        text=text,
+        chat_id=chat_id,
+        user_id=None,
+        timeout=45.0,
+    )
 
 
 @dataclass

@@ -58,6 +58,7 @@ from shared.agent_base import BaseAgent
 from shared.agent_execute_contract import delegation_headers
 from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent_with_manifest
 from shared.config import get_settings
+from shared.openrouter_http import openrouter_json_headers
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
@@ -1273,10 +1274,7 @@ class OrchestratorAgent(BaseAgent):
 
                 response = await self.http_client.post(
                     "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.openrouter_api_key}",
-                        "Content-Type": "application/json",
-                    },
+                    headers=openrouter_json_headers(settings),
                     json=payload,
                     timeout=llm_timeout,
                 )

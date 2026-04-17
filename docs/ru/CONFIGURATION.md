@@ -11,6 +11,10 @@
 # LLM Providers
 # =============================================================================
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
+# Опционально: атрибуция в дашборде OpenRouter (https://openrouter.ai/docs/app-attribution)
+# OPENROUTER_HTTP_REFERER=https://github.com/nloginoff/balbes
+# OPENROUTER_APP_TITLE=Balbes Multi Agent
+# OPENROUTER_CATEGORIES=
 AITUNNEL_API_KEY=                           # Не используется, оставить пустым
 
 # =============================================================================
@@ -75,9 +79,13 @@ PYTHONUNBUFFERED=1
 > **Важно**: `TZ` намеренно не устанавливается — контейнеры монтируют `/etc/localtime`
 > и `/etc/timezone` с хоста, Python использует `datetime.now().astimezone()`.
 
+### OpenRouter (атрибуция приложения)
+
+Заголовки `HTTP-Referer` и `X-OpenRouter-Title` (и опционально `X-OpenRouter-Categories`) для запросов к `openrouter.ai` задаются переменными **`OPENROUTER_HTTP_REFERER`**, **`OPENROUTER_APP_TITLE`**, **`OPENROUTER_CATEGORIES`**. См. [документацию OpenRouter](https://openrouter.ai/docs/app-attribution); код — [`shared/openrouter_http.py`](../../shared/openrouter_http.py).
+
 ### Входящие webhooks (`services/webhooks_gateway`)
 
-Порт: `WEBHOOKS_GATEWAY_PORT`. Режим Telegram: `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), секреты `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET`. Мониторинг: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_BOT_TOKEN` — см. [`.env.example`](../../.env.example) и [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md).
+Порт: `WEBHOOKS_GATEWAY_PORT`. Режим Telegram: `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), секреты `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET`. Мониторинг: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_BOT_TOKEN`. **MAX → оркестратор:** `ORCHESTRATOR_URL` (базовый URL для `POST /api/v1/tasks` из фона обработчика `POST /webhook/max`), **`MAX_ALLOWED_USER_IDS`** — whitelist пользователей MAX (пустой список = без ограничения). Исходящие сообщения MAX: [`shared/max_api.py`](../../shared/max_api.py). Подробнее — [`.env.example`](../../.env.example) и [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md).
 
 ---
 

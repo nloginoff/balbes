@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **OpenRouter app attribution** — общие заголовки `HTTP-Referer`, `X-OpenRouter-Title` / `X-Title` (и опционально `X-OpenRouter-Categories`) для всех запросов к `openrouter.ai` через [`shared/openrouter_http.py`](shared/openrouter_http.py); переменные `OPENROUTER_HTTP_REFERER`, `OPENROUTER_APP_TITLE`, `OPENROUTER_CATEGORIES` в [`shared/config.py`](shared/config.py).
+- **MAX мессенджер** — разбор `message_created` в [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py): фоновый вызов оркестратора (`ORCHESTRATOR_URL`), ответ через [`shared/max_api.py`](shared/max_api.py) (`POST /messages` с query `chat_id` / `user_id`); whitelist `MAX_ALLOWED_USER_IDS`. Notify-доставка MAX переведена на тот же клиент.
+
 ### Changed
 - **Конфигурация**: `jwt_secret` в [`shared/config.py`](shared/config.py) принимает **`JWT_SECRET` или `JWT_SECRET_KEY`**; [`scripts/start_prod.sh`](scripts/start_prod.sh) требует наличие хотя бы одного. **`.env.prod.example`**, шаблон **`dev/.env.prod`** и **`balbes/.env.prod`** дополнены блоком webhooks и `BLOGGER_SERVICE_URL` (вместо устаревшего `BLOGGER_URL`). [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md) — ссылка на `.env.prod.example`.
 - **Мониторинг notify** — только `POST /webhook/notify` на [`services/webhooks_gateway`](services/webhooks_gateway); путь `POST /api/webhooks/notify` удалён; дашборд без endpoint мониторинга.

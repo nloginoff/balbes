@@ -16,6 +16,8 @@ from pathlib import Path
 import asyncpg
 import httpx
 
+from shared.config import get_settings
+from shared.openrouter_http import openrouter_json_headers
 from shared.telegram_app.memory_namespace import blogger_memory_user_ids_try_order, memory_user_id
 
 from .post_queue import PostQueue, post_content_ru_en
@@ -113,12 +115,7 @@ class BloggerAgent:
         try:
             resp = await http.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/nloginoff/balbes",
-                    "X-Title": "Balbes Blogger Agent",
-                },
+                headers=openrouter_json_headers(get_settings(), api_key=self.api_key),
                 json={
                     "model": used_model,
                     "messages": messages,
@@ -941,12 +938,7 @@ class BloggerAgent:
             messages = [{"role": "system", "content": system}] + working
 
             http = self._get_http()
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/nloginoff/balbes",
-                "X-Title": "Balbes Blogger Agent",
-            }
+            headers = openrouter_json_headers(get_settings(), api_key=self.api_key)
             model_id = _normalize_openrouter_model_id(model)
 
             if debug_on and debug_reply:

@@ -16,6 +16,9 @@ from typing import Any
 
 import httpx
 
+from shared.config import get_settings
+from shared.openrouter_http import openrouter_json_headers
+
 logger = logging.getLogger("orchestrator.code_indexer")
 
 # Collection name for code index (separate from agent_memory)
@@ -109,10 +112,7 @@ class CodeIndexer:
         truncated = text[:MAX_EMBED_CHARS]
         resp = await http.post(
             "https://openrouter.ai/api/v1/embeddings",
-            headers={
-                "Authorization": f"Bearer {self.openrouter_api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=openrouter_json_headers(get_settings(), api_key=self.openrouter_api_key),
             json={"model": EMBEDDING_MODEL, "input": truncated},
             timeout=30.0,
         )

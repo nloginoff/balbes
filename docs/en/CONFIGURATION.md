@@ -9,6 +9,9 @@
 | Variable | Description |
 |----------|-------------|
 | `OPENROUTER_API_KEY` | OpenRouter API key (`sk-or-v1-...`) |
+| `OPENROUTER_HTTP_REFERER` | Optional; `HTTP-Referer` for [OpenRouter app attribution](https://openrouter.ai/docs/app-attribution) |
+| `OPENROUTER_APP_TITLE` | Optional; `X-OpenRouter-Title` / `X-Title` (default: `Balbes Multi Agent`) |
+| `OPENROUTER_CATEGORIES` | Optional; `X-OpenRouter-Categories` |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token from @BotFather |
 | `TELEGRAM_USER_ID` | Allowed Telegram user IDs, comma-separated |
 | `WEB_AUTH_TOKEN` | Internal service auth token (any random string) |
@@ -60,6 +63,8 @@ Requires `ffmpeg` and `pip install openai-whisper`. Optional preload: `ENV=prod 
 | `NOTIFY_RATE_LIMIT_PER_MINUTE` | Per-IP rate limit | `60` |
 | `MAX_BOT_TOKEN` / `NOTIFY_MAX_CHAT_ID` | Outbound MAX notify when `max` is in delivery channels |
 | `MAX_API_URL` | MAX HTTP API base | `https://platform-api.max.ru` |
+| `ORCHESTRATOR_URL` | Orchestrator HTTP base URL (used by `webhooks_gateway` MAX `POST /webhook/max` → `/api/v1/tasks`) | `http://127.0.0.1:8102` |
+| `MAX_ALLOWED_USER_IDS` | Comma-separated MAX `user_id` allowed to trigger the bot via webhook; empty = no restriction | *(empty)* |
 
 See [`docs/ru/WEBHOOK_NOTIFY.md`](../ru/WEBHOOK_NOTIFY.md) (Russian).
 

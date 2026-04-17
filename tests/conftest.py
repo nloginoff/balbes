@@ -149,10 +149,12 @@ async def openrouter_available() -> bool:
         return False
 
     try:
+        from shared.openrouter_http import openrouter_json_headers
+
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.post(
                 "https://openrouter.ai/api/v1/embeddings",
-                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+                headers=openrouter_json_headers(settings),
                 json={"model": "text-embedding-3-small", "input": "test"},
             )
             return response.status_code == 200
