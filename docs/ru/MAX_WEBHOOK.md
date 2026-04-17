@@ -58,6 +58,37 @@ curl -X POST "https://platform-api.max.ru/subscriptions" \
 
 Минимально для диалога с ботом обычно нужен **`message_created`**. После подписки long polling для этого бота отключается (см. доку MAX).
 
+### Список, удаление, смена секрета
+
+Официальные методы:
+
+- **[GET /subscriptions](https://dev.max.ru/docs-api/methods/GET/subscriptions)** — список активных подписок;
+- **[DELETE /subscriptions](https://dev.max.ru/docs-api/methods/DELETE/subscriptions)** — отписка по параметру `url` (тот же HTTPS URL webhook).
+
+При **смене секрета** в `.env` (`MAX_WEBHOOK_SECRET`) платформа не «обновляет» секрет автоматически: надёжный порядок — **удалить** подписку по старому URL (`DELETE ?url=...`), затем снова **`POST /subscriptions`** с новым `secret` (или использовать скрипт ниже с `--delete-first`).
+
+В репозитории есть скрипт **[`scripts/max_subscriptions.py`](../../scripts/max_subscriptions.py)** (только стандартная библиотека Python):
+
+```bash
+cd /path/to/balbes   # или dev
+# Список подписок (нужны MAX_BOT_TOKEN и MAX_API_URL в .env.prod)
+ENV=prod python scripts/max_subscriptions.py list
+
+# Явный путь к env
+python scripts/max_subscriptions.py list --env-file /path/to/.env.prod
+
+# Удалить подписку (перед сменой URL/секрета)
+python scripts/max_subscriptions.py delete --url "https://your-domain.com/webhook/max"
+
+# Создать подписку и проверить, что URL появился в GET /subscriptions
+python scripts/max_subscriptions.py apply \
+  --url "https://your-domain.com/webhook/max" \
+  --secret-from-env \
+  --delete-first
+```
+
+Флаг **`--delete-first`** сначала вызывает `DELETE` для того же `url`, затем `POST` и **проверку** через `GET` (если вашего URL нет в списке — скрипт завершится с кодом ошибки).
+
 ## Проверка без платформы
 
 1. Локально поднять gateway и проверить health:
