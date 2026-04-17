@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Скрипт `scripts/max_subscriptions.py`** — `list` (GET /subscriptions), `delete` (DELETE по `url`), `apply` (POST + проверка списка; опция `--delete-first` при смене секрета). Документация: [`docs/ru/MAX_WEBHOOK.md`](docs/ru/MAX_WEBHOOK.md).
 
 ### Fixed
+- **MAX webhook** — подробные логи на ранних выходах (не `message_created`, whitelist `MAX_ALLOWED_USER_IDS`, нет цели ответа, пустой текст, нет токена) и при постановке фона ответа; разбор `recipient.chat_id` через `_to_int` с предупреждением при невалидном значении. [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py), [`shared/max_webhook.py`](shared/max_webhook.py).
 - **MAX исходящие сообщения** — заголовок `Authorization` для `platform-api.max.ru` без префикса `Bearer` (как в официальном curl); иначе API отвечал `401` / `No access token`. [`shared/max_api.py`](shared/max_api.py) (`normalize_max_access_token`).
 - **MAX webhook** — проверка входящих запросов по официальному заголовку **`X-Max-Bot-Api-Secret`** (как при подписке `POST /subscriptions` на platform-api.max.ru); прежний **`X-Signature`** (HMAC) оставлен для совместимости. Документация: [`docs/ru/MAX_WEBHOOK.md`](docs/ru/MAX_WEBHOOK.md).
 

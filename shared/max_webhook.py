@@ -8,6 +8,15 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _to_int(v: Any) -> int | None:
+    if v is None:
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_max_reply_targets(message: dict[str, Any]) -> tuple[int | None, int | None]:
     """
     Return (chat_id, user_id) for POST /messages — exactly one should be used.
@@ -16,12 +25,12 @@ def extract_max_reply_targets(message: dict[str, Any]) -> tuple[int | None, int 
     """
     recipient = message.get("recipient")
     if isinstance(recipient, dict):
-        cid = recipient.get("chat_id")
-        if cid is not None:
-            try:
-                return (int(cid), None)
-            except (TypeError, ValueError):
-                logger.warning("MAX webhook: invalid recipient.chat_id %r", cid)
+        raw_cid = recipient.get("chat_id")
+        if raw_cid is not None:
+            cid = _to_int(raw_cid)
+            if cid is not None:
+                return (cid, None)
+            logger.warning("MAX webhook: invalid recipient.chat_id %r", raw_cid)
 
     sender = message.get("sender")
     if isinstance(sender, dict):

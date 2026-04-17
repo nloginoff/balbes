@@ -128,6 +128,10 @@ async def max_webhook(
 
     ok, msg = should_process_message_created(data)
     if not ok or msg is None:
+        logger.info(
+            "MAX webhook: skip (not message_created or no user text); update_type=%r",
+            data.get("update_type"),
+        )
         return {"ok": True}
 
     sender = msg.get("sender")
@@ -139,27 +143,42 @@ async def max_webhook(
             sender_user_id = None
 
     if sender_user_id is None:
-        logger.debug("MAX webhook: no sender user_id, skip")
+        logger.info("MAX webhook: skip — no sender.user_id in message")
         return {"ok": True}
 
     allowed = settings.max_allowed_user_ids
     if allowed and sender_user_id not in allowed:
-        logger.info("MAX webhook: user %s not in MAX_ALLOWED_USER_IDS", sender_user_id)
+        logger.warning(
+            "MAX webhook: skip — sender user_id=%s not in MAX_ALLOWED_USER_IDS=%s",
+            sender_user_id,
+            allowed,
+        )
         return {"ok": True}
 
     reply_chat_id, reply_user_id = extract_max_reply_targets(msg)
     if reply_chat_id is None and reply_user_id is None:
-        logger.debug("MAX webhook: no reply target (chat_id/user_id)")
+        logger.warning(
+            "MAX webhook: skip — cannot resolve reply target (recipient/sender); recipient=%s",
+            msg.get("recipient"),
+        )
         return {"ok": True}
 
     text = extract_message_text(msg) or ""
     if not text:
+        logger.info("MAX webhook: skip — empty body.text")
         return {"ok": True}
 
     if not settings.max_bot_token:
         logger.warning("MAX webhook: message received but MAX_BOT_TOKEN unset — cannot reply")
         return {"ok": True}
 
+    logger.info(
+        "MAX webhook: schedule reply user_id=%s chat_id=%s reply_user_id=%s text_len=%s",
+        sender_user_id,
+        reply_chat_id,
+        reply_user_id,
+        len(text),
+    )
     background_tasks.add_task(
         _max_run_orchestrator_and_reply,
         text=text,
