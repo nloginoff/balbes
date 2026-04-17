@@ -18,6 +18,7 @@
 | `MAX_API_URL` | База API, обычно `https://platform-api.max.ru`. |
 | `MAX_WEBHOOK_SECRET` | Секрет, который вы задаёте при **подписке** на webhook (поле `secret` в `POST /subscriptions`). Проверяется заголовок **`X-Max-Bot-Api-Secret`** (как в доке MAX). Дополнительно поддерживается устаревший вариант **`X-Signature`** (HMAC-SHA256 тела). |
 | `ORCHESTRATOR_URL` | Базовый URL оркестратора для фонового `POST .../api/v1/tasks`. |
+| `MEMORY_SERVICE_URL` / `MEMORY_SERVICE_PORT` | База Memory Service для slash-команд и кнопок (`/chats`, `/model`, …); в gateway используется `memory_service_url` из [`shared/config.py`](../../shared/config.py). |
 | `WEBHOOKS_GATEWAY_PORT` | Порт gateway (dev **8180**, prod часто **18180**). |
 | `MAX_ALLOWED_USER_IDS` | Whitelist: через запятую числовые `user_id` MAX; **пусто = любой пользователь**. Для закрытого бота задайте список (как `TELEGRAM_ALLOWED_USERS`). |
 
@@ -51,12 +52,14 @@ curl -X POST "https://platform-api.max.ru/subscriptions" \
   -H "Content-Type: application/json" \
   -d '{
     "url": "https://your-domain.com/webhook/max",
-    "update_types": ["message_created", "bot_started"],
+    "update_types": ["message_created", "bot_started", "message_callback"],
     "secret": "your_secret_abc123"
   }'
 ```
 
-Минимально для диалога с ботом обычно нужен **`message_created`**. После подписки long polling для этого бота отключается (см. доку MAX).
+Для диалога с ботом нужны **`message_created`** (текст) и **`message_callback`** (нажатия на inline-кнопки вроде «Чаты», «Модель»). **`bot_started`** — по желанию. После подписки long polling для этого бота отключается (см. доку MAX).
+
+Если подписка была создана **до** появления кнопок, выполните **`scripts/max_subscriptions.py apply --delete-first`** с актуальными `update_types` (по умолчанию в скрипте уже есть `message_callback`).
 
 ### Список, удаление, смена секрета
 
@@ -99,7 +102,11 @@ python scripts/max_subscriptions.py apply \
 
 ## Поведение приложения
 
-- Входящее **`message_created`** с текстом → пользователь **`max:<user_id>`** в оркестраторе → ответ в MAX через API.
+- Пользователь в оркестраторе: **`max:<user_id>`** (как в Telegram, но с префиксом канала).
+- **Slash-команды** (`/start`, `/help`, `/chats`, `/model`, `/agents`, `/newchat`, `/rename`, `/clear`, `/status`) обрабатываются так же, как в Telegram: запрос **не** уходит в LLM, а дергается Memory Service (список чатов, модель, агент и т.д.).
+- **Меню-кнопки** под сообщением (inline keyboard) — callback `message_callback`; при нажатии отправляется ответ на callback ([`POST /answers`](https://dev.max.ru/docs-api/methods/POST/answers)) и новое сообщение с результатом. Реализация: [`routes/max_chat.py`](../../services/webhooks_gateway/routes/max_chat.py), разметка в [`shared/max_bot_ui.py`](../../shared/max_bot_ui.py).
+- **«Печатает»**: перед долгим ответом вызывается [`POST /chats/{chatId}/actions`](https://dev.max.ru/docs-api/methods/POST/chats/-chatId-/actions) с `typing_on` (если известен `chat_id`).
+- Обычный текст (не команда) → фоновый **`POST /api/v1/tasks`** → ответ в MAX (`POST /messages`).
 - Если **`MAX_BOT_TOKEN`** не задан, webhook всё равно отвечает `{"ok": true}`, но ответ пользователю не отправится (см. логи gateway).
 
 ## См. также

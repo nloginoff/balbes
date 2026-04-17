@@ -21,7 +21,8 @@ def extract_max_reply_targets(message: dict[str, Any]) -> tuple[int | None, int 
     """
     Return (chat_id, user_id) for POST /messages — exactly one should be used.
 
-    Group/channel: recipient.chat_id. DM: reply to sender user_id.
+    Prefer recipient.chat_id (dialogs/groups), then recipient.user_id (DM target),
+    then sender.user_id for user messages. Bot messages (callbacks) use recipient only.
     """
     recipient = message.get("recipient")
     if isinstance(recipient, dict):
@@ -31,6 +32,12 @@ def extract_max_reply_targets(message: dict[str, Any]) -> tuple[int | None, int 
             if cid is not None:
                 return (cid, None)
             logger.warning("MAX webhook: invalid recipient.chat_id %r", raw_cid)
+        ruid = recipient.get("user_id")
+        if ruid is not None:
+            try:
+                return (None, int(ruid))
+            except (TypeError, ValueError):
+                logger.warning("MAX webhook: invalid recipient.user_id %r", ruid)
 
     sender = message.get("sender")
     if isinstance(sender, dict):
@@ -80,3 +87,50 @@ def should_process_message_created(data: dict[str, Any]) -> tuple[bool, dict[str
         return False, None
 
     return True, msg
+
+
+def parse_slash_command(text: str) -> tuple[str, str] | None:
+    """
+    If text starts with /command, return (command_lower, rest_line) without leading slash.
+    Strips @botname suffix if present. Returns None if not a slash command.
+    """
+    s = (text or "").strip()
+    if not s.startswith("/"):
+        return None
+    first = s.split(maxsplit=1)
+    cmd_part = first[0]
+    rest = first[1] if len(first) > 1 else ""
+    if "@" in cmd_part:
+        cmd_part = cmd_part.split("@", 1)[0]
+    cmd = cmd_part[1:].strip().lower()
+    if not cmd:
+        return None
+    return (cmd, rest.strip())
+
+
+def extract_message_callback(data: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    For update_type == message_callback, return dict with callback_id, payload, user_id, message.
+    See https://dev.max.ru/docs-api (callback + message siblings).
+    """
+    if data.get("update_type") != "message_callback":
+        return None
+    cb = data.get("callback")
+    if not isinstance(cb, dict):
+        return None
+    msg = data.get("message")
+    if not isinstance(msg, dict):
+        return None
+    user = cb.get("user")
+    uid = None
+    if isinstance(user, dict) and user.get("user_id") is not None:
+        try:
+            uid = int(user["user_id"])
+        except (TypeError, ValueError):
+            uid = None
+    return {
+        "callback_id": str(cb.get("callback_id") or ""),
+        "payload": str(cb.get("payload") or ""),
+        "user_id": uid,
+        "message": msg,
+    }

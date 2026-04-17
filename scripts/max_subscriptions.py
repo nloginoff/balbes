@@ -220,7 +220,7 @@ def main() -> int:
     )
     p_apply.add_argument(
         "--update-types",
-        default="message_created,bot_started",
+        default="message_created,bot_started,message_callback",
         help="Comma-separated update types",
     )
     p_apply.add_argument(
