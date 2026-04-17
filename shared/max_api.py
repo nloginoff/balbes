@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 MAX_TEXT_LIMIT = 4000
 
 
+def normalize_max_access_token(token: str) -> str:
+    """
+    MAX platform-api expects `Authorization: <access_token>` (raw token), not `Bearer ...`.
+    See https://dev.max.ru/docs-api/methods/POST/messages
+    """
+    t = (token or "").strip()
+    if t.lower().startswith("bearer "):
+        t = t[7:].strip()
+    return t
+
+
 def split_max_text(text: str) -> list[str]:
     if len(text) <= MAX_TEXT_LIMIT:
         return [text]
@@ -43,8 +54,11 @@ async def send_max_message_text(
 
     base = api_url.rstrip("/")
     url = f"{base}/messages"
+    access = normalize_max_access_token(token)
+    if not access:
+        raise ValueError("MAX access token is empty")
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": access,
         "Content-Type": "application/json",
     }
     params: dict[str, Any] = {}

@@ -14,7 +14,7 @@
 
 | Переменная | Назначение |
 |------------|------------|
-| `MAX_BOT_TOKEN` | Токен бота (платформа: Чат-боты → Интеграция → Получить токен). Нужен для **исходящих** ответов в MAX (`POST .../messages`). |
+| `MAX_BOT_TOKEN` | Токен бота (платформа: Чат-боты → Интеграция → Получить токен). Нужен для **исходящих** ответов в MAX (`POST .../messages`). В заголовок передаётся **как есть** (`Authorization: <token>`), без префикса `Bearer` — см. [документацию MAX](https://dev.max.ru/docs-api/methods/POST/messages). |
 | `MAX_API_URL` | База API, обычно `https://platform-api.max.ru`. |
 | `MAX_WEBHOOK_SECRET` | Секрет, который вы задаёте при **подписке** на webhook (поле `secret` в `POST /subscriptions`). Проверяется заголовок **`X-Max-Bot-Api-Secret`** (как в доке MAX). Дополнительно поддерживается устаревший вариант **`X-Signature`** (HMAC-SHA256 тела). |
 | `ORCHESTRATOR_URL` | Базовый URL оркестратора для фонового `POST .../api/v1/tasks`. |
