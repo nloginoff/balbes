@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **MAX webhook** — проверка входящих запросов по официальному заголовку **`X-Max-Bot-Api-Secret`** (как при подписке `POST /subscriptions` на platform-api.max.ru); прежний **`X-Signature`** (HMAC) оставлен для совместимости. Документация: [`docs/ru/MAX_WEBHOOK.md`](docs/ru/MAX_WEBHOOK.md).
+
 ### Added
 - **OpenRouter app attribution** — общие заголовки `HTTP-Referer`, `X-OpenRouter-Title` / `X-Title` (и опционально `X-OpenRouter-Categories`) для всех запросов к `openrouter.ai` через [`shared/openrouter_http.py`](shared/openrouter_http.py); переменные `OPENROUTER_HTTP_REFERER`, `OPENROUTER_APP_TITLE`, `OPENROUTER_CATEGORIES` в [`shared/config.py`](shared/config.py).
 - **MAX мессенджер** — разбор `message_created` в [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py): фоновый вызов оркестратора (`ORCHESTRATOR_URL`), ответ через [`shared/max_api.py`](shared/max_api.py) (`POST /messages` с query `chat_id` / `user_id`); whitelist `MAX_ALLOWED_USER_IDS`. Notify-доставка MAX переведена на тот же клиент.

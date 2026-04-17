@@ -158,7 +158,10 @@ class Settings(BaseSettings):
     )
     max_webhook_secret: str | None = Field(
         default=None,
-        description="Optional HMAC secret for inbound MAX platform webhooks (X-Signature)",
+        description=(
+            "Optional secret for inbound MAX webhooks: X-Max-Bot-Api-Secret (POST /subscriptions) "
+            "or legacy X-Signature HMAC"
+        ),
     )
     max_allowed_user_ids: list[int] = Field(
         default_factory=list,

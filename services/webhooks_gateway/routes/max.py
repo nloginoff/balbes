@@ -9,7 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
 from shared.config import get_settings
 from shared.max_api import send_max_message_text
-from shared.max_inbound import verify_max_webhook_signature
+from shared.max_inbound import verify_max_webhook_auth
 from shared.max_webhook import (
     extract_max_reply_targets,
     extract_message_text,
@@ -93,12 +93,21 @@ async def max_webhook(
     """
     settings = get_settings()
     body = await request.body()
+    api_secret_hdr = request.headers.get("X-Max-Bot-Api-Secret") or request.headers.get(
+        "x-max-bot-api-secret"
+    )
     sig = request.headers.get("X-Signature") or request.headers.get("x-signature")
 
-    if settings.max_webhook_secret and (
-        not sig or not verify_max_webhook_signature(body, sig, settings.max_webhook_secret)
+    if settings.max_webhook_secret and not verify_max_webhook_auth(
+        body=body,
+        x_max_bot_api_secret=api_secret_hdr,
+        x_signature=sig,
+        secret=settings.max_webhook_secret,
     ):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid MAX signature")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid MAX webhook auth (X-Max-Bot-Api-Secret or X-Signature)",
+        )
 
     if not body:
         return {"ok": True}

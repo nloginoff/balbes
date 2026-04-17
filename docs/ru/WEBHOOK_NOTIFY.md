@@ -10,7 +10,7 @@
 |--------|------|------------|
 | POST | `/webhook/notify` | Алерты мониторинга |
 | POST | `/webhook/telegram` | Обновления Telegram Bot API при `TELEGRAM_BOT_MODE=webhook` |
-| POST | `/webhook/max` | Входящие события MAX (подпись `X-Signature`, если задан `MAX_WEBHOOK_SECRET`) |
+| POST | `/webhook/max` | Входящие события MAX — см. **[MAX_WEBHOOK.md](MAX_WEBHOOK.md)** (`X-Max-Bot-Api-Secret` или `X-Signature`, если задан `MAX_WEBHOOK_SECRET`) |
 | GET | `/health` | Проверка живости |
 
 Внешние системы (например мониторинг на RU-сервере) шлют **POST** с телом JSON:

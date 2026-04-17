@@ -85,7 +85,7 @@ PYTHONUNBUFFERED=1
 
 ### Входящие webhooks (`services/webhooks_gateway`)
 
-Порт: `WEBHOOKS_GATEWAY_PORT`. Режим Telegram: `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), секреты `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET`. Мониторинг: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_BOT_TOKEN`. **MAX → оркестратор:** `ORCHESTRATOR_URL` (базовый URL для `POST /api/v1/tasks` из фона обработчика `POST /webhook/max`), **`MAX_ALLOWED_USER_IDS`** — whitelist пользователей MAX (пустой список = без ограничения). Исходящие сообщения MAX: [`shared/max_api.py`](../../shared/max_api.py). Подробнее — [`.env.example`](../../.env.example) и [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md).
+Порт: `WEBHOOKS_GATEWAY_PORT`. Режим Telegram: `TELEGRAM_BOT_MODE` (`polling` \| `webhook`), секреты `TELEGRAM_WEBHOOK_SECRET`, `MAX_WEBHOOK_SECRET`. Мониторинг: `WEBHOOK_NOTIFY_API_KEY`, `NOTIFY_*`, `MAX_BOT_TOKEN`. **MAX → оркестратор:** `ORCHESTRATOR_URL` (базовый URL для `POST /api/v1/tasks` из фона обработчика `POST /webhook/max`), **`MAX_ALLOWED_USER_IDS`** — whitelist пользователей MAX (пустой список = без ограничения). Исходящие сообщения MAX: [`shared/max_api.py`](../../shared/max_api.py). Подробнее — [`.env.example`](../../.env.example), [`docs/ru/WEBHOOK_NOTIFY.md`](WEBHOOK_NOTIFY.md), настройка MAX: [`docs/ru/MAX_WEBHOOK.md`](MAX_WEBHOOK.md).
 
 ---
 
