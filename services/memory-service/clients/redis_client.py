@@ -9,6 +9,7 @@ Provides methods for:
 - Alert flags
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -424,6 +425,137 @@ class RedisClient:
         pipe.expire(self._chat_meta_key(user_id, chat_id), CHAT_TTL_SECONDS)
         pipe.expire(self._history_key(user_id, chat_id), CHAT_TTL_SECONDS)
         await pipe.execute()
+
+    # =========================================================================
+    # Canonical user id (cross-channel identity)
+    # identity:link:{provider}:{external_id} → UUID string
+    # Legacy Redis user keys: telegram = decimal string; MAX = "max:{id}"
+    # =========================================================================
+
+    def _identity_link_key(self, provider: str, external_id: str) -> str:
+        return f"identity:link:{provider}:{external_id}"
+
+    def _identity_lock_key(self, provider: str, external_id: str) -> str:
+        return f"identity:lock:{provider}:{external_id}"
+
+    def _legacy_user_id(self, provider: str, external_id: str) -> str:
+        p = provider.lower()
+        if p == "telegram":
+            return external_id.strip()
+        if p == "max":
+            return f"max:{external_id.strip()}"
+        raise ValueError(f"unsupported identity provider: {provider}")
+
+    async def _rename_if_dest_missing(self, src: str, dest: str) -> None:
+        if not self.client:
+            return
+        if await self.client.exists(dest):
+            return
+        if not await self.client.exists(src):
+            return
+        await self.client.rename(src, dest)
+
+    async def _migrate_user_redis_keys(self, legacy: str, canonical: str) -> None:
+        """Move chat/history/agent_session keys from legacy user id to canonical."""
+        if not self.client or legacy == canonical:
+            return
+        if await self.client.exists(self._chats_key(canonical)):
+            return
+
+        has_legacy = await self.client.exists(self._chats_key(legacy)) or await self.client.exists(
+            self._active_chat_key(legacy)
+        )
+        if not has_legacy:
+            # Still scan agent_session:{legacy}:*
+            cursor = 0
+            while True:
+                cursor, keys = await self.client.scan(
+                    cursor=cursor, match=f"agent_session:{legacy}:*", count=50
+                )
+                if keys:
+                    has_legacy = True
+                    break
+                if cursor == 0:
+                    break
+
+        if not has_legacy:
+            return
+
+        await self._rename_if_dest_missing(self._chats_key(legacy), self._chats_key(canonical))
+        await self._rename_if_dest_missing(
+            self._active_chat_key(legacy), self._active_chat_key(canonical)
+        )
+
+        chat_ids = list(await self.client.hkeys(self._chats_key(canonical)))
+        active_only = await self.client.get(self._active_chat_key(canonical))
+        if active_only and active_only not in chat_ids:
+            chat_ids.append(active_only)
+
+        for cid in chat_ids or []:
+            await self._rename_if_dest_missing(
+                self._chat_meta_key(legacy, cid), self._chat_meta_key(canonical, cid)
+            )
+            await self._rename_if_dest_missing(
+                self._history_key(legacy, cid), self._history_key(canonical, cid)
+            )
+
+        cursor = 0
+        while True:
+            cursor, keys = await self.client.scan(
+                cursor=cursor, match=f"agent_session:{legacy}:*", count=50
+            )
+            for old_k in keys or []:
+                suffix = old_k.split(f"agent_session:{legacy}:", 1)[-1]
+                new_k = f"agent_session:{canonical}:{suffix}"
+                await self._rename_if_dest_missing(old_k, new_k)
+            if cursor == 0:
+                break
+
+        logger.info("Migrated Redis user keys %s → %s", legacy, canonical)
+
+    async def resolve_canonical_user(self, provider: str, external_id: str) -> tuple[str, bool]:
+        """
+        Return (canonical_user_id, created).
+
+        Creates a new UUID on first sight, persists mapping, and renames legacy
+        per-user keys when present (telegram decimal id, max:... id).
+        """
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+
+        p = provider.lower().strip()
+        if p not in ("telegram", "max"):
+            raise MemoryStorageError(f"unsupported provider: {provider}")
+        ext = external_id.strip()
+        if not ext:
+            raise MemoryStorageError("external_id is required")
+
+        link_key = self._identity_link_key(p, ext)
+        existing = await self.client.get(link_key)
+        if existing:
+            return existing, False
+
+        legacy = self._legacy_user_id(p, ext)
+        lock_key = self._identity_lock_key(p, ext)
+
+        for _ in range(50):
+            if await self.client.set(lock_key, "1", nx=True, ex=30):
+                try:
+                    existing2 = await self.client.get(link_key)
+                    if existing2:
+                        return existing2, False
+                    canonical = str(uuid4())
+                    await self._migrate_user_redis_keys(legacy, canonical)
+                    await self.client.set(link_key, canonical)
+                    return canonical, True
+                finally:
+                    await self.client.delete(lock_key)
+            await asyncio.sleep(0.05)
+            existing3 = await self.client.get(link_key)
+            if existing3:
+                return existing3, False
+
+        raise MemoryStorageError("could not acquire identity lock")
 
     # =========================================================================
     # Per-agent session (last chat + bot used for this logical agent)

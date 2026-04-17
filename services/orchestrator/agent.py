@@ -448,7 +448,7 @@ class OrchestratorAgent(BaseAgent):
 
         Args:
             description: User's message / task
-            user_id: Telegram user_id (string)
+            user_id: Canonical user id from Memory identity (UUID string); also sent to OpenRouter as ``user``
             chat_id: Chat session ID. If None, uses/creates default chat.
             agent_id: Agent to use (balbes | coder | ...). Defaults to 'balbes'.
             model_id: Override model for this task. If None, uses the chat's configured model.
@@ -749,6 +749,7 @@ class OrchestratorAgent(BaseAgent):
                 with_tools=True,
                 agent_id=agent_id,
                 available_tools=available_tools,
+                openrouter_user_end_id=user_id,
             )
 
             # Accumulate token usage across rounds
@@ -844,6 +845,7 @@ class OrchestratorAgent(BaseAgent):
             with_tools=False,
             agent_id=agent_id,
             available_tools=available_tools,
+            openrouter_user_end_id=user_id,
         )
         for k in ("prompt_tokens", "completion_tokens", "total_tokens"):
             total_usage[k] = total_usage.get(k, 0) + final_usage.get(k, 0)
@@ -1241,6 +1243,7 @@ class OrchestratorAgent(BaseAgent):
         with_tools: bool = True,
         agent_id: str | None = None,
         available_tools: list[dict] | None = None,
+        openrouter_user_end_id: str | None = None,
     ) -> tuple[dict[str, Any] | None, str, str, dict[str, int]]:
         """
         Call LLM API, optionally trying a fallback chain.
@@ -1266,6 +1269,8 @@ class OrchestratorAgent(BaseAgent):
                     "messages": messages,
                     "temperature": 0.4,
                 }
+                if openrouter_user_end_id:
+                    payload["user"] = openrouter_user_end_id
                 if with_tools:
                     tools_list = available_tools if available_tools is not None else AVAILABLE_TOOLS
                     if tools_list:
@@ -1527,6 +1532,7 @@ class OrchestratorAgent(BaseAgent):
                 with_tools=False,
                 agent_id=None,
                 available_tools=None,
+                openrouter_user_end_id=user_id,
             )
             if response_data:
                 summary = (

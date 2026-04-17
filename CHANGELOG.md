@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Канонический `user_id` (UUID)** — единый идентификатор пользователя для Memory, оркестратора и поля OpenRouter `user` (биллинг/аналитика). Memory Service: `GET /api/v1/identity/resolve?provider=telegram|max&external_id=...` → `{ canonical_user_id, created }`; Redis `identity:link:{provider}:{external_id}`; при первом резолве переименование legacy-ключей `chats:*`, `history:*`, `agent_session:*` с `telegram` decimal id или `max:<id>` на новый UUID ([`services/memory-service/api/identity.py`](services/memory-service/api/identity.py), [`clients/redis_client.py`](services/memory-service/clients/redis_client.py)). Клиент: [`shared/identity_client.py`](shared/identity_client.py). Telegram и MAX вызывают резолв перед обращениями к Memory и `POST /api/v1/tasks`; оркестратор передаёт `user` в chat completions ([`services/orchestrator/agent.py`](services/orchestrator/agent.py)).
+
 ### Changed
 - **Дефолтная LLM (OpenRouter)** — дефолт чата: **`meta-llama/llama-3.3-70b-instruct`** (дешёвая платная tier, не free): [`shared/config.py`](shared/config.py) `default_chat_model`, первый пункт `active_models`, `default_fallback_chain` / `cheap_models`, у агента **balbes** `default_model` и обновлённая `fallback_chain` (MiniMax → free → Llama 3.1 8B). Heartbeat остаётся на **`minimax/minimax-m2.5:free`**. Ранее цепочки были переведены с исчезнувшего `stepfun/step-3.5-flash:free` на **`minimax/minimax-m2.5:free`**; **balbes** с `fallback_enabled: true` и повтором при **HTTP 404** — [`services/orchestrator/agent.py`](services/orchestrator/agent.py). Сиды [`scripts/init_db.py`](scripts/init_db.py): orchestrator → Llama 3.3 70B, coder/blogger → Kimi. [`services/blogger/agent.py`](services/blogger/agent.py): `_CHEAP_MODEL` без ошибочного суффикса `:free`.
 

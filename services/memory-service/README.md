@@ -11,6 +11,7 @@ Memory management service for Balbes Multi-Agent System.
 - **Task Tracking** (PostgreSQL) - Task lifecycle and results
 - **Action Logs** (PostgreSQL) - Detailed audit trail
 - **Token Tracking** (PostgreSQL + Redis) - Usage statistics and budgets
+- **Identity** (Redis) - `GET /api/v1/identity/resolve` maps `telegram` / `max` external ids to a stable canonical UUID; legacy per-user Redis keys are renamed on first resolve
 
 ## Architecture
 
@@ -24,7 +25,8 @@ Memory Service
 │   ├── agents.py           # Agent endpoints (PostgreSQL)
 │   ├── tasks.py            # Task endpoints (PostgreSQL)
 │   ├── logs.py             # Log endpoints (PostgreSQL)
-│   └── tokens.py           # Token endpoints (PostgreSQL + Redis)
+│   ├── tokens.py           # Token endpoints (PostgreSQL + Redis)
+│   └── identity.py         # Canonical user id (telegram / max → UUID)
 └── clients/                # Database clients
     ├── redis_client.py     # Redis async client
     ├── qdrant_client.py    # Qdrant async client

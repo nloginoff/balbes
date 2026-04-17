@@ -13,6 +13,7 @@ from routes.max_chat import (
 )
 
 from shared.config import get_settings
+from shared.identity_client import resolve_canonical_user_id
 from shared.max_api import (
     max_answer_callback,
     max_send_chat_action,
@@ -32,6 +33,10 @@ from shared.max_webhook import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook", tags=["max"])
+
+
+async def _max_canonical_user_id(memory_url: str, sender_user_id: int) -> str:
+    return await resolve_canonical_user_id(memory_url, "max", str(sender_user_id))
 
 
 async def _max_send_ui_reply(
@@ -84,11 +89,11 @@ async def _max_run_slash_command_task(
 ) -> None:
     await _max_typing_if_chat(reply_chat_id)
     settings = get_settings()
-    user_key = f"max:{sender_user_id}"
     mem = settings.memory_service_url.rstrip("/")
     orch = settings.orchestrator_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
+            user_key = await _max_canonical_user_id(mem, sender_user_id)
             reply = await run_max_slash_command(
                 command=command,
                 rest=rest,
@@ -130,11 +135,11 @@ async def _max_run_callback_task(
             timeout=20.0,
         )
     await _max_typing_if_chat(reply_chat_id)
-    user_key = f"max:{sender_user_id}"
     mem = settings.memory_service_url.rstrip("/")
     orch = settings.orchestrator_url.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
+            user_key = await _max_canonical_user_id(mem, sender_user_id)
             reply = await run_max_callback(
                 payload=payload,
                 user_key=user_key,
@@ -174,8 +179,9 @@ async def _max_run_orchestrator_and_reply(
 
     base = settings.orchestrator_url.rstrip("/")
     url = f"{base}/api/v1/tasks"
-    user_key = f"max:{sender_user_id}"
+    mem = settings.memory_service_url.rstrip("/")
     timeout = float(settings.task_timeout_seconds) + 120.0
+    user_key = await _max_canonical_user_id(mem, sender_user_id)
     params: dict[str, Any] = {
         "user_id": user_key,
         "description": text,

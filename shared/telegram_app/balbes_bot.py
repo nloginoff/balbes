@@ -50,6 +50,7 @@ from telegram.ext import (
 
 from shared.agent_manifest import get_agent_manifest
 from shared.config import get_settings
+from shared.identity_client import resolve_canonical_user_id
 from shared.telegram_app.telegram_command_matrix import (
     build_slash_bot_commands,
     register_slash_command_handlers,
@@ -291,6 +292,7 @@ class BalbesTelegramBot:
         self.http_client: httpx.AsyncClient | None = None
         self.orchestrator_url = f"http://localhost:{settings.orchestrator_port}"
         self.memory_url = settings.memory_service_url
+        self._canonical_cache: dict[str, str] = {}
 
         # Per-chat async locks to prevent concurrent message processing
         self._chat_locks: dict[str, asyncio.Lock] = {}
@@ -312,6 +314,17 @@ class BalbesTelegramBot:
 
         # Telegram UI flags from config/agents/balbes.yaml (`telegram:` block)
         self._tg = get_agent_manifest("balbes").telegram
+
+    async def _canonical_user_id_for_telegram(self, telegram_id_str: str) -> str:
+        """Stable canonical id for Memory + orchestrator (cached per process)."""
+        if telegram_id_str in self._canonical_cache:
+            return self._canonical_cache[telegram_id_str]
+        cid = await resolve_canonical_user_id(self.memory_url, "telegram", telegram_id_str)
+        self._canonical_cache[telegram_id_str] = cid
+        return cid
+
+    async def _memory_user_id(self, user: User) -> str:
+        return await self._canonical_user_id_for_telegram(str(user.id))
 
     async def _touch_agent_session(
         self,
@@ -573,8 +586,13 @@ class BalbesTelegramBot:
         """Execute a scheduled task by calling the orchestrator API."""
         logger.info(f"Scheduler: running job '{job_id}' agent={agent_id} user={user_id}")
         try:
+            mem_uid = (
+                await self._canonical_user_id_for_telegram(user_id)
+                if user_id and user_id != "0"
+                else user_id
+            )
             params: dict = {
-                "user_id": user_id,
+                "user_id": mem_uid,
                 "description": prompt,
                 "agent_id": agent_id,
                 "source": f"scheduler:{job_id}",
@@ -654,6 +672,7 @@ class BalbesTelegramBot:
             return
 
         user_id = str(cfg["target_user_id"])
+        mem_uid = await self._canonical_user_id_for_telegram(user_id)
         logger.info(f"Heartbeat: starting run for user {user_id}")
 
         # Build ordered list of models to try: primary + fallbacks from config
@@ -667,7 +686,7 @@ class BalbesTelegramBot:
         for attempt, model_id in enumerate(models_to_try):
             try:
                 params: dict = {
-                    "user_id": user_id,
+                    "user_id": mem_uid,
                     "description": HEARTBEAT_PROMPT,
                     "agent_id": "balbes",
                     "source": "heartbeat",
@@ -744,7 +763,7 @@ class BalbesTelegramBot:
                         text=err_text,
                         parse_mode="Markdown",
                     )
-                    await self._save_message_to_history(user_id, "assistant", err_text)
+                    await self._save_message_to_history(mem_uid, "assistant", err_text)
                 except Exception as e:
                     logger.warning(f"Heartbeat: failed to send error notification: {e}")
             return
@@ -779,7 +798,7 @@ class BalbesTelegramBot:
                 for chunk in _split_message(full_text):
                     await self.app.bot.send_message(chat_id=int(user_id), text=chunk)
                 logger.info(f"Heartbeat: ✅ delivered message to user {user_id}: {text[:80]}")
-                await self._save_message_to_history(user_id, "assistant", full_text)
+                await self._save_message_to_history(mem_uid, "assistant", full_text)
             except Exception as e:
                 logger.warning(f"Heartbeat: failed to send message: {e}")
 
@@ -1092,12 +1111,13 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         # Ensure default chat exists
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
-            new_id = await self._create_chat(str(user.id), "Основной чат")
+            new_id = await self._create_chat(mem_uid, "Основной чат")
             if new_id:
-                await self._set_active_chat(str(user.id), new_id)
+                await self._set_active_chat(mem_uid, new_id)
 
         text = (
             f"👋 Привет, *{user.first_name}*!\n\n"
@@ -1158,8 +1178,9 @@ class BalbesTelegramBot:
         if not user:
             return
 
-        chats = await self._get_chats(str(user.id))
-        active_id = await self._get_active_chat(str(user.id))
+        mem_uid = await self._memory_user_id(user)
+        chats = await self._get_chats(mem_uid)
+        active_id = await self._get_active_chat(mem_uid)
 
         if not chats:
             await update.message.reply_text("У тебя пока нет чатов. Создай первый с /newchat")
@@ -1201,12 +1222,13 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         args = context.args
         name = " ".join(args) if args else "Новый чат"
 
-        chat_id = await self._create_chat(str(user.id), name)
+        chat_id = await self._create_chat(mem_uid, name)
         if chat_id:
-            await self._set_active_chat(str(user.id), chat_id)
+            await self._set_active_chat(mem_uid, chat_id)
             await update.message.reply_text(
                 f"✅ Создан и активирован чат *{name}*", parse_mode="Markdown"
             )
@@ -1223,13 +1245,14 @@ class BalbesTelegramBot:
             await update.message.reply_text("Использование: /rename Новое название")
             return
 
+        mem_uid = await self._memory_user_id(user)
         name = " ".join(args)
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await update.message.reply_text("❌ Нет активного чата")
             return
 
-        ok = await self._rename_chat(str(user.id), chat_id, name)
+        ok = await self._rename_chat(mem_uid, chat_id, name)
         if ok:
             await update.message.reply_text(f"✅ Чат переименован: *{name}*", parse_mode="Markdown")
         else:
@@ -1240,9 +1263,10 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         args = context.args
 
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await update.message.reply_text("❌ Нет активного чата. Используй /newchat")
             return
@@ -1250,7 +1274,7 @@ class BalbesTelegramBot:
         if args:
             # Direct set: /model <id>
             model_id = args[0]
-            ok = await self._set_chat_model(str(user.id), chat_id, model_id)
+            ok = await self._set_chat_model(mem_uid, chat_id, model_id)
             if ok:
                 name = self._model_display_name(model_id)
                 await update.message.reply_text(
@@ -1261,7 +1285,7 @@ class BalbesTelegramBot:
             return
 
         # Show keyboard
-        current_model = await self._get_chat_model(str(user.id), chat_id)
+        current_model = await self._get_chat_model(mem_uid, chat_id)
         current_name = self._model_display_name(current_model)
         keyboard = _make_model_keyboard()
         await update.message.reply_text(
@@ -1275,10 +1299,11 @@ class BalbesTelegramBot:
         if not user:
             return
 
-        chat_id = await self._get_active_chat(str(user.id))
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
         current_agent_id = "balbes"
         if chat_id:
-            current_agent_id = await self._get_chat_agent(str(user.id), chat_id)
+            current_agent_id = await self._get_chat_agent(mem_uid, chat_id)
 
         agent_emoji, agent_name = self._agent_display_info(current_agent_id)
         keyboard = _make_agent_keyboard(current_id=current_agent_id)
@@ -1303,14 +1328,15 @@ class BalbesTelegramBot:
         if not user:
             return
 
-        chat_id = await self._get_active_chat(str(user.id))
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await update.message.reply_text("❌ Нет активного чата")
             return
 
         try:
             r = await self._get_http().delete(
-                f"{self.memory_url}/api/v1/history/{user.id}/{chat_id}"
+                f"{self.memory_url}/api/v1/history/{mem_uid}/{chat_id}"
             )
             if r.status_code in (200, 204):
                 await update.message.reply_text("✅ История чата очищена")
@@ -1326,6 +1352,7 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         args = context.args
         if not args:
             await update.message.reply_text(
@@ -1338,7 +1365,7 @@ class BalbesTelegramBot:
             r = await self._get_http().post(
                 f"{self.memory_url}/api/v1/memory",
                 json={
-                    "agent_id": str(user.id),
+                    "agent_id": mem_uid,
                     "content": text,
                     "memory_type": "user_memory",
                     "importance": 0.9,
@@ -1362,6 +1389,7 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         args = context.args
         if not args:
             await update.message.reply_text("Использование: /recall запрос")
@@ -1372,7 +1400,7 @@ class BalbesTelegramBot:
             r = await self._get_http().post(
                 f"{self.memory_url}/api/v1/memory/search",
                 json={
-                    "agent_id": str(user.id),
+                    "agent_id": mem_uid,
                     "query": query,
                     "limit": 3,
                 },
@@ -1422,15 +1450,15 @@ class BalbesTelegramBot:
         user: User | None = update.effective_user
         if not user:
             return
-        user_id = str(user.id)
-        chat_id = await self._get_active_chat(user_id)
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
             return
 
-        current = await self._get_chat_settings(user_id, chat_id)
+        current = await self._get_chat_settings(mem_uid, chat_id)
         new_debug = not current.get("debug", False)
-        await self._set_chat_settings(user_id, chat_id, debug=new_debug)
+        await self._set_chat_settings(mem_uid, chat_id, debug=new_debug)
 
         if new_debug:
             await update.message.reply_text(
@@ -1448,13 +1476,13 @@ class BalbesTelegramBot:
         user: User | None = update.effective_user
         if not user:
             return
-        user_id = str(user.id)
-        chat_id = await self._get_active_chat(user_id)
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await update.message.reply_text("❌ Нет активного чата. Создай через /newchat")
             return
 
-        current = await self._get_chat_settings(user_id, chat_id)
+        current = await self._get_chat_settings(mem_uid, chat_id)
         mode = current.get("mode", "ask")
 
         mode_text = {
@@ -1485,12 +1513,12 @@ class BalbesTelegramBot:
             return
 
         new_mode = query.data.split(":", 1)[1]  # "mode_set:agent" → "agent"
-        user_id = str(user.id)
-        chat_id = await self._get_active_chat(user_id)
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             return
 
-        await self._set_chat_settings(user_id, chat_id, mode=new_mode)
+        await self._set_chat_settings(mem_uid, chat_id, mode=new_mode)
 
         labels = {"agent": "🤖 Agent — команды разрешены", "ask": "📝 Ask — только чтение"}
         label = labels.get(new_mode, new_mode)
@@ -1588,14 +1616,15 @@ class BalbesTelegramBot:
         if not user:
             return
 
-        user_id = str(user.id)
-        task = self._active_tasks.get(user_id)
+        tg_user_id = str(user.id)
+        mem_uid = await self._memory_user_id(user)
+        task = self._active_tasks.get(tg_user_id)
 
         # Always signal the orchestrator to stop between tool rounds (even for bg tasks)
-        await self._cancel_orchestrator_task(user_id)
+        await self._cancel_orchestrator_task(mem_uid)
 
         # Also cancel all background monitors for this user
-        monitor_keys = [k for k in self._bg_monitors if k.startswith(f"{user_id}:")]
+        monitor_keys = [k for k in self._bg_monitors if k.startswith(f"{mem_uid}:")]
         for k in monitor_keys:
             mon = self._bg_monitors.pop(k, None)
             if mon and not mon.done():
@@ -1620,14 +1649,14 @@ class BalbesTelegramBot:
         user: User | None = update.effective_user
         if not user:
             return
-        user_id = str(user.id)
-        chat_id = await self._get_active_chat(user_id)
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._get_active_chat(mem_uid)
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(
                     f"{self.orchestrator_url}/api/v1/tasks",
-                    params={"user_id": user_id, "limit": 20},
+                    params={"user_id": mem_uid, "limit": 20},
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -1665,17 +1694,17 @@ class BalbesTelegramBot:
             )
 
         # Start monitors for any running bg tasks visible in /tasks
-        chat_settings = await self._get_chat_settings(user_id, chat_id or "default")
+        chat_settings = await self._get_chat_settings(mem_uid, chat_id or "default")
         debug_on = chat_settings.get("debug", False) if chat_id else False
         for t in tasks:
             if t.get("status") == "running" and t.get("background"):
                 agent_id = t.get("agent_id", "")
                 if agent_id:
-                    key = f"{user_id}:{agent_id}"
+                    key = f"{mem_uid}:{agent_id}"
                     mon = self._bg_monitors.get(key)
                     if not mon or mon.done():
                         self._start_bg_monitor(
-                            update.effective_chat.id, user_id, agent_id, debug_on
+                            update.effective_chat.id, mem_uid, agent_id, debug_on
                         )
 
         text = "\n".join(lines)
@@ -2008,12 +2037,13 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         chat_id = query.data[len(CALLBACK_CHAT_PREFIX) :]
-        await self._set_active_chat(str(user.id), chat_id)
+        await self._set_active_chat(mem_uid, chat_id)
 
-        model = await self._get_chat_model(str(user.id), chat_id)
+        model = await self._get_chat_model(mem_uid, chat_id)
         model_name = self._model_display_name(model)
-        agent_id = await self._get_chat_agent(str(user.id), chat_id)
+        agent_id = await self._get_chat_agent(mem_uid, chat_id)
         agent_emoji, agent_name = self._agent_display_info(agent_id)
         short_id = chat_id[:8]
 
@@ -2030,13 +2060,14 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         model_id = query.data[len(CALLBACK_MODEL_PREFIX) :]
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await query.edit_message_text("❌ Нет активного чата")
             return
 
-        ok = await self._set_chat_model(str(user.id), chat_id, model_id)
+        ok = await self._set_chat_model(mem_uid, chat_id, model_id)
         model_name = self._model_display_name(model_id)
 
         if ok:
@@ -2055,9 +2086,10 @@ class BalbesTelegramBot:
         if not user:
             return
 
-        chat_id = await self._create_chat(str(user.id), "Новый чат")
+        mem_uid = await self._memory_user_id(user)
+        chat_id = await self._create_chat(mem_uid, "Новый чат")
         if chat_id:
-            await self._set_active_chat(str(user.id), chat_id)
+            await self._set_active_chat(mem_uid, chat_id)
             await query.edit_message_text(
                 "✅ Создан новый чат.\n"
                 "Используй /rename чтобы дать ему название, "
@@ -2074,13 +2106,14 @@ class BalbesTelegramBot:
         if not user:
             return
 
+        mem_uid = await self._memory_user_id(user)
         agent_id = query.data[len(CALLBACK_AGENT_PREFIX) :]
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
             await query.edit_message_text("❌ Нет активного чата. Создай его через /newchat")
             return
 
-        ok = await self._set_chat_agent(str(user.id), chat_id, agent_id)
+        ok = await self._set_chat_agent(mem_uid, chat_id, agent_id)
         agent_emoji, agent_name = self._agent_display_info(agent_id)
 
         if ok:
@@ -2103,10 +2136,11 @@ class BalbesTelegramBot:
 
         data = query.data  # model_unavail:yes:{model_id} | model_unavail:no
         if data.startswith("model_unavail:yes:"):
+            mem_uid = await self._memory_user_id(user)
             new_model_id = data[len("model_unavail:yes:") :]
-            chat_id = await self._get_active_chat(str(user.id))
+            chat_id = await self._get_active_chat(mem_uid)
             if chat_id:
-                await self._set_chat_model(str(user.id), chat_id, new_model_id)
+                await self._set_chat_model(mem_uid, chat_id, new_model_id)
                 model_name = self._model_display_name(new_model_id)
                 await query.edit_message_text(
                     f"✅ Переключено на: *{model_name}*\nПовтори свой запрос.",
@@ -2172,15 +2206,16 @@ class BalbesTelegramBot:
             )
 
             # Same chat resolution as text messages (settings.debug applies to voice stages too)
-            chat_id = await self._get_active_chat(str(user.id))
+            mem_uid = await self._memory_user_id(user)
+            chat_id = await self._get_active_chat(mem_uid)
             if not chat_id:
-                new_id = await self._create_chat(str(user.id), "Основной чат")
+                new_id = await self._create_chat(mem_uid, "Основной чат")
                 if new_id:
-                    await self._set_active_chat(str(user.id), new_id)
+                    await self._set_active_chat(mem_uid, new_id)
                     chat_id = new_id
             chat_settings = {"debug": False, "mode": "ask"}
             if chat_id:
-                chat_settings = await self._get_chat_settings(str(user.id), chat_id)
+                chat_settings = await self._get_chat_settings(mem_uid, chat_id)
             voice_debug = chat_settings.get("debug", False)
 
             await self._voice_debug_reply(
@@ -2240,7 +2275,7 @@ class BalbesTelegramBot:
             # Correct via LLM (chat model first, then paid fallback — see whisper_transcribe)
             await self._voice_debug_reply(message, voice_debug, "LLM: постобработка расшифровки…")
             t_co = time.monotonic()
-            chat_model_id = await self._get_chat_model(str(user.id), chat_id) if chat_id else None
+            chat_model_id = await self._get_chat_model(mem_uid, chat_id) if chat_id else None
             corrected = await correct_transcription(
                 raw_text,
                 http_client=self.http_client,
@@ -2321,12 +2356,13 @@ class BalbesTelegramBot:
         message = update.message
         chat_tg = update.effective_chat
 
+        mem_uid = await self._memory_user_id(user)
         # Resolve active chat
-        chat_id = await self._get_active_chat(str(user.id))
+        chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
-            new_id = await self._create_chat(str(user.id), "Основной чат")
+            new_id = await self._create_chat(mem_uid, "Основной чат")
             if new_id:
-                await self._set_active_chat(str(user.id), new_id)
+                await self._set_active_chat(mem_uid, new_id)
                 chat_id = new_id
 
         lock = self._get_lock(str(user.id), chat_id or "default")
@@ -2348,11 +2384,11 @@ class BalbesTelegramBot:
                 # Load per-chat settings (debug, mode)
                 chat_settings = {"debug": False, "mode": "ask"}
                 if chat_id:
-                    chat_settings = await self._get_chat_settings(str(user.id), chat_id)
+                    chat_settings = await self._get_chat_settings(mem_uid, chat_id)
 
                 # Send to orchestrator
                 params = {
-                    "user_id": str(user.id),
+                    "user_id": mem_uid,
                     "description": text,
                     "debug": chat_settings.get("debug", False),
                     "mode": chat_settings.get("mode", "ask"),
@@ -2360,12 +2396,12 @@ class BalbesTelegramBot:
                 }
                 if chat_id:
                     params["chat_id"] = chat_id
-                    agent_id = await self._get_chat_agent(str(user.id), chat_id)
+                    agent_id = await self._get_chat_agent(mem_uid, chat_id)
                     if agent_id:
                         params["agent_id"] = agent_id
 
                 await self._touch_agent_session(
-                    str(user.id),
+                    mem_uid,
                     params.get("agent_id") or "balbes",
                     chat_id or "default",
                 )
@@ -2380,7 +2416,7 @@ class BalbesTelegramBot:
                 if chat_tg and (_is_debug or _is_agent_mode):
                     fg_monitor = self._start_fg_monitor(
                         tg_chat_id=chat_tg.id,
-                        user_id=str(user.id),
+                        user_id=mem_uid,
                         agent_id=_active_agent_id,
                         progress_only=not _is_debug,
                     )
@@ -2442,7 +2478,7 @@ class BalbesTelegramBot:
                         for bg in bg_started:
                             self._start_bg_monitor(
                                 tg_chat_id=chat_tg.id,
-                                user_id=str(user.id),
+                                user_id=mem_uid,
                                 agent_id=bg["agent_id"],
                                 debug=debug_on,
                             )
@@ -2452,7 +2488,7 @@ class BalbesTelegramBot:
                         # background_tasks_started was not populated, e.g. on restart
                         # or when the LLM called the tool in a previous turn).
                         await self._ensure_bg_monitors(
-                            user_id=str(user.id),
+                            user_id=mem_uid,
                             tg_chat_id=chat_tg.id,
                             debug=debug_on,
                         )
@@ -2462,7 +2498,7 @@ class BalbesTelegramBot:
                         if "429" in error or "unavailable" in error.lower():
                             await self._prompt_model_switch(
                                 update=update,
-                                user_id=str(user.id),
+                                user_id=mem_uid,
                                 chat_id=chat_id or "default",
                                 error=error,
                             )
