@@ -141,8 +141,11 @@ timeouts:           # Таймауты LLM, skills, БД
 ### Тиры моделей
 
 ```yaml
-# Тир free — дефолт, heartbeat, первый fallback (бесплатные)
-- id: "minimax/minimax-m2.5:free"       # MiniMax M2.5 Free (1M ctx) — дефолт
+# Первый пункт active_models — дефолт чата (если в Memory нет model_id для чата)
+- id: "meta-llama/llama-3.3-70b-instruct"  # Llama 3.3 70B — дешёвая платная, дефолт
+
+# Тир free — heartbeat, последний fallback (бесплатные)
+- id: "minimax/minimax-m2.5:free"       # MiniMax M2.5 Free (1M ctx)
 - id: "minimax/minimax-m2.5:free"        # MiniMax M2.5 (1M ctx)
 - id: "z-ai/glm-4.5-air:free"           # GLM-4.5 Air (32K ctx)
 - id: "arcee-ai/trinity-mini:free"       # Trinity Mini (32K ctx)
@@ -172,16 +175,16 @@ agents:
   - id: "orchestrator"
     display_name: "Balbes"
     emoji: "🤖"
-    # default_model: не задан → берётся первый из active_models (minimax:free)
+    # default_model: не задан → берётся первый из active_models (Llama 3.3 70B)
 
     # false = показать ошибку API пользователю (рекомендуется)
     # true  = тихо пробовать следующую модель из fallback_chain
     fallback_enabled: false
 
     fallback_chain:
-      - "openrouter/minimax/minimax-m2.5:free"
-      - "openrouter/meta-llama/llama-3.3-70b-instruct"
       - "openrouter/minimax/minimax-m2.5"
+      - "openrouter/minimax/minimax-m2.5:free"
+      - "openrouter/meta-llama/llama-3.1-8b-instruct"
 
     token_limits:
       daily: 100000

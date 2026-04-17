@@ -1,7 +1,7 @@
 # Multi-provider LLM Configuration
 # Model tiers:
-#   free    — default model, no cost, used for heartbeat and as first fallback
-#   cheap   — low-cost, used as automatic fallback chain
+#   free    — no cost; heartbeat and last-resort fallback
+#   cheap   — low-cost (default chat: Llama 3.3 70B — first in active_models)
 #   medium  — mid-range, user selection only
 #   premium — expensive, user selection only
 
@@ -127,8 +127,8 @@ agents:
     display_name: "Balbes"
     description: "Основной интеллектуальный ассистент"
     emoji: "🤖"
-    # Default model when no chat model is configured (inherits active_models[0] if absent)
-    # default_model: "openrouter/stepfun/step-3.5-flash:free"
+    # Default when no per-chat model in memory (see active_models[0])
+    default_model: "openrouter/meta-llama/llama-3.3-70b-instruct"
 
     # If false: only the chat model is tried. If true: on 404/429/5xx try fallback_chain
     # (needed when a free model disappears from OpenRouter).
@@ -136,9 +136,9 @@ agents:
 
     # Fallback chain (only used when fallback_enabled: true)
     fallback_chain:
-      - "openrouter/minimax/minimax-m2.5:free"
-      - "openrouter/meta-llama/llama-3.3-70b-instruct"
       - "openrouter/minimax/minimax-m2.5"
+      - "openrouter/minimax/minimax-m2.5:free"
+      - "openrouter/meta-llama/llama-3.1-8b-instruct"
 
     # Token budget for this agent
     token_limits:
@@ -444,8 +444,16 @@ agents:
 
 
 # Models available for user selection (shown in /model menu)
-# Sorted by tier: free → cheap → medium → premium
+# First entry = default when Memory has no per-chat model_id (see orchestrator _get_model_for_chat).
+# Sorted by tier after the default: free → cheap → medium → premium
 active_models:
+  # ── Default chat model (cheap, OpenRouter paid tier) ─────────────────────
+  - id: "openrouter/meta-llama/llama-3.3-70b-instruct"
+    display_name: "💲 Llama 3.3 70B (default)"
+    tier: cheap
+    provider: openrouter
+    context_window: 131072
+
   # ── Free ──────────────────────────────────────────────────────────────────
   - id: "openrouter/minimax/minimax-m2.5:free"
     display_name: "🆓 MiniMax M2.5 (Free)"
@@ -480,12 +488,6 @@ active_models:
   # ── Cheap ─────────────────────────────────────────────────────────────────
   - id: "openrouter/meta-llama/llama-3.1-8b-instruct"
     display_name: "💲 Llama 3.1 8B (cheapest)"
-    tier: cheap
-    provider: openrouter
-    context_window: 131072
-
-  - id: "openrouter/meta-llama/llama-3.3-70b-instruct"
-    display_name: "💲 Llama 3.3 70B"
     tier: cheap
     provider: openrouter
     context_window: 131072
@@ -544,29 +546,28 @@ fallback_strategy:
   rate_limit_wait_seconds: 60
 
 
-# Default fallback chain: free → cheap only
-# Medium and premium are NEVER used as automatic fallback — only by explicit user choice
+# Default fallback chain: primary cheap → MiniMax → free (medium/premium never auto)
 default_fallback_chain:
-  - provider: openrouter
-    model: "openrouter/minimax/minimax-m2.5:free"
-
   - provider: openrouter
     model: "openrouter/meta-llama/llama-3.3-70b-instruct"
 
   - provider: openrouter
     model: "openrouter/minimax/minimax-m2.5"
+
+  - provider: openrouter
+    model: "openrouter/minimax/minimax-m2.5:free"
 
 
 # Cheap models for automatic fallback on token limit
 cheap_models:
   - provider: openrouter
-    model: "openrouter/minimax/minimax-m2.5:free"
-
-  - provider: openrouter
     model: "openrouter/meta-llama/llama-3.3-70b-instruct"
 
   - provider: openrouter
     model: "openrouter/minimax/minimax-m2.5"
+
+  - provider: openrouter
+    model: "openrouter/minimax/minimax-m2.5:free"
 
 
 # Token limits

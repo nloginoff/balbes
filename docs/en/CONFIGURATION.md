@@ -135,7 +135,7 @@ Each agent block controls its behavior:
 ```yaml
 agents:
   orchestrator:
-    default_model: minimax/minimax-m2.5:free   # default LLM for this agent
+    default_model: meta-llama/llama-3.3-70b-instruct   # default LLM (first active_models entry)
     fallback_enabled: false                     # show error to user on failure
     fallback_chain:
       - minimax/minimax-m2.5
@@ -145,7 +145,7 @@ agents:
       hourly: 100000
 
   coder:
-    default_model: minimax/minimax-m2.5:free
+    default_model: moonshotai/kimi-k2.5
     server_commands_ask:                        # allowed commands in /mode ask
       allowed_commands:
         - ls

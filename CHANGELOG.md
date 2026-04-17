@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- **Дефолтная LLM (OpenRouter)** — первая free-модель и цепочки fallback переведены на **`minimax/minimax-m2.5:free`**: `stepfun/step-3.5-flash:free` больше не доступен на OpenRouter (`404 No endpoints found`). Агент **balbes**: `fallback_enabled: true` и повтор при **HTTP 404** в [`services/orchestrator/agent.py`](services/orchestrator/agent.py). Heartbeat и `DEFAULT_CHAT_MODEL` обновлены.
+- **Дефолтная LLM (OpenRouter)** — дефолт чата: **`meta-llama/llama-3.3-70b-instruct`** (дешёвая платная tier, не free): [`shared/config.py`](shared/config.py) `default_chat_model`, первый пункт `active_models`, `default_fallback_chain` / `cheap_models`, у агента **balbes** `default_model` и обновлённая `fallback_chain` (MiniMax → free → Llama 3.1 8B). Heartbeat остаётся на **`minimax/minimax-m2.5:free`**. Ранее цепочки были переведены с исчезнувшего `stepfun/step-3.5-flash:free` на **`minimax/minimax-m2.5:free`**; **balbes** с `fallback_enabled: true` и повтором при **HTTP 404** — [`services/orchestrator/agent.py`](services/orchestrator/agent.py). Сиды [`scripts/init_db.py`](scripts/init_db.py): orchestrator → Llama 3.3 70B, coder/blogger → Kimi. [`services/blogger/agent.py`](services/blogger/agent.py): `_CHEAP_MODEL` без ошибочного суффикса `:free`.
 
 ### Added
 - **Скрипт `scripts/max_subscriptions.py`** — `list` (GET /subscriptions), `delete` (DELETE по `url`), `apply` (POST + проверка списка; опция `--delete-first` при смене секрета). Документация: [`docs/ru/MAX_WEBHOOK.md`](docs/ru/MAX_WEBHOOK.md).

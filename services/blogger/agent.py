@@ -30,7 +30,7 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 _WORKSPACE = _PROJECT_ROOT / "data" / "agents" / "blogger"
 
 _DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.5"
-_CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct:free"
+_CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct"
 
 
 def _read_workspace_file(name: str) -> str:
