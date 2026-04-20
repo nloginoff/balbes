@@ -205,6 +205,14 @@ class Settings(BaseSettings):
         le=86400,
         description="Presence window (seconds) for mirroring to a secondary messenger.",
     )
+    agent_reply_mirror_providers: str = Field(
+        default="telegram,max",
+        description=(
+            "Comma-separated identity providers allowed as mirror targets (e.g. telegram,max). "
+            "Case-insensitive; empty string = do not mirror to any linked channel. "
+            "Set via AGENT_REPLY_MIRROR_PROVIDERS."
+        ),
+    )
 
     # =============================================================================
     # Web UI Authentication
@@ -544,6 +552,18 @@ class Settings(BaseSettings):
         if isinstance(v, list):
             return [int(x) for x in v if str(x).strip()]
         return [int(x.strip()) for x in str(v).split(",") if x.strip()]
+
+    @field_validator("agent_reply_mirror_providers", mode="after")
+    @classmethod
+    def normalize_agent_reply_mirror_providers(cls, v: str) -> str:
+        """Comma-separated provider names; empty = mirror to no linked channel."""
+        if v is None:
+            return ""
+        s = str(v).strip()
+        if not s:
+            return ""
+        parts = [p.strip().lower() for p in s.split(",") if p.strip()]
+        return ",".join(parts)
 
 
 # Singleton instance

@@ -25,6 +25,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def mirror_target_providers(settings: Settings) -> frozenset[str]:
+    """Providers allowed as mirror destinations (from AGENT_REPLY_MIRROR_PROVIDERS)."""
+    raw = (settings.agent_reply_mirror_providers or "").strip()
+    if not raw:
+        return frozenset()
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
 def text_plain_for_max(markdownish: str) -> str:
     """Best-effort strip for MAX (plain); cap at API limit."""
     t = markdownish
@@ -51,6 +59,9 @@ async def mirror_agent_text_to_secondaries(
     """
     if not settings.agent_reply_mirror_enabled:
         return
+    allowed = mirror_target_providers(settings)
+    if not allowed:
+        return
     ttl = settings.agent_reply_mirror_presence_ttl_seconds
     try:
         data = await list_identity_peers(memory_url, canonical_user_id, client=client)
@@ -67,6 +78,8 @@ async def mirror_agent_text_to_secondaries(
         prov = (peer.get("provider") or "").lower().strip()
         ext = (peer.get("external_id") or "").strip()
         if not prov or not ext or prov == src:
+            continue
+        if prov not in allowed:
             continue
         try:
             active = await channel_presence_active(

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Allowlist целей зеркалирования** — `AGENT_REPLY_MIRROR_PROVIDERS` (по умолчанию `telegram,max`; пустая строка = не дублировать в связанные каналы). [`shared/config.py`](shared/config.py), [`shared/outbound/mirror.py`](shared/outbound/mirror.py).
 - **Зеркалирование ответов агента Telegram ↔ MAX** — после связки аккаунтов дублирование текста во второй канал при активном **presence** (входящие сообщения обновляют окно TTL); Redis `identity:peers:{uuid}`, `channel_presence:{uuid}`; Memory API `GET /api/v1/identity/peers`, `POST /api/v1/identity/presence/touch`, `GET /api/v1/identity/presence/active`; конфиг `AGENT_REPLY_MIRROR_ENABLED`, `AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS`. Интеграция: [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`shared/identity_client.py`](shared/identity_client.py), [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py).
 
 ### Fixed
