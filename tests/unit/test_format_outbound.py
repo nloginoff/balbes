@@ -117,3 +117,45 @@ def test_bold_italic_combo_star_underscore() -> None:
 def test_anchor_single_quoted_href() -> None:
     s = model_text_to_telegram_html("<a href='https://t.me/x'>y</a>")
     assert 'href="https://t.me/x"' in s and "y" in s
+
+
+def test_blockquote_labeled_md_prefix() -> None:
+    s = model_text_to_telegram_html("MD: > Это цитата")
+    assert s == "<blockquote>Это цитата</blockquote>"
+
+
+def test_blockquote_bracket_number_prefix() -> None:
+    s = model_text_to_telegram_html("[10] MD: > Один")
+    assert "<blockquote>Один</blockquote>" in s
+
+
+def test_triple_star_bold_italic() -> None:
+    assert model_text_to_telegram_html("***ab***") == "<b><i>ab</i></b>"
+
+
+def test_golden_test3_snippet() -> None:
+    """Сжатый фрагмент пользовательского теста №3 (MD/HTML/цитата/спойлер)."""
+    raw = """### Заголовок
+[1] ЖИРНЫЙ:
+MD: **Жирный текст**
+HTML: <b>Жирный текст</b>
+
+[2] КУРСИВ:
+MD: *Курсивный текст*
+HTML: <i>Курсивный текст</i>
+
+[4] СПОЙЛЕР:
+MD: ||скрытый текст||
+HTML: <tg-spoiler>скрытый текст</tg-spoiler>
+
+[10] ЦИТАТА:
+MD: > Это цитата
+
+[7] ***жирный курсив***
+"""
+    s = model_text_to_telegram_html(raw)
+    assert "<b>Жирный текст</b>" in s
+    assert "<i>Курсивный текст</i>" in s
+    assert "<tg-spoiler>скрытый текст</tg-spoiler>" in s
+    assert "<blockquote>Это цитата</blockquote>" in s
+    assert "<b><i>жирный курсив</i></b>" in s

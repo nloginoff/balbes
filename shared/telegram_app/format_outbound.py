@@ -3,8 +3,8 @@ Convert model / orchestrator plain text to Telegram HTML (parse_mode=HTML).
 
 Pipeline (prose segments):
 1) Optional simple Telegram HTML pairs from the model (<b>, <i>, <pre>, <a>, …) → placeholders
-2) Markdown-like: `code`, [text](url), ||spoiler||, ~~strike~~, **bold**, __bold__, *italic*, _italic_
-3) Block quote lines starting with "> "
+2) Markdown-like: `code`, [text](url), ||spoiler||, ~~strike~~, ***bold italic***, **bold**, __bold__, *italic*, _italic_
+3) Block quote: line starts with ">…", or "MD:/HTML: >…", optional "[n] " prefix
 4) html.escape the remainder
 5) Recursively expand placeholders into Telegram HTML (nested tags and markdown combos)
 
@@ -116,8 +116,27 @@ def _leftmost_html_extract(segment: str, stores: list[tuple[Any, ...]]) -> str:
     return segment[:start] + _ph(idx) + segment[end:]
 
 
+# Blockquote: plain "> …" or labeled "MD: > …" / "HTML: > …" (optional "[n] " prefix).
+_BQ_LABELED = re.compile(
+    r"^\s*(?:\[\d+\]\s+)?(?:MD|HTML):\s*>\s*(.*)$",
+    re.IGNORECASE,
+)
+_BQ_PLAIN = re.compile(r"^\s*>\s?(.*)$")
+
+
+def _blockquote_line_payload(line: str) -> str | None:
+    """If line opens a blockquote, return inner text after marker; else None."""
+    m = _BQ_LABELED.match(line)
+    if m:
+        return m.group(1)
+    m = _BQ_PLAIN.match(line)
+    if m:
+        return m.group(1)
+    return None
+
+
 def _markdown_blockquotes(segment: str, stores: list[tuple[Any, ...]]) -> str:
-    """Lines starting with '> ' or '>' → blockquote placeholder."""
+    """Lines starting with '>…' or 'MD:/HTML: >…' → blockquote placeholder."""
     lines = segment.split("\n")
     out: list[str] = []
     buf: list[str] = []
@@ -137,10 +156,9 @@ def _markdown_blockquotes(segment: str, stores: list[tuple[Any, ...]]) -> str:
             flush()
             out.append("")
             continue
-        if line.startswith("> "):
-            buf.append(line[2:])
-        elif line.startswith(">"):
-            buf.append(line[1:].lstrip())
+        payload = _blockquote_line_payload(line)
+        if payload is not None:
+            buf.append(payload)
         else:
             flush()
             out.append(line)
@@ -199,6 +217,12 @@ def _prose_to_telegram_html(segment: str) -> str:
         return push(("strike", m.group(1)))
 
     t = re.sub(r"~~([^~]+?)~~", _strike_repl, t)
+
+    # Bold + italic ***text*** (must run before ** and single *)
+    def _bi_repl(m: re.Match[str]) -> str:
+        return push(("bi", m.group(1)))
+
+    t = re.sub(r"\*\*\*([^*]+?)\*\*\*", _bi_repl, t)
 
     # Bold ** and __
     def _bold_star(m: re.Match[str]) -> str:
@@ -279,6 +303,10 @@ def _prose_to_telegram_html(segment: str) -> str:
             inner = item[1]
             inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
             return f"<tg-spoiler>{inner_h}</tg-spoiler>"
+        if item[0] == "bi":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<b><i>{inner_h}</i></b>"
         if item[0] == "bold":
             inner = item[1]
             inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
@@ -427,5 +455,10 @@ async def send_reply_html_with_plain_fallback(
         try:
             await send_coro(body, parse_mode=ParseMode.HTML)
         except BadRequest as e:
-            logger.warning("Telegram rejected HTML entities, sending plain chunk: %s", e)
+            logger.warning(
+                "Telegram rejected HTML entities, sending plain chunk: %s (body_prefix=%r)",
+                e,
+                body[:320],
+            )
+            logger.debug("Full HTML body on BadRequest: %s", body)
             await send_coro(chunk, parse_mode=None)
