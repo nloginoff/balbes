@@ -169,7 +169,14 @@ class Settings(BaseSettings):
     )
     notify_max_chat_id: str | None = Field(
         default=None,
-        description="MAX chat_id for notify when delivery channel includes max",
+        description="MAX chat_id for notify (POST /messages?chat_id=). For DM to a user prefer notify_max_user_id.",
+    )
+    notify_max_user_id: int | None = Field(
+        default=None,
+        description=(
+            "MAX user_id for notify (POST /messages?user_id=). Use for direct messages; "
+            "official API distinguishes user_id vs chat_id."
+        ),
     )
     max_webhook_secret: str | None = Field(
         default=None,
@@ -495,7 +502,9 @@ class Settings(BaseSettings):
             return None
         return v
 
-    @field_validator("telegram_user_id", "notify_telegram_chat_id", mode="before")
+    @field_validator(
+        "telegram_user_id", "notify_telegram_chat_id", "notify_max_user_id", mode="before"
+    )
     @classmethod
     def empty_int_to_none(cls, v: Any) -> int | None:
         """Convert empty strings to None for optional int fields"""

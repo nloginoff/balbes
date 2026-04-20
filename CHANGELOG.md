@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Notify в MAX** — доставка через **`NOTIFY_MAX_USER_ID`** (POST `/messages?user_id=`), т.к. для личных сообщений API отличает `user_id` от `chat_id`; прежний вариант только с `NOTIFY_MAX_CHAT_ID` мог не доставлять в личку. [`shared/notify/delivery.py`](shared/notify/delivery.py), [`shared/config.py`](shared/config.py) (`NOTIFY_MAX_USER_ID`).
+
 ### Changed
 - **Документация notify / MAX** — в [`docs/ru/WEBHOOK_NOTIFY.md`](docs/ru/WEBHOOK_NOTIFY.md) уточнены `NOTIFY_DELIVERY_CHANNELS`, `NOTIFY_MAX_CHAT_ID`, `MAX_ALLOWED_USER_IDS`; в [`.env.prod.example`](.env.prod.example) добавлены комментарии к `MAX_ALLOWED_USER_IDS` и `NOTIFY_MAX_CHAT_ID`.
 

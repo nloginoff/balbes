@@ -27,7 +27,7 @@
 Обязательные переменные по каналам:
 
 - **Telegram:** `TELEGRAM_BOT_TOKEN`; цель — `NOTIFY_TELEGRAM_CHAT_ID` или `TELEGRAM_USER_ID`.
-- **MAX:** `MAX_BOT_TOKEN` и **`NOTIFY_MAX_CHAT_ID`** (строка с числовым id чата; для диалога с ботом можно взять тот же номер, что и `user_id` в MAX — см. ключ Redis `identity:link:max:<id>` или поле отправителя во входящем webhook).
+- **MAX:** `MAX_BOT_TOKEN` и цель доставки — **`NOTIFY_MAX_USER_ID`** (личное сообщение пользователю, query `user_id` в [POST /messages](https://dev.max.ru/docs-api/methods/POST/messages)) **или** **`NOTIFY_MAX_CHAT_ID`** (групповой/иной чат, query `chat_id`). Для лички с ботом обычно нужен именно **`NOTIFY_MAX_USER_ID`** (число совпадает с `identity:link:max:<id>` в Redis и с whitelist `MAX_ALLOWED_USER_IDS`).
 
 Ограничение **кто может писать боту в MAX** задаётся отдельно: **`MAX_ALLOWED_USER_IDS`** (список через запятую). Пусто — принимаются все пользователи MAX.
 

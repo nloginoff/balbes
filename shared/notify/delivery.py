@@ -84,16 +84,17 @@ async def _max_send_text(
     *,
     api_url: str,
     token: str,
-    chat_id: str,
     text: str,
+    chat_id: str | None = None,
+    user_id: int | None = None,
 ) -> str | None:
-    """Send plain text to MAX (chat_id as query param per platform API)."""
+    """Send plain text to MAX — exactly one of chat_id or user_id (per platform API)."""
     return await send_max_message_text(
         api_url=api_url,
         token=token,
         text=text,
         chat_id=chat_id,
-        user_id=None,
+        user_id=user_id,
         timeout=45.0,
     )
 
@@ -160,23 +161,42 @@ async def deliver_notify(settings: Settings, payload: WebhookPayload) -> NotifyD
 
     if "max" in channels:
         token = settings.max_bot_token
+        m_uid = settings.notify_max_user_id
         m_chat = settings.notify_max_chat_id
-        if not token or not m_chat:
+        if not token:
             result.skipped_channels.append("max")
-            logger.info(
-                "MAX notify skipped: configure MAX_BOT_TOKEN and NOTIFY_MAX_CHAT_ID",
-            )
-        else:
+            result.errors.append("MAX notify skipped: MAX_BOT_TOKEN not set")
+            logger.warning("MAX notify skipped: MAX_BOT_TOKEN not set")
+        elif m_uid is not None:
             try:
                 mid = await _max_send_text(
                     api_url=settings.max_api_url,
                     token=token,
-                    chat_id=m_chat,
                     text=plain,
+                    user_id=m_uid,
                 )
                 result.max_message_id = mid
             except Exception as e:
-                logger.exception("MAX notify delivery failed: %s", e)
+                logger.exception("MAX notify delivery failed (user_id): %s", e)
                 result.errors.append(f"max: {e}")
+        elif m_chat:
+            try:
+                mid = await _max_send_text(
+                    api_url=settings.max_api_url,
+                    token=token,
+                    text=plain,
+                    chat_id=m_chat,
+                )
+                result.max_message_id = mid
+            except Exception as e:
+                logger.exception("MAX notify delivery failed (chat_id): %s", e)
+                result.errors.append(f"max: {e}")
+        else:
+            result.skipped_channels.append("max")
+            msg = (
+                "MAX notify skipped: set NOTIFY_MAX_USER_ID (DM) or NOTIFY_MAX_CHAT_ID (group/chat)"
+            )
+            logger.info(msg)
+            result.errors.append(msg)
 
     return result
