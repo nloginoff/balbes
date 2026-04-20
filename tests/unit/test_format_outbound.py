@@ -127,6 +127,23 @@ def test_nested_html_b_i() -> None:
     assert s == "<b><i>x</i></b>"
 
 
+def test_bare_https_url_clickable() -> None:
+    s = model_text_to_telegram_html("См. https://a.com/x. Далее")
+    assert 'href="https://a.com/x"' in s
+    assert "</a>. Далее" in s
+
+
+def test_bare_url_inside_parentheses() -> None:
+    s = model_text_to_telegram_html("Посетите (https://example.com/) ок")
+    assert 'href="https://example.com/"' in s
+    assert "example.com/)" not in s.split("href=")[1][:80]
+
+
+def test_bare_print_line_becomes_code() -> None:
+    s = model_text_to_telegram_html('x:\nprint("hi")')
+    assert "<code>" in s and "print" in s
+
+
 def test_star_underscore_nested_no_literal_marks() -> None:
     """*_x_* and ***_y_***: _italic_ runs before * / *** so Telegram gets tags, not raw _ *."""
     s = model_text_to_telegram_html("*_Секретное сообщение_*")

@@ -3,7 +3,7 @@ Convert model / orchestrator plain text to Telegram HTML (parse_mode=HTML).
 
 Pipeline (prose segments):
 1) Optional simple Telegram HTML pairs from the model (<b>, <i>, <pre>, <a>, …) → placeholders
-2) Markdown-like: `code`, [text](url), ||spoiler||, ~~strike~~, ***bold italic***, **bold**, __bold__, *italic*, _italic_
+2) Markdown-like: `code`, bare ``https://…`` → link, [text](url), ||spoiler||, ~~strike~~, ***bold italic***, **bold**, __bold__, *italic*, _italic_; lone ``print(...)`` line → `` `code` ``
 3) Block quote: line starts with ">…", or "MD:/HTML: >…", optional "[n] " prefix
 4) html.escape the remainder
 5) Recursively expand placeholders into Telegram HTML (nested tags and markdown combos)
@@ -127,6 +127,45 @@ def _collapse_duplicate_inline_tags(s: str, tag: str) -> str:
             return s2
         s = s2
     return s
+
+
+def _wrap_bare_print_line_as_code(segment: str) -> str:
+    """If a line is only ``print(...)``, wrap in backticks so it becomes ``<code>`` (not plain text)."""
+    lines = segment.split("\n")
+    out: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("```") or "`" in stripped:
+            out.append(line)
+            continue
+        if stripped.startswith("print(") and stripped.endswith(")"):
+            indent = line[: len(line) - len(line.lstrip(" \t"))]
+            out.append(f"{indent}`{stripped}`")
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
+# Loose http(s) URLs (before _italic_ so paths with underscores stay inside the link).
+_BARE_HTTP_URL_RE = re.compile(r"https?://[^\s<]+")
+
+
+def _safe_href_trim(url: str) -> str | None:
+    """Return longest prefix of ``url`` that ``_safe_href`` accepts (strip `).,;` etc.)."""
+    u = url
+    while u:
+        if _safe_href(u):
+            # Drop stray ``)`` from prose ``(https://host/)`` — but keep ``)`` in paths like ``/wiki/Foo_(bar)``.
+            while len(u) > 8 and u.endswith(")") and u.count("(") == 0 and _safe_href(u[:-1]):
+                u = u[:-1]
+            # Sentence punctuation glued to URL by ``[^\s<]+`` (e.g. ``… x.com.``)
+            while len(u) > 8 and u[-1] in ".,;:!?" and _safe_href(u[:-1]):
+                u = u[:-1]
+            return u
+        if len(u) <= len("https://x"):
+            return None
+        u = u[:-1]
+    return None
 
 
 def _safe_href(url: str) -> str | None:
@@ -280,6 +319,8 @@ def _prose_to_telegram_html(segment: str) -> str:
 
     t = re.sub(r"^#{1,6}\s+(.+)$", _heading_repl, t, flags=re.MULTILINE)
 
+    t = _wrap_bare_print_line_as_code(t)
+
     # Inline `code` first (protect * and _ inside)
     def _code_repl(m: re.Match[str]) -> str:
         return push(("code", m.group(1)))
@@ -294,6 +335,17 @@ def _prose_to_telegram_html(segment: str) -> str:
         return m.group(0)
 
     t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _link_repl, t)
+
+    # Bare https://… (after [text](url); before _italic_ so URL paths with _ stay linked)
+    def _bare_url_repl(m: re.Match[str]) -> str:
+        raw = m.group(0)
+        u = _safe_href_trim(raw)
+        if not u:
+            return raw
+        suf = raw[len(u) :]
+        return push(("mdlink", u, u)) + suf
+
+    t = _BARE_HTTP_URL_RE.sub(_bare_url_repl, t)
 
     # Telegram-style ||spoiler||
     def _spoil_repl(m: re.Match[str]) -> str:
