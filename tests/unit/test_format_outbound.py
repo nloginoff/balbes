@@ -61,3 +61,39 @@ def test_raw_chunks_split_when_html_longer_than_telegram_limit() -> None:
     assert len(chunks) > 1
     for c in chunks:
         assert len(model_text_to_telegram_html(c)) <= TELEGRAM_HTML_MSG_LIMIT
+
+
+def test_bold_double_underscore() -> None:
+    s = model_text_to_telegram_html("__x__")
+    assert s == "<b>x</b>"
+
+
+def test_spoiler_double_pipe() -> None:
+    s = model_text_to_telegram_html("||secret||")
+    assert "<tg-spoiler>" in s and "secret" in s
+
+
+def test_markdown_link() -> None:
+    s = model_text_to_telegram_html("[t](https://a.com)")
+    assert 'href="https://a.com"' in s
+    assert "<a " in s
+
+
+def test_raw_simple_html_not_double_escaped() -> None:
+    s = model_text_to_telegram_html("<b>ok</b>")
+    assert s == "<b>ok</b>"
+
+
+def test_wrong_spoiler_tag_mapped() -> None:
+    s = model_text_to_telegram_html("<spoiler>x</spoiler>")
+    assert s == "<tg-spoiler>x</tg-spoiler>"
+
+
+def test_blockquote_gt_line() -> None:
+    s = model_text_to_telegram_html("> quote")
+    assert "<blockquote>" in s and "quote" in s
+
+
+def test_heading_stripped_to_bold() -> None:
+    s = model_text_to_telegram_html("### Title")
+    assert s == "<b>Title</b>"

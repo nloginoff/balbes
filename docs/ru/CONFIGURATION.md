@@ -31,7 +31,9 @@ TELEGRAM_USER_ID=YOUR_TELEGRAM_USER_ID
 
 # Ответы LLM в чат (основной ответ, фон, зеркало в Telegram) уходят с parse_mode=HTML:
 # безопасное экранирование и лёгкая разметка (**жирный**, `код`, блоки ```); при ошибке API —
-# тот же текст без parse_mode. Код: shared/telegram_app/format_outbound.py.
+# тот же текст без parse_mode. Конвертация: **/__ жирный, */_ курсив, ||спойлер||,
+# [текст](https://…), > цитата, ``` блоки, простые теги Telegram (<b>, <i>, <tg-spoiler>).
+# Код: shared/telegram_app/format_outbound.py.
 
 # =============================================================================
 # Web UI Authentication
