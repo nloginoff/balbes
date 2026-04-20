@@ -13,6 +13,7 @@ from shared.telegram_app.format_outbound import (
     send_reply_html_with_plain_fallback,
     split_raw_coarse_for_telegram,
     telegram_message_text_units,
+    telegram_rejected_html_to_plain,
 )
 
 
@@ -147,7 +148,7 @@ def test_bare_print_line_becomes_code() -> None:
 def test_star_underscore_nested_no_literal_marks() -> None:
     """*_x_* and ***_y_***: _italic_ runs before * / *** so Telegram gets tags, not raw _ *."""
     s = model_text_to_telegram_html("*_Секретное сообщение_*")
-    assert "<i>Секретное сообщение</i>" == s
+    assert s == "<i>Секретное сообщение</i>"
     assert "_" not in s and "*" not in s
     s2 = model_text_to_telegram_html("***_Помните_***")
     assert s2 == "<b><i>Помните</i></b>"
@@ -222,6 +223,13 @@ MD: > Это цитата
     assert "<b><i>жирный курсив</i></b>" in s
 
 
+def test_telegram_rejected_html_to_plain_strips_tags_keeps_text() -> None:
+    h = '<b><i>x</i></b> and <a href="https://a.com">t</a>'
+    p = telegram_rejected_html_to_plain(h)
+    assert "**" not in p and "<" not in p
+    assert "x" in p and "t" in p and "https://a.com" in p
+
+
 async def test_send_reply_html_fallback_on_badrequest(caplog: pytest.LogCaptureFixture) -> None:
     """BadRequest on HTML send triggers plain fallback; outbound logs are emitted."""
     caplog.set_level(logging.INFO)
@@ -235,5 +243,8 @@ async def test_send_reply_html_fallback_on_badrequest(caplog: pytest.LogCaptureF
     await send_reply_html_with_plain_fallback(send_coro, "x **y**")
     assert len(calls) == 2
     assert calls[1][1] is None
+    # Fallback is plain derived from HTML, not raw markdown
+    assert calls[1][0] == "x y"
+    assert "**" not in calls[1][0]
     assert any("telegram_html_outbound" in r.message for r in caplog.records)
     assert any(r.levelno >= logging.WARNING and "BadRequest" in r.message for r in caplog.records)

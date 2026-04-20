@@ -117,6 +117,31 @@ def _ph(i: int) -> str:
     return f"\x01PH{i:05d}\x01"
 
 
+def telegram_rejected_html_to_plain(body: str) -> str:
+    """
+    When Telegram rejects ``parse_mode=HTML``, turn our HTML into readable plain text.
+
+    Avoids re-sending the **raw model markdown** chunk (users would see literal ``**``, ``_``).
+    Strips tags and decodes entities; keeps link targets from ``<a href>``.
+    """
+    if not body:
+        return ""
+    t = body
+    # Preserve link semantics before tag stripping
+    t = re.sub(
+        r"""<a\s+href=(?P<q>['"])(?P<href>.*?)(?P=q)>(?P<label>.*?)</a>""",
+        lambda m: f"{m.group('label')} ({m.group('href')})",
+        t,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    t = re.sub(r"<br\s*/?>", "\n", t, flags=re.IGNORECASE)
+    t = re.sub(r"</(p|div|blockquote|pre)\s*>", "\n", t, flags=re.IGNORECASE)
+    t = re.sub(r"<[^>]+>", "", t)
+    t = html.unescape(t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
+
+
 def _collapse_duplicate_inline_tags(s: str, tag: str) -> str:
     """``<i><i>x</i></i>`` → ``<i>x</i>`` (same for ``b``) after nested markdown-lite."""
     open_, close = f"<{tag}>", f"</{tag}>"
@@ -589,7 +614,8 @@ async def send_reply_html_with_plain_fallback(
     coarse_limit: int = TELEGRAM_HTML_MSG_LIMIT,
 ) -> None:
     """
-    For each chunk: send as HTML; on BadRequest (entity parse), retry chunk as plain text.
+    For each chunk: send as HTML; on BadRequest (entity parse), retry as plain text derived
+    from the HTML (not the raw markdown chunk), so ``**`` / ``_`` are not shown literally.
 
     Logs at INFO: each chunk attempt and outcome (HTML vs plain fallback) with lengths/UTF-16
     counts — grep ``telegram_html_outbound`` in service logs.
@@ -633,9 +659,10 @@ async def send_reply_html_with_plain_fallback(
                 total,
                 logged,
             )
-            await send_coro(chunk, parse_mode=None)
+            plain = telegram_rejected_html_to_plain(body) or chunk
+            await send_coro(plain, parse_mode=None)
             logger.info(
-                "telegram_html_outbound chunk %s/%s: sent OK (parse_mode=None, plain fallback)",
+                "telegram_html_outbound chunk %s/%s: sent OK (parse_mode=None, plain from HTML)",
                 idx,
                 total,
             )
