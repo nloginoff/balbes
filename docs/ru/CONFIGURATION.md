@@ -413,6 +413,7 @@ services:
 | `scripts/restart_prod.sh` | Перезапуск + healthcheck |
 | `scripts/stop_prod.sh` | Остановка всех сервисов |
 | `scripts/healthcheck.sh prod` | Проверка 10 компонентов |
+| `scripts/diagnose_telegram_stack.sh [dev\|test\|prod]` | Диагностика «бот молчит»: health Memory/Orchestrator/Webhooks, `getWebhookInfo`, хвост лога gateway |
 | `scripts/setup_memory_repo.sh <url>` | Инициализация приватного git-репо для data/agents/ |
 | `scripts/start_dev.sh` | Запуск dev-окружения |
 

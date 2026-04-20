@@ -295,7 +295,8 @@ class BalbesTelegramBot:
         self.bot_label = bot_label
         self.app: Application | None = None
         self.http_client: httpx.AsyncClient | None = None
-        self.orchestrator_url = f"http://localhost:{settings.orchestrator_port}"
+        # Same base URL as MAX/webhooks-gateway (`ORCHESTRATOR_URL` / settings.orchestrator_url).
+        self.orchestrator_url = settings.orchestrator_url.rstrip("/")
         self.memory_url = settings.memory_service_url
         self._canonical_cache: dict[str, str] = {}
 
