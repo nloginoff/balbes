@@ -30,6 +30,9 @@ from telegram.error import BadRequest
 
 logger = logging.getLogger(__name__)
 
+# Cap logged HTML body on BadRequest (full body is needed in logs to debug entity errors).
+_LOG_HTML_BODY_ON_BADREQUEST_MAX = 4000
+
 # Fenced ``` ... ``` must not be cut in the middle (breaks conversion and often yields BadRequest).
 _FENCE_SPAN_RE = re.compile(r"```(?:[a-zA-Z0-9_-]*)\s*\n?[\s\S]*?```", re.MULTILINE)
 
@@ -522,17 +525,57 @@ async def send_reply_html_with_plain_fallback(
     """
     For each chunk: send as HTML; on BadRequest (entity parse), retry chunk as plain text.
 
+    Logs at INFO: each chunk attempt and outcome (HTML vs plain fallback) with lengths/UTF-16
+    counts — grep ``telegram_html_outbound`` in service logs.
+
     send_coro: async (text: str, *, parse_mode: str | None) -> Any
     """
-    for chunk in raw_chunks_for_telegram_html(raw_text, coarse_limit=coarse_limit):
+    chunks = raw_chunks_for_telegram_html(raw_text, coarse_limit=coarse_limit)
+    total = len(chunks)
+    for idx, chunk in enumerate(chunks, start=1):
         body = model_text_to_telegram_html(chunk)
+        units = telegram_message_text_units(body)
+        logger.info(
+            "telegram_html_outbound chunk %s/%s: send HTML (raw_len=%s html_len=%s utf16_units=%s)",
+            idx,
+            total,
+            len(chunk),
+            len(body),
+            units,
+        )
         try:
             await send_coro(body, parse_mode=ParseMode.HTML)
         except BadRequest as e:
-            logger.warning(
-                "Telegram rejected HTML entities, sending plain chunk: %s (body_prefix=%r)",
-                e,
-                body[:320],
+            api_msg = getattr(e, "message", str(e))
+            logged = (
+                body
+                if len(body) <= _LOG_HTML_BODY_ON_BADREQUEST_MAX
+                else body[:_LOG_HTML_BODY_ON_BADREQUEST_MAX] + "…[truncated]"
             )
-            logger.debug("Full HTML body on BadRequest: %s", body)
+            logger.warning(
+                "telegram_html_outbound chunk %s/%s: BadRequest, plain fallback. "
+                "repr=%r api_message=%r html_prefix=%r",
+                idx,
+                total,
+                e,
+                api_msg,
+                body[:420],
+            )
+            logger.warning(
+                "telegram_html_outbound chunk %s/%s: HTML body on BadRequest: %s",
+                idx,
+                total,
+                logged,
+            )
             await send_coro(chunk, parse_mode=None)
+            logger.info(
+                "telegram_html_outbound chunk %s/%s: sent OK (parse_mode=None, plain fallback)",
+                idx,
+                total,
+            )
+        else:
+            logger.info(
+                "telegram_html_outbound chunk %s/%s: sent OK (parse_mode=HTML)",
+                idx,
+                total,
+            )

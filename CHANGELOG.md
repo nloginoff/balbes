@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Диагностика Telegram HTML** — при отправке ответа агента и при зеркалировании в Telegram пишутся структурированные логи: префикс ``telegram_html_outbound`` (чанк, длины, utf16, успех или ``BadRequest`` с текстом API и HTML-телом), для зеркала — ``mirror: telegram``. Упрощает поиск причин plain fallback. [`shared/telegram_app/format_outbound.py`](shared/telegram_app/format_outbound.py), [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`tests/unit/test_format_outbound.py`](tests/unit/test_format_outbound.py).
+
 ### Fixed
 - **Telegram HTML: лимит 4096 по UTF-16, не по `len()`** — длинные ответы с эмодзи проходили проверку «длина HTML ≤ 4096» по числу символов Python, тогда как Bot API считает **UTF-16 code units** (большинство эмодзи = 2). Сообщение отклонялось (`BadRequest` / слишком длинное), срабатывал fallback на plain — казалось, что «не работает ничего кроме жирного и кода». Разбиение `raw_chunks_for_telegram_html` переведено на `telegram_message_text_units`. [`shared/telegram_app/format_outbound.py`](shared/telegram_app/format_outbound.py), [`tests/unit/test_format_outbound.py`](tests/unit/test_format_outbound.py).
 - **Telegram HTML: «работают только жирный и блок кода»** — грубое разбиение длинного ответа по 4096 символов сырого текста часто резало `*курсив*`, `` `код` ``, `||спойлер||` и содержимое ``` пополам: конвертер выдавал битый Markdown/HTML, Telegram отвечал `BadRequest`, срабатывал fallback на plain без разметки. Введено `split_raw_coarse_for_telegram`: приоритет `\\n\\n` / `\\n` / `. ` / пробел, окно поиска назад до 3500 символов, перенос разреза перед ``` если он попадал внутрь блока. [`shared/telegram_app/format_outbound.py`](shared/telegram_app/format_outbound.py), тест [`tests/unit/test_format_outbound.py`](tests/unit/test_format_outbound.py).

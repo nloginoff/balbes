@@ -1,9 +1,16 @@
 """Unit tests for Telegram HTML formatting of model output."""
 
+import logging
+
+import pytest
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
+
 from shared.telegram_app.format_outbound import (
     TELEGRAM_HTML_MSG_LIMIT,
     model_text_to_telegram_html,
     raw_chunks_for_telegram_html,
+    send_reply_html_with_plain_fallback,
     split_raw_coarse_for_telegram,
     telegram_message_text_units,
 )
@@ -186,3 +193,20 @@ MD: > Это цитата
     assert "<tg-spoiler>скрытый текст</tg-spoiler>" in s
     assert "<blockquote>Это цитата</blockquote>" in s
     assert "<b><i>жирный курсив</i></b>" in s
+
+
+async def test_send_reply_html_fallback_on_badrequest(caplog: pytest.LogCaptureFixture) -> None:
+    """BadRequest on HTML send triggers plain fallback; outbound logs are emitted."""
+    caplog.set_level(logging.INFO)
+    calls: list[tuple[str, str | None]] = []
+
+    async def send_coro(text: str, *, parse_mode: str | None = None) -> None:
+        calls.append((text, parse_mode))
+        if parse_mode == ParseMode.HTML:
+            raise BadRequest('Unsupported start tag "bad" at byte offset 0')
+
+    await send_reply_html_with_plain_fallback(send_coro, "x **y**")
+    assert len(calls) == 2
+    assert calls[1][1] is None
+    assert any("telegram_html_outbound" in r.message for r in caplog.records)
+    assert any(r.levelno >= logging.WARNING and "BadRequest" in r.message for r in caplog.records)

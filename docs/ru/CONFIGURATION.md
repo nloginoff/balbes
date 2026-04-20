@@ -35,6 +35,8 @@ TELEGRAM_USER_ID=YOUR_TELEGRAM_USER_ID
 # Конвертация: **/__ жирный, ***жирный курсив***, */_ курсив,
 # ~~зачёркнутое~~, ||спойлер||, [текст](https://…), цитата строкой "> …" или "MD:/HTML: > …",
 # ``` блоки, вложенные <b>/<i>/…, <tg-spoiler>. Код: shared/telegram_app/format_outbound.py.
+# Диагностика: в логах сервиса с ботом ищите префикс ``telegram_html_outbound`` (каждый чанк:
+# длины raw/html/utf16, успех HTML или ``BadRequest`` + тело HTML до обрезки); зеркало — ``mirror: telegram``.
 
 # =============================================================================
 # Web UI Authentication

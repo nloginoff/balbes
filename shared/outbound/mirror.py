@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from telegram.error import BadRequest
 
 from shared.config import Settings
 from shared.identity_client import (
@@ -24,6 +25,7 @@ from shared.max_api import send_max_message_text
 from shared.telegram_app.format_outbound import (
     model_text_to_telegram_html,
     raw_chunks_for_telegram_html,
+    telegram_message_text_units,
 )
 
 if TYPE_CHECKING:
@@ -133,13 +135,55 @@ async def mirror_agent_text_to_secondaries(
         elif prov == "telegram" and tg_token:
             chat_id = int(ext)
             url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-            for chunk in raw_chunks_for_telegram_html(text):
+            chunks = raw_chunks_for_telegram_html(text)
+            n = len(chunks)
+            for i, chunk in enumerate(chunks, start=1):
                 body = model_text_to_telegram_html(chunk)
+                u = telegram_message_text_units(body)
+                logger.info(
+                    "mirror: telegram chunk %s/%s chat_id=%s send HTML (utf16=%s)",
+                    i,
+                    n,
+                    chat_id,
+                    u,
+                )
                 try:
                     if telegram_bot is not None:
                         try:
                             await telegram_bot.send_message(chat_id, body, parse_mode="HTML")
-                        except Exception:
+                            logger.info(
+                                "mirror: telegram chunk %s/%s chat_id=%s sent OK (HTML)",
+                                i,
+                                n,
+                                chat_id,
+                            )
+                        except BadRequest as e:
+                            logger.warning(
+                                "mirror: telegram chunk %s/%s chat_id=%s BadRequest %r message=%r "
+                                "— plain fallback. html_prefix=%r",
+                                i,
+                                n,
+                                chat_id,
+                                e,
+                                getattr(e, "message", str(e)),
+                                body[:420],
+                            )
+                            await telegram_bot.send_message(chat_id, chunk)
+                            logger.info(
+                                "mirror: telegram chunk %s/%s chat_id=%s sent OK (plain)",
+                                i,
+                                n,
+                                chat_id,
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "mirror: telegram chunk %s/%s chat_id=%s HTML send failed: %s",
+                                i,
+                                n,
+                                chat_id,
+                                e,
+                                exc_info=True,
+                            )
                             await telegram_bot.send_message(chat_id, chunk)
                     else:
                         r = await client.post(
@@ -152,13 +196,26 @@ async def mirror_agent_text_to_secondaries(
                             timeout=45.0,
                         )
                         if r.status_code >= 400:
+                            logger.warning(
+                                "mirror: telegram HTTP %s chat_id=%s body=%r",
+                                r.status_code,
+                                chat_id,
+                                (r.text or "")[:500],
+                            )
                             await client.post(
                                 url,
                                 json={"chat_id": chat_id, "text": chunk},
                                 timeout=45.0,
                             )
+                        else:
+                            logger.info(
+                                "mirror: telegram chunk %s/%s chat_id=%s sent OK (HTML, raw API)",
+                                i,
+                                n,
+                                chat_id,
+                            )
                 except Exception as e2:
-                    logger.warning("mirror: Telegram send failed: %s", e2)
+                    logger.warning("mirror: Telegram send failed: %s", e2, exc_info=True)
                     break
 
 
