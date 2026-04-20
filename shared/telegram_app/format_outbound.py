@@ -3,7 +3,7 @@ Convert model / orchestrator plain text to Telegram HTML (parse_mode=HTML).
 
 Pipeline (prose segments):
 1) Optional simple Telegram HTML pairs from the model (<b>, <i>, <pre>, <a>, …) → placeholders
-2) Markdown-like: `code`, bare ``https://…`` → link, [text](url), ||spoiler||, ~~strike~~, ***bold italic***, **bold**, __bold__, *italic*, _italic_; lone ``print(...)`` line → `` `code` ``
+2) Markdown-like: `code`, bare ``https://…`` → link, [text](url), ||spoiler|| (inner re-parsed for ** / _), ~~strike~~, ***bold italic***, **bold**, __bold__, *italic*, _italic_; lone ``print(...)`` line → `` `code` ``
 3) Block quote: line starts with ">…", or "MD:/HTML: >…", optional "[n] " prefix
 4) html.escape the remainder
 5) Recursively expand placeholders into Telegram HTML (nested tags and markdown combos)
@@ -440,7 +440,8 @@ def _prose_to_telegram_html(segment: str) -> str:
             return html.escape(f'<a href="{url}">{label}</a>', quote=False)
         if item[0] == "tg_spoiler":
             inner = item[1]
-            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            # Inner captured before markdown-lite; apply pipeline so ``**`` / ``_`` work inside spoiler.
+            inner_h = expand_ph(inner) if _has_ph(inner) else model_text_to_telegram_html(inner)
             return f"<tg-spoiler>{inner_h}</tg-spoiler>"
         if item[0] == "simple":
             tag, inner_raw = item[1], item[2]
@@ -471,7 +472,7 @@ def _prose_to_telegram_html(segment: str) -> str:
             return html.escape(f"[{label}]({url})", quote=False)
         if item[0] == "spoiler":
             inner = item[1]
-            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            inner_h = expand_ph(inner) if _has_ph(inner) else model_text_to_telegram_html(inner)
             return f"<tg-spoiler>{inner_h}</tg-spoiler>"
         if item[0] == "bi":
             inner = item[1]

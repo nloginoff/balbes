@@ -140,6 +140,14 @@ def test_bare_url_inside_parentheses() -> None:
     assert "example.com/)" not in s.split("href=")[1][:80]
 
 
+def test_spoiler_inner_markdown_bold_italic_combo() -> None:
+    """``||…||`` is captured before ``**``/``_``; inner must be re-parsed (like blockquotes)."""
+    s = model_text_to_telegram_html("||**_Жирный курсив в спойлере_**||")
+    assert "<tg-spoiler>" in s and "</tg-spoiler>" in s
+    assert "<b>" in s and "<i>" in s
+    assert "**" not in s and "_" not in s
+
+
 def test_spoiler_bare_url_does_not_swallow_closing_pipe_delimiters() -> None:
     """``||… https://…||`` — URL must not include Telegram spoiler closing ``||``."""
     s = model_text_to_telegram_html("||Секретная ссылка https://ya.ru/||")
