@@ -97,3 +97,23 @@ def test_blockquote_gt_line() -> None:
 def test_heading_stripped_to_bold() -> None:
     s = model_text_to_telegram_html("### Title")
     assert s == "<b>Title</b>"
+
+
+def test_nested_html_b_i() -> None:
+    s = model_text_to_telegram_html("<b><i>x</i></b>")
+    assert s == "<b><i>x</i></b>"
+
+
+def test_strike_tilde() -> None:
+    s = model_text_to_telegram_html("~~z~~")
+    assert s == "<s>z</s>"
+
+
+def test_bold_italic_combo_star_underscore() -> None:
+    s = model_text_to_telegram_html("*__a__*")
+    assert "<b>" in s and "<i>" in s
+
+
+def test_anchor_single_quoted_href() -> None:
+    s = model_text_to_telegram_html("<a href='https://t.me/x'>y</a>")
+    assert 'href="https://t.me/x"' in s and "y" in s

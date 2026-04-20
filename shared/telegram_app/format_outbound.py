@@ -3,10 +3,10 @@ Convert model / orchestrator plain text to Telegram HTML (parse_mode=HTML).
 
 Pipeline (prose segments):
 1) Optional simple Telegram HTML pairs from the model (<b>, <i>, <pre>, <a>, …) → placeholders
-2) Markdown-like: `code`, [text](url), ||spoiler||, **bold**, __bold__, *italic*, _italic_
+2) Markdown-like: `code`, [text](url), ||spoiler||, ~~strike~~, **bold**, __bold__, *italic*, _italic_
 3) Block quote lines starting with "> "
 4) html.escape the remainder
-5) Substitute placeholders with escaped inner text inside allowed tags
+5) Recursively expand placeholders into Telegram HTML (nested tags and markdown combos)
 
 Fenced ``` blocks become <pre> at the outer level (unchanged).
 
@@ -22,6 +22,9 @@ import html
 import logging
 import re
 from typing import Any
+
+from telegram.constants import ParseMode
+from telegram.error import BadRequest
 
 from shared.telegram_app.text import split_message
 
@@ -54,6 +57,13 @@ def _leftmost_html_extract(segment: str, stores: list[tuple[Any, ...]]) -> str:
             "a",
             re.compile(
                 r'<a\s+href="([^"]+)"\s*>([^<]*)</a>',
+                re.IGNORECASE,
+            ),
+        ),
+        (
+            "a_sq",
+            re.compile(
+                r"<a\s+href='([^']+)'\s*>([^<]*)</a>",
                 re.IGNORECASE,
             ),
         ),
@@ -93,7 +103,7 @@ def _leftmost_html_extract(segment: str, stores: list[tuple[Any, ...]]) -> str:
     idx = len(stores)
     if kind == "pre":
         stores.append(("pre", m.group(1)))
-    elif kind == "a":
+    elif kind in ("a", "a_sq"):
         stores.append(("a", m.group(1), m.group(2)))
     elif kind in ("tg_spoiler", "spoiler_alt"):
         stores.append(("tg_spoiler", m.group(1)))
@@ -184,6 +194,12 @@ def _prose_to_telegram_html(segment: str) -> str:
 
     t = re.sub(r"\|\|([^|]+)\|\|", _spoil_repl, t)
 
+    # Strikethrough ~~text~~ (Discord/GitHub style)
+    def _strike_repl(m: re.Match[str]) -> str:
+        return push(("strike", m.group(1)))
+
+    t = re.sub(r"~~([^~]+?)~~", _strike_repl, t)
+
     # Bold ** and __
     def _bold_star(m: re.Match[str]) -> str:
         return push(("bold", m.group(1)))
@@ -209,64 +225,92 @@ def _prose_to_telegram_html(segment: str) -> str:
 
     t = html.escape(t, quote=False)
 
-    # Substitute in order
-    for i, item in enumerate(stores):
-        key = _ph(i)
+    def _has_ph(inner: str) -> bool:
+        return any(_ph(j) in inner for j in range(len(stores)))
+
+    def render_store(i: int) -> str:
+        """Build HTML for stores[i]; resolve nested placeholders recursively."""
+        item = stores[i]
         if item[0] == "blockquote":
-            inner = html.escape(item[1], quote=False)
-            repl = f"<blockquote>{inner}</blockquote>"
-        elif item[0] == "pre":
-            repl = f"<pre>{html.escape(item[1], quote=False)}</pre>"
-        elif item[0] == "a":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<blockquote>{inner_h}</blockquote>"
+        if item[0] == "pre":
+            return f"<pre>{html.escape(item[1], quote=False)}</pre>"
+        if item[0] == "a":
             url, label = item[1], item[2]
+            label_h = expand_ph(label) if _has_ph(label) else html.escape(label, quote=False)
             href = _safe_href(url)
             if href:
-                repl = (
-                    f'<a href="{html.escape(href, quote=True)}">'
-                    f"{html.escape(label, quote=False)}</a>"
-                )
-            else:
-                repl = html.escape(f'<a href="{url}">{label}</a>', quote=False)
-        elif item[0] == "tg_spoiler":
-            repl = f"<tg-spoiler>{html.escape(item[1], quote=False)}</tg-spoiler>"
-        elif item[0] == "simple":
-            tag, inner = item[1], item[2]
-            esc = html.escape(inner, quote=False)
+                return f'<a href="{html.escape(href, quote=True)}">{label_h}</a>'
+            return html.escape(f'<a href="{url}">{label}</a>', quote=False)
+        if item[0] == "tg_spoiler":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<tg-spoiler>{inner_h}</tg-spoiler>"
+        if item[0] == "simple":
+            tag, inner_raw = item[1], item[2]
+            inner_h = (
+                expand_ph(inner_raw) if _has_ph(inner_raw) else html.escape(inner_raw, quote=False)
+            )
             if tag in ("b", "strong"):
-                repl = f"<b>{esc}</b>"
-            elif tag in ("i", "em"):
-                repl = f"<i>{esc}</i>"
-            elif tag == "u":
-                repl = f"<u>{esc}</u>"
-            elif tag == "s":
-                repl = f"<s>{esc}</s>"
-            elif tag == "code":
-                repl = f"<code>{esc}</code>"
-            else:
-                repl = esc
-        elif item[0] == "code":
-            repl = f"<code>{html.escape(item[1], quote=False)}</code>"
-        elif item[0] == "mdlink":
+                return f"<b>{inner_h}</b>"
+            if tag in ("i", "em"):
+                return f"<i>{inner_h}</i>"
+            if tag == "u":
+                return f"<u>{inner_h}</u>"
+            if tag == "s":
+                return f"<s>{inner_h}</s>"
+            if tag == "code":
+                return f"<code>{inner_h}</code>"
+            return inner_h
+        if item[0] == "code":
+            return f"<code>{html.escape(item[1], quote=False)}</code>"
+        if item[0] == "mdlink":
             label, url = item[1], item[2]
             href = _safe_href(url)
             if href:
-                repl = (
+                return (
                     f'<a href="{html.escape(href, quote=True)}">'
                     f"{html.escape(label, quote=False)}</a>"
                 )
-            else:
-                repl = html.escape(f"[{label}]({url})", quote=False)
-        elif item[0] == "spoiler":
-            repl = f"<tg-spoiler>{html.escape(item[1], quote=False)}</tg-spoiler>"
-        elif item[0] == "bold":
-            repl = f"<b>{html.escape(item[1], quote=False)}</b>"
-        elif item[0] == "italic":
-            repl = f"<i>{html.escape(item[1], quote=False)}</i>"
-        else:
-            repl = ""
+            return html.escape(f"[{label}]({url})", quote=False)
+        if item[0] == "spoiler":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<tg-spoiler>{inner_h}</tg-spoiler>"
+        if item[0] == "bold":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<b>{inner_h}</b>"
+        if item[0] == "italic":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<i>{inner_h}</i>"
+        if item[0] == "strike":
+            inner = item[1]
+            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            return f"<s>{inner_h}</s>"
+        return ""
 
-        t = t.replace(key, repl)
+    def expand_ph(fragment: str) -> str:
+        """Replace leftmost placeholder repeatedly until none remain."""
+        out = fragment
+        for _ in range(len(stores) * 3 + 32):
+            best_j = -1
+            best_pos = len(out) + 1
+            for j in range(len(stores)):
+                k = _ph(j)
+                p = out.find(k)
+                if p >= 0 and p < best_pos:
+                    best_pos = p
+                    best_j = j
+            if best_j < 0:
+                break
+            out = out.replace(_ph(best_j), render_store(best_j), 1)
+        return out
 
+    t = expand_ph(t)
     return t
 
 
@@ -374,14 +418,14 @@ async def send_reply_html_with_plain_fallback(
     coarse_limit: int = TELEGRAM_HTML_MSG_LIMIT,
 ) -> None:
     """
-    For each chunk: send as HTML; on any failure, send the same chunk as plain text.
+    For each chunk: send as HTML; on BadRequest (entity parse), retry chunk as plain text.
 
     send_coro: async (text: str, *, parse_mode: str | None) -> Any
     """
     for chunk in raw_chunks_for_telegram_html(raw_text, coarse_limit=coarse_limit):
         body = model_text_to_telegram_html(chunk)
         try:
-            await send_coro(body, parse_mode="HTML")
-        except Exception as e:
-            logger.debug("Telegram HTML send failed, using plain chunk: %s", e)
+            await send_coro(body, parse_mode=ParseMode.HTML)
+        except BadRequest as e:
+            logger.warning("Telegram rejected HTML entities, sending plain chunk: %s", e)
             await send_coro(chunk, parse_mode=None)
