@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Документация notify / MAX** — в [`docs/ru/WEBHOOK_NOTIFY.md`](docs/ru/WEBHOOK_NOTIFY.md) уточнены `NOTIFY_DELIVERY_CHANNELS`, `NOTIFY_MAX_CHAT_ID`, `MAX_ALLOWED_USER_IDS`; в [`.env.prod.example`](.env.prod.example) добавлены комментарии к `MAX_ALLOWED_USER_IDS` и `NOTIFY_MAX_CHAT_ID`.
+
 ### Added
 - **Скрипт `scripts/diagnose_telegram_stack.sh`** — проверка health Memory/Orchestrator/Webhooks Gateway, вывод `getWebhookInfo` (URL webhook, `last_error_message`), хвост `logs/<env>/webhooks-gateway.log` и `journalctl` для `balbes-webhooks-gateway`. См. таблицу скриптов в [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md).
 - **Одноразовый код при привязке аккаунтов Telegram ↔ MAX** — `POST /api/v1/identity/pairing/create`, `POST /api/v1/identity/pairing/redeem`; Redis `identity:pair:{CODE}`; при redeem стирается история **вторичного** канала (namespace старого id), затем привязка к `canonical_user_id` инициатора. Команды: Telegram `/link max` + ввод кода в MAX `/link КОД`; MAX `/link telegram` + ввод кода в Telegram `/link КОД`. Документация: [`docs/ru/IDENTITY_AND_OPENROUTER_USER.md`](docs/ru/IDENTITY_AND_OPENROUTER_USER.md).

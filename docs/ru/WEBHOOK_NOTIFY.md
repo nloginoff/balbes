@@ -22,7 +22,14 @@
 
 ## Доставка
 
-Логика в [`shared/notify/delivery.py`](../../shared/notify/delivery.py): после валидации JSON сообщение уходит в каналы **`NOTIFY_DELIVERY_CHANNELS`** (`telegram`, `max`).
+Логика в [`shared/notify/delivery.py`](../../shared/notify/delivery.py): после валидации JSON сообщение уходит в каналы **`NOTIFY_DELIVERY_CHANNELS`** (через запятую, например `telegram,max`).
+
+Обязательные переменные по каналам:
+
+- **Telegram:** `TELEGRAM_BOT_TOKEN`; цель — `NOTIFY_TELEGRAM_CHAT_ID` или `TELEGRAM_USER_ID`.
+- **MAX:** `MAX_BOT_TOKEN` и **`NOTIFY_MAX_CHAT_ID`** (строка с числовым id чата; для диалога с ботом можно взять тот же номер, что и `user_id` в MAX — см. ключ Redis `identity:link:max:<id>` или поле отправителя во входящем webhook).
+
+Ограничение **кто может писать боту в MAX** задаётся отдельно: **`MAX_ALLOWED_USER_IDS`** (список через запятую). Пусто — принимаются все пользователи MAX.
 
 ## Ограничения
 
