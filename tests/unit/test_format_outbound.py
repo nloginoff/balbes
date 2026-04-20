@@ -1,6 +1,10 @@
 """Unit tests for Telegram HTML formatting of model output."""
 
-from shared.telegram_app.format_outbound import model_text_to_telegram_html
+from shared.telegram_app.format_outbound import (
+    TELEGRAM_HTML_MSG_LIMIT,
+    model_text_to_telegram_html,
+    raw_chunks_for_telegram_html,
+)
 
 
 def test_escape_lt_gt_amp() -> None:
@@ -48,3 +52,12 @@ def test_bold_after_escape() -> None:
     s = model_text_to_telegram_html("**x < y**")
     assert "<b>" in s
     assert "&lt;" in s
+
+
+def test_raw_chunks_split_when_html_longer_than_telegram_limit() -> None:
+    """`&` becomes `&amp;` (5 chars); a 4096-char raw chunk can exceed API limit after escape."""
+    raw = "&" * 4096
+    chunks = raw_chunks_for_telegram_html(raw)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert len(model_text_to_telegram_html(c)) <= TELEGRAM_HTML_MSG_LIMIT
