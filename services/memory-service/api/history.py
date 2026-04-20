@@ -111,19 +111,56 @@ async def list_chats(user_id: str) -> dict[str, Any]:
     return {"chats": chats, "total": len(chats)}
 
 
+_SCOPED_CHANNELS = frozenset({"telegram", "max"})
+
+
+def _normalize_channel(channel: str | None) -> str | None:
+    if channel is None or not str(channel).strip():
+        return None
+    c = str(channel).strip().lower()
+    if c not in _SCOPED_CHANNELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="channel must be one of: telegram, max",
+        )
+    return c
+
+
 @router.get("/chats/{user_id}/active")
-async def get_active_chat(user_id: str) -> dict[str, Any]:
-    """Return active chat_id for a user, creating a default one if needed."""
+async def get_active_chat(
+    user_id: str,
+    channel: str | None = Query(
+        default=None,
+        description="Optional: telegram | max for per-messenger active chat (identity-linked users).",
+    ),
+    create_if_missing: bool = Query(
+        default=True,
+        description="If false, do not create a chat when none is active (returns chat_id null).",
+    ),
+) -> dict[str, Any]:
+    """Return active chat_id; optional scoped channel and create behavior."""
     redis_client = _get_redis()
-    chat_id = await redis_client.get_or_create_default_chat(user_id=user_id)
-    return {"chat_id": chat_id}
+    ch = _normalize_channel(channel)
+    if create_if_missing:
+        chat_id = await redis_client.get_or_create_default_chat(user_id=user_id, channel=ch)
+        return {"chat_id": chat_id}
+    raw = await redis_client.get_active_chat(user_id=user_id, channel=ch)
+    return {"chat_id": raw}
 
 
 @router.put("/chats/{user_id}/active")
-async def set_active_chat(user_id: str, chat_id: str) -> dict[str, str]:
-    """Switch active chat for a user."""
+async def set_active_chat(
+    user_id: str,
+    chat_id: str,
+    channel: str | None = Query(
+        default=None,
+        description="Optional: telegram | max — set active only for that messenger.",
+    ),
+) -> dict[str, str]:
+    """Switch active chat for a user (legacy key if channel omitted)."""
     redis_client = _get_redis()
-    await redis_client.set_active_chat(user_id=user_id, chat_id=chat_id)
+    ch = _normalize_channel(channel)
+    await redis_client.set_active_chat(user_id=user_id, chat_id=chat_id, channel=ch)
     return {"status": "ok", "chat_id": chat_id}
 
 

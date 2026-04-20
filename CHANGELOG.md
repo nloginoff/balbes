@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Активный чат по каналам (Telegram / MAX)** — после связки аккаунтов отдельные указатели `active_chat:{canonical}:telegram` и `:max`; API `GET/PUT /chats/.../active?channel=`. Зеркалирование ответа во второй мессенджер только если там активен **тот же** `chat_id`. [`services/memory-service/clients/redis_client.py`](services/memory-service/clients/redis_client.py), [`services/memory-service/api/history.py`](services/memory-service/api/history.py), [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py), [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py), [`routes/max_chat.py`](services/webhooks_gateway/routes/max_chat.py).
+
 ### Added
 - **Allowlist целей зеркалирования** — `AGENT_REPLY_MIRROR_PROVIDERS` (по умолчанию `telegram,max`; пустая строка = не дублировать в связанные каналы). [`shared/config.py`](shared/config.py), [`shared/outbound/mirror.py`](shared/outbound/mirror.py).
 - **Зеркалирование ответов агента Telegram ↔ MAX** — после связки аккаунтов дублирование текста во второй канал при активном **presence** (входящие сообщения обновляют окно TTL); Redis `identity:peers:{uuid}`, `channel_presence:{uuid}`; Memory API `GET /api/v1/identity/peers`, `POST /api/v1/identity/presence/touch`, `GET /api/v1/identity/presence/active`; конфиг `AGENT_REPLY_MIRROR_ENABLED`, `AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS`. Интеграция: [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`shared/identity_client.py`](shared/identity_client.py), [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py).

@@ -91,3 +91,9 @@ curl -sS -X POST "http://localhost:8101/api/v1/identity/link" \
 - **Presence** обновляется при **входящем** сообщении пользователя в канале (не при исходящих ответах бота).
 - Redis: множество `identity:peers:{uuid}`, хэш `channel_presence:{uuid}` с TTL; API Memory: `GET /api/v1/identity/peers`, `POST /api/v1/identity/presence/touch`, `GET /api/v1/identity/presence/active`.
 - Переменные окружения: `AGENT_REPLY_MIRROR_ENABLED` (по умолчанию включено), `AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS` (окно в секундах, по умолчанию 3600), **`AGENT_REPLY_MIRROR_PROVIDERS`** — список через запятую **разрешённых** целей зеркалирования по имени identity-провайдера (по умолчанию `telegram,max`). Провайдеры вне списка не получают копию (удобно, когда позже появятся другие каналы — веб, мессенджеры и т.д.). Пустая строка = не дублировать ни в один связанный канал. См. [`shared/config.py`](../../shared/config.py), реализация — [`shared/outbound/mirror.py`](../../shared/outbound/mirror.py).
+
+### Раздельный «текущий чат» по мессенджерам
+
+Один `canonical_user_id` ведёт **общий** список чатов (`chats:{uuid}`), но **активный** чат хранится **отдельно** для Telegram и для MAX: Redis `active_chat:{uuid}:telegram` и `active_chat:{uuid}:max` (старый ключ `active_chat:{uuid}` остаётся fallback для совместимости). API: `GET/PUT /api/v1/chats/{user_id}/active?channel=telegram|max`. Переключение чата в Telegram не меняет выбранный чат в MAX и наоборот.
+
+**Зеркалирование ответа** во второй канал выполняется только если совпадает **memory `chat_id`** сессии: у целевого канала в настройках активен тот же чат, что и ответ агента (запрос `GET .../active?channel=...&create_if_missing=false` для проверки). Если в MAX открыт другой чат, дубликат туда не уходит.

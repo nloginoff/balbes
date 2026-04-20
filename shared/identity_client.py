@@ -187,3 +187,41 @@ async def channel_presence_active(
     finally:
         if own_client:
             await c.aclose()
+
+
+async def get_active_chat_scoped(
+    memory_service_url: str,
+    canonical_user_id: str,
+    channel: str,
+    *,
+    create_if_missing: bool = False,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 8.0,
+) -> str | None:
+    """
+    Return active Memory chat_id for a messenger channel (telegram | max).
+
+    With create_if_missing=False, returns None if the user has no active chat for that channel
+    (after legacy hydrate); used for mirror gating.
+    """
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(
+            f"{base}/api/v1/chats/{canonical_user_id}/active",
+            params={
+                "channel": channel.strip().lower(),
+                "create_if_missing": str(create_if_missing).lower(),
+            },
+        )
+        if resp.status_code != 200:
+            return None
+        raw = resp.json().get("chat_id")
+        return str(raw) if raw else None
+    except Exception as e:
+        logger.debug("get_active_chat_scoped failed: %s", e)
+        return None
+    finally:
+        if own_client:
+            await c.aclose()

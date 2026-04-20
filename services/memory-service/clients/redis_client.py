@@ -31,6 +31,9 @@ CHAT_TTL_SECONDS = 7 * 24 * 3600  # 7 days
 PAIRING_CODE_TTL_SECONDS = 600  # 10 minutes
 PAIRING_CODE_LENGTH = 8
 
+# Per-messenger active chat (after identity link). Legacy key active_chat:{uid} is still read as fallback.
+ACTIVE_CHAT_CHANNELS: tuple[str, ...] = ("telegram", "max")
+
 
 class RedisClient:
     """
@@ -140,7 +143,8 @@ class RedisClient:
     # Multi-Chat Methods
     # Keys:
     #   chats:{user_id}                  Hash  { chat_id → name }
-    #   active_chat:{user_id}            String  chat_id
+    #   active_chat:{user_id}            String  chat_id  (legacy; fallback for scoped keys)
+    #   active_chat:{user_id}:{channel}  String  chat_id  (channel = telegram | max | ...)
     #   chat_meta:{user_id}:{chat_id}    Hash  { name, model_id, agent_id, created_at, last_used_at }  TTL=7d
     #   history:{user_id}:{chat_id}      Sorted Set  score=unix_ts, value=json  TTL=7d
     # =========================================================================
@@ -148,8 +152,13 @@ class RedisClient:
     def _chats_key(self, user_id: str) -> str:
         return f"chats:{user_id}"
 
-    def _active_chat_key(self, user_id: str) -> str:
+    def _legacy_active_chat_key(self, user_id: str) -> str:
+        """Single active pointer before per-channel keys (still supported for old clients)."""
         return f"active_chat:{user_id}"
+
+    def _scoped_active_chat_key(self, user_id: str, channel: str) -> str:
+        """Per-messenger active chat, e.g. active_chat:{uuid}:telegram."""
+        return f"active_chat:{user_id}:{channel.strip().lower()}"
 
     def _chat_meta_key(self, user_id: str, chat_id: str) -> str:
         return f"chat_meta:{user_id}:{chat_id}"
@@ -231,32 +240,55 @@ class RedisClient:
         live_chats.sort(key=lambda c: c.get("last_used_at", ""), reverse=True)
         return live_chats
 
-    async def get_active_chat(self, user_id: str) -> str | None:
-        """Return active chat_id for user, or None if not set."""
+    async def _hydrate_scoped_active_from_legacy(self, user_id: str, channel: str) -> str | None:
+        """Return scoped active chat_id, copying from legacy key once if scoped is empty."""
         if not self.client:
             raise MemoryRetrievalError("Redis client not connected")
-        return await self.client.get(self._active_chat_key(user_id))
+        ch = channel.strip().lower()
+        sk = self._scoped_active_chat_key(user_id, ch)
+        cur = await self.client.get(sk)
+        if cur:
+            return cur
+        leg = await self.client.get(self._legacy_active_chat_key(user_id))
+        if leg:
+            await self.client.set(sk, leg)
+            return leg
+        return None
 
-    async def set_active_chat(self, user_id: str, chat_id: str) -> None:
-        """Set active chat for user and update last_used_at."""
+    async def get_active_chat(self, user_id: str, channel: str | None = None) -> str | None:
+        """
+        Return active chat_id. If channel is None, legacy key only (no scoped fallback).
+        If channel is set (e.g. telegram, max), read scoped key or copy from legacy once.
+        """
+        if not self.client:
+            raise MemoryRetrievalError("Redis client not connected")
+        if channel is None:
+            return await self.client.get(self._legacy_active_chat_key(user_id))
+        return await self._hydrate_scoped_active_from_legacy(user_id, channel)
+
+    async def set_active_chat(self, user_id: str, chat_id: str, channel: str | None = None) -> None:
+        """Set active chat. channel=None updates legacy key only; else scoped key."""
         if not self.client:
             raise MemoryStorageError("Redis client not connected")
-        await self.client.set(self._active_chat_key(user_id), chat_id)
+        if channel is None:
+            await self.client.set(self._legacy_active_chat_key(user_id), chat_id)
+        else:
+            await self.client.set(self._scoped_active_chat_key(user_id, channel), chat_id)
         await self._touch_chat(user_id, chat_id)
 
-    async def get_or_create_default_chat(self, user_id: str) -> str:
+    async def get_or_create_default_chat(self, user_id: str, channel: str | None = None) -> str:
         """
         Return active chat_id. If user has no active chat, create a default one
-        and set it as active.
+        and set it as active. If channel is set, scoped active is used (with legacy hydrate).
         """
-        chat_id = await self.get_active_chat(user_id)
+        chat_id = await self.get_active_chat(user_id, channel)
         if chat_id:
             meta = await self.client.hgetall(self._chat_meta_key(user_id, chat_id))
             if meta:
                 return chat_id
 
         chat_id = await self.create_chat(user_id, "Новый чат")
-        await self.client.set(self._active_chat_key(user_id), chat_id)
+        await self.set_active_chat(user_id, chat_id, channel)
         return chat_id
 
     async def rename_chat(self, user_id: str, chat_id: str, name: str) -> None:
@@ -280,9 +312,13 @@ class RedisClient:
         pipe.delete(self._history_key(user_id, chat_id))
         await pipe.execute()
 
-        active = await self.client.get(self._active_chat_key(user_id))
-        if active == chat_id:
-            await self.client.delete(self._active_chat_key(user_id))
+        lk = self._legacy_active_chat_key(user_id)
+        if await self.client.get(lk) == chat_id:
+            await self.client.delete(lk)
+        for ch in ACTIVE_CHAT_CHANNELS:
+            sk = self._scoped_active_chat_key(user_id, ch)
+            if await self.client.get(sk) == chat_id:
+                await self.client.delete(sk)
 
         logger.info(f"Deleted chat {chat_id} for user {user_id}")
 
@@ -570,7 +606,7 @@ class RedisClient:
             return
 
         has_legacy = await self.client.exists(self._chats_key(legacy)) or await self.client.exists(
-            self._active_chat_key(legacy)
+            self._legacy_active_chat_key(legacy)
         )
         if not has_legacy:
             # Still scan agent_session:{legacy}:*
@@ -590,11 +626,11 @@ class RedisClient:
 
         await self._rename_if_dest_missing(self._chats_key(legacy), self._chats_key(canonical))
         await self._rename_if_dest_missing(
-            self._active_chat_key(legacy), self._active_chat_key(canonical)
+            self._legacy_active_chat_key(legacy), self._legacy_active_chat_key(canonical)
         )
 
         chat_ids = list(await self.client.hkeys(self._chats_key(canonical)))
-        active_only = await self.client.get(self._active_chat_key(canonical))
+        active_only = await self.client.get(self._legacy_active_chat_key(canonical))
         if active_only and active_only not in chat_ids:
             chat_ids.append(active_only)
 
@@ -675,8 +711,11 @@ class RedisClient:
             chats_key = self._chats_key(user_id)
             if await self.client.exists(chats_key) and await self.client.hlen(chats_key) > 0:
                 return True
-            if await self.client.exists(self._active_chat_key(user_id)):
+            if await self.client.exists(self._legacy_active_chat_key(user_id)):
                 return True
+            for ch in ACTIVE_CHAT_CHANNELS:
+                if await self.client.exists(self._scoped_active_chat_key(user_id, ch)):
+                    return True
             cur = 0
             while True:
                 cur, keys = await self.client.scan(
@@ -707,7 +746,9 @@ class RedisClient:
             pipe.delete(self._chat_meta_key(uid, cid))
             pipe.delete(self._history_key(uid, cid))
         pipe.delete(self._chats_key(uid))
-        pipe.delete(self._active_chat_key(uid))
+        pipe.delete(self._legacy_active_chat_key(uid))
+        for ch in ACTIVE_CHAT_CHANNELS:
+            pipe.delete(self._scoped_active_chat_key(uid, ch))
         await pipe.execute()
 
         cur = 0

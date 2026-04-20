@@ -15,7 +15,11 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from shared.config import Settings
-from shared.identity_client import channel_presence_active, list_identity_peers
+from shared.identity_client import (
+    channel_presence_active,
+    get_active_chat_scoped,
+    list_identity_peers,
+)
 from shared.max_api import send_max_message_text
 from shared.telegram_app.text import split_long_text
 
@@ -50,14 +54,18 @@ async def mirror_agent_text_to_secondaries(
     memory_url: str,
     canonical_user_id: str,
     source_channel: str,
+    memory_chat_id: str,
     text: str,
     telegram_bot: Any | None,
 ) -> None:
     """
-    Send `text` to linked messengers other than source_channel, if mirror enabled
-    and target channel presence is active within TTL.
+    Send `text` to linked messengers other than source_channel, if mirror enabled,
+    target channel presence is active within TTL, and the target's **scoped** active
+    Memory chat matches `memory_chat_id` (same conversation on both sides).
     """
     if not settings.agent_reply_mirror_enabled:
+        return
+    if not (memory_chat_id and str(memory_chat_id).strip()):
         return
     allowed = mirror_target_providers(settings)
     if not allowed:
@@ -93,6 +101,19 @@ async def mirror_agent_text_to_secondaries(
             logger.debug("mirror: presence check %s: %s", prov, e)
             continue
         if not active:
+            continue
+        try:
+            target_active = await get_active_chat_scoped(
+                memory_url,
+                canonical_user_id,
+                prov,
+                create_if_missing=False,
+                client=client,
+            )
+        except Exception as e:
+            logger.debug("mirror: target active chat %s: %s", prov, e)
+            continue
+        if target_active != memory_chat_id:
             continue
         if prov == "max" and token:
             try:
@@ -144,6 +165,7 @@ async def deliver_agent_text_with_mirror(
     memory_url: str,
     canonical_user_id: str,
     source_channel: str,
+    memory_chat_id: str,
     text: str,
     send_primary: Callable[[], Awaitable[None]],
     telegram_bot: Any | None,
@@ -160,6 +182,7 @@ async def deliver_agent_text_with_mirror(
         memory_url=memory_url,
         canonical_user_id=canonical_user_id,
         source_channel=source_channel,
+        memory_chat_id=memory_chat_id,
         text=text,
         telegram_bot=telegram_bot,
     )

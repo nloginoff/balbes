@@ -13,7 +13,11 @@ from routes.max_chat import (
 )
 
 from shared.config import get_settings
-from shared.identity_client import resolve_canonical_user_id, touch_channel_presence
+from shared.identity_client import (
+    get_active_chat_scoped,
+    resolve_canonical_user_id,
+    touch_channel_presence,
+)
 from shared.max_api import (
     max_answer_callback,
     max_send_chat_action,
@@ -191,6 +195,7 @@ async def _max_run_orchestrator_and_reply(
     }
 
     reply_text = ""
+    mem_chat_id: str | None = None
     httpx_timeout = httpx.Timeout(
         connect=30.0,
         read=timeout,
@@ -203,6 +208,18 @@ async def _max_run_orchestrator_and_reply(
                 await touch_channel_presence(mem, user_key, "max", client=client)
             except Exception:
                 pass
+            try:
+                mem_chat_id = await get_active_chat_scoped(
+                    mem,
+                    user_key,
+                    "max",
+                    create_if_missing=True,
+                    client=client,
+                )
+                if mem_chat_id:
+                    params["chat_id"] = mem_chat_id
+            except Exception:
+                mem_chat_id = None
             resp = await client.post(url, params=params)
             if resp.status_code != 200:
                 reply_text = f"Ошибка оркестратора: HTTP {resp.status_code}"
@@ -236,6 +253,7 @@ async def _max_run_orchestrator_and_reply(
                     memory_url=mem,
                     canonical_user_id=user_key,
                     source_channel="max",
+                    memory_chat_id=mem_chat_id or "",
                     text=reply_text,
                     send_primary=_primary_max,
                     telegram_bot=None,

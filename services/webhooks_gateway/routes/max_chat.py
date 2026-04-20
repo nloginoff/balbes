@@ -55,7 +55,10 @@ def should_handle_slash_command(cmd: str) -> bool:
 
 async def _get_active_chat(client: httpx.AsyncClient, memory_url: str, user_key: str) -> str | None:
     try:
-        r = await client.get(f"{memory_url}/api/v1/chats/{user_key}/active")
+        r = await client.get(
+            f"{memory_url}/api/v1/chats/{user_key}/active",
+            params={"channel": "max"},
+        )
         if r.status_code == 200:
             return r.json().get("chat_id")
     except Exception as e:
@@ -69,7 +72,7 @@ async def _set_active_chat(
     try:
         r = await client.put(
             f"{memory_url}/api/v1/chats/{user_key}/active",
-            params={"chat_id": chat_id},
+            params={"chat_id": chat_id, "channel": "max"},
         )
         return r.status_code == 200
     except Exception as e:

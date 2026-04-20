@@ -316,6 +316,7 @@ class BalbesTelegramBot:
         self._bg_monitors: dict[str, asyncio.Task] = {}
         # Maps monitor key → Telegram chat_id (int) so the monitor knows where to write
         self._bg_monitor_chat: dict[str, int] = {}
+        self._bg_monitor_memory_chat: dict[str, str] = {}
 
         # APScheduler instance (started lazily in start_scheduler)
         self._scheduler: AsyncIOScheduler | None = None
@@ -906,9 +907,15 @@ class BalbesTelegramBot:
     # Helpers: Memory Service API
     # -------------------------------------------------------------------------
 
-    async def _get_active_chat(self, user_id: str) -> str | None:
+    async def _get_active_chat(self, user_id: str, *, create_if_missing: bool = True) -> str | None:
         try:
-            r = await self._get_http().get(f"{self.memory_url}/api/v1/chats/{user_id}/active")
+            r = await self._get_http().get(
+                f"{self.memory_url}/api/v1/chats/{user_id}/active",
+                params={
+                    "channel": "telegram",
+                    "create_if_missing": str(create_if_missing).lower(),
+                },
+            )
             if r.status_code == 200:
                 return r.json().get("chat_id")
         except Exception as e:
@@ -919,7 +926,7 @@ class BalbesTelegramBot:
         try:
             await self._get_http().put(
                 f"{self.memory_url}/api/v1/chats/{user_id}/active",
-                params={"chat_id": chat_id},
+                params={"chat_id": chat_id, "channel": "telegram"},
             )
         except Exception as e:
             logger.debug(f"set_active_chat error: {e}")
@@ -1797,7 +1804,11 @@ class BalbesTelegramBot:
                     mon = self._bg_monitors.get(key)
                     if not mon or mon.done():
                         self._start_bg_monitor(
-                            update.effective_chat.id, mem_uid, agent_id, debug_on
+                            update.effective_chat.id,
+                            mem_uid,
+                            agent_id,
+                            debug_on,
+                            memory_chat_id=chat_id,
                         )
 
         text = "\n".join(lines)
@@ -1809,7 +1820,9 @@ class BalbesTelegramBot:
         and start one for each. Called after every orchestrator response as a
         safety net in case background_tasks_started wasn't populated.
         """
+        mem_chat: str | None = None
         try:
+            mem_chat = await self._get_active_chat(user_id)
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(
                     f"{self.orchestrator_url}/api/v1/tasks",
@@ -1831,7 +1844,13 @@ class BalbesTelegramBot:
                 mon = self._bg_monitors.get(key)
                 if not mon or mon.done():
                     logger.info(f"[ensure_bg_monitors] starting missed monitor for {key}")
-                    self._start_bg_monitor(tg_chat_id, user_id, agent_id, debug)
+                    self._start_bg_monitor(
+                        tg_chat_id,
+                        user_id,
+                        agent_id,
+                        debug,
+                        memory_chat_id=mem_chat,
+                    )
 
     def _start_fg_monitor(
         self,
@@ -1941,6 +1960,7 @@ class BalbesTelegramBot:
         user_id: str,
         agent_id: str,
         debug: bool,
+        memory_chat_id: str | None = None,
     ) -> None:
         """Spawn an asyncio task that polls the background agent and reports to Telegram."""
         key = f"{user_id}:{agent_id}"
@@ -1948,6 +1968,10 @@ class BalbesTelegramBot:
         if existing and not existing.done():
             return  # already monitoring this agent for this user
         self._bg_monitor_chat[key] = tg_chat_id
+        if memory_chat_id:
+            self._bg_monitor_memory_chat[key] = memory_chat_id
+        else:
+            self._bg_monitor_memory_chat.pop(key, None)
         task = asyncio.create_task(
             self._bg_monitor_loop(tg_chat_id, user_id, agent_id, debug),
             name=f"bgmon-{key}",
@@ -2086,6 +2110,9 @@ class BalbesTelegramBot:
                                 except Exception:
                                     pass
                         try:
+                            mem_mid = self._bg_monitor_memory_chat.get(key)
+                            if not mem_mid:
+                                mem_mid = await self._get_active_chat(user_id)
                             async with httpx.AsyncClient(timeout=30.0) as cl:
                                 await mirror_agent_text_to_secondaries(
                                     settings=settings,
@@ -2093,6 +2120,7 @@ class BalbesTelegramBot:
                                     memory_url=self.memory_url,
                                     canonical_user_id=user_id,
                                     source_channel="telegram",
+                                    memory_chat_id=mem_mid or "",
                                     text=result_text,
                                     telegram_bot=self.app.bot if self.app else None,
                                 )
@@ -2105,6 +2133,7 @@ class BalbesTelegramBot:
         finally:
             self._bg_monitors.pop(key, None)
             self._bg_monitor_chat.pop(key, None)
+            self._bg_monitor_memory_chat.pop(key, None)
 
     async def _cancel_orchestrator_task(self, user_id: str) -> None:
         """Send a cancel signal to the orchestrator for this user."""
@@ -2591,10 +2620,11 @@ class BalbesTelegramBot:
                         debug_on = chat_settings.get("debug", False)
                         for bg in bg_started:
                             self._start_bg_monitor(
-                                tg_chat_id=chat_tg.id,
-                                user_id=mem_uid,
-                                agent_id=bg["agent_id"],
-                                debug=debug_on,
+                                chat_tg.id,
+                                mem_uid,
+                                bg["agent_id"],
+                                debug_on,
+                                memory_chat_id=chat_id,
                             )
 
                         # Catch-all: also start monitors for any running bg tasks
@@ -2634,6 +2664,7 @@ class BalbesTelegramBot:
                         memory_url=self.memory_url,
                         canonical_user_id=mem_uid,
                         source_channel="telegram",
+                        memory_chat_id=chat_id or "",
                         text=result_text,
                         send_primary=_send_primary_reply,
                         telegram_bot=self.app.bot if self.app else None,
