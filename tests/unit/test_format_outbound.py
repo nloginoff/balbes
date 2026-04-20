@@ -140,6 +140,30 @@ def test_bare_url_inside_parentheses() -> None:
     assert "example.com/)" not in s.split("href=")[1][:80]
 
 
+def test_spoiler_bare_url_does_not_swallow_closing_pipe_delimiters() -> None:
+    """``||… https://…||`` — URL must not include Telegram spoiler closing ``||``."""
+    s = model_text_to_telegram_html("||Секретная ссылка https://ya.ru/||")
+    assert "<tg-spoiler>" in s
+    assert 'href="https://ya.ru/"' in s
+    assert "</tg-spoiler>" in s
+    assert "||" not in s
+
+
+def test_blockquote_body_applies_markdown_bold() -> None:
+    raw = """> Первая строка
+> Вторая строка
+> **Жирный в конце**"""
+    s = model_text_to_telegram_html(raw)
+    assert "<blockquote>" in s and "</blockquote>" in s
+    assert "<b>Жирный в конце</b>" in s
+    assert "**" not in s
+
+
+def test_italic_with_inner_bold_stars() -> None:
+    s = model_text_to_telegram_html("*Это курсив, а это **жирный внутри***")
+    assert s == "<i>Это курсив, а это <b>жирный внутри</b></i>"
+
+
 def test_bare_print_line_becomes_code() -> None:
     s = model_text_to_telegram_html('x:\nprint("hi")')
     assert "<code>" in s and "print" in s

@@ -186,6 +186,9 @@ def _safe_href_trim(url: str) -> str | None:
             # Sentence punctuation glued to URL by ``[^\s<]+`` (e.g. ``… x.com.``)
             while len(u) > 8 and u[-1] in ".,;:!?" and _safe_href(u[:-1]):
                 u = u[:-1]
+            # Telegram ``||spoiler||`` — ``https?://…[^\s<]+`` can swallow the closing ``||``.
+            while len(u) > 8 and u.endswith("|") and _safe_href(u[:-1]):
+                u = u[:-1]
             return u
         if len(u) <= len("https://x"):
             return None
@@ -423,7 +426,8 @@ def _prose_to_telegram_html(segment: str) -> str:
         item = stores[i]
         if item[0] == "blockquote":
             inner = item[1]
-            inner_h = expand_ph(inner) if _has_ph(inner) else html.escape(inner, quote=False)
+            # Inner was stored before markdown-lite; else-branch runs full pipeline (incl. ``` fences).
+            inner_h = expand_ph(inner) if _has_ph(inner) else model_text_to_telegram_html(inner)
             return f"<blockquote>{inner_h}</blockquote>"
         if item[0] == "pre":
             return f"<pre>{html.escape(item[1], quote=False)}</pre>"
