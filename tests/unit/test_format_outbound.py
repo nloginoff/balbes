@@ -4,6 +4,7 @@ from shared.telegram_app.format_outbound import (
     TELEGRAM_HTML_MSG_LIMIT,
     model_text_to_telegram_html,
     raw_chunks_for_telegram_html,
+    split_raw_coarse_for_telegram,
 )
 
 
@@ -131,6 +132,17 @@ def test_blockquote_bracket_number_prefix() -> None:
 
 def test_triple_star_bold_italic() -> None:
     assert model_text_to_telegram_html("***ab***") == "<b><i>ab</i></b>"
+
+
+def test_split_coarse_does_not_bisect_triple_backtick_block() -> None:
+    """Hard cut inside ``` breaks <pre>; coarse split should move cut before the fence."""
+    pad = "p" * 1200
+    fence_body = "c" * 80 + "\n"
+    text = pad + "\n```\n" + fence_body + "```\n" + pad
+    chunks = split_raw_coarse_for_telegram(text, limit=900)
+    for ch in chunks:
+        h = model_text_to_telegram_html(ch)
+        assert h.count("<pre>") == h.count("</pre>")
 
 
 def test_golden_test3_snippet() -> None:

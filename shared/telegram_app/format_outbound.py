@@ -10,8 +10,10 @@ Pipeline (prose segments):
 
 Fenced ``` blocks become <pre> at the outer level (unchanged).
 
-Outgoing chunks use ``raw_chunks_for_telegram_html``: HTML can be longer than raw text
-(entities, tags), so we split until each chunk fits the 4096-character Telegram limit.
+Outgoing chunks use ``raw_chunks_for_telegram_html``: coarse split prefers ``\\n\\n``, ``\\n``,
+spaces, and avoids cutting inside fenced ``` blocks so markdown pairs are not torn across
+chunks (which previously led to plain fallback and “only bold/code works”). Then split until
+each HTML chunk fits the 4096-character Telegram limit.
 
 See https://core.telegram.org/bots/api#html-style
 """
@@ -26,12 +28,74 @@ from typing import Any
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
-from shared.telegram_app.text import split_message
-
 logger = logging.getLogger(__name__)
+
+# Fenced ``` ... ``` must not be cut in the middle (breaks conversion and often yields BadRequest).
+_FENCE_SPAN_RE = re.compile(r"```(?:[a-zA-Z0-9_-]*)\s*\n?[\s\S]*?```", re.MULTILINE)
 
 # Telegram Bot API: text after entity processing, max length (Unicode codepoints).
 TELEGRAM_HTML_MSG_LIMIT = 4096
+
+
+def _split_inside_any_fence(text: str, cut: int) -> bool:
+    if cut <= 0 or cut >= len(text):
+        return False
+    return any(m.start() < cut < m.end() for m in _FENCE_SPAN_RE.finditer(text))
+
+
+def _move_cut_before_fence(text: str, cut: int) -> int:
+    """If cut falls inside a ``` block, move cut to the block start (keep fence in next chunk)."""
+    for m in _FENCE_SPAN_RE.finditer(text):
+        if m.start() < cut < m.end():
+            return max(1, m.start())
+    return cut
+
+
+def split_raw_coarse_for_telegram(text: str, limit: int = TELEGRAM_HTML_MSG_LIMIT) -> list[str]:
+    """
+    Split raw model text into chunks at most `limit` chars, preferring paragraph/line/space
+    boundaries so markdown (`*`, `` ` ``, `||`) is less often torn apart (which caused plain
+    fallback chunks without formatting).
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    rest = text
+    while rest:
+        if len(rest) <= limit:
+            chunks.append(rest)
+            break
+        lim = min(limit, len(rest))
+        split_at = lim
+        search_hi = lim
+        search_lo = max(0, lim - 3500)
+        idx = rest.rfind("\n\n", 0, search_hi)
+        if idx >= 0:
+            split_at = idx + 2
+        else:
+            idx = rest.rfind("\n", 0, search_hi)
+            if idx >= 0:
+                split_at = idx + 1
+            else:
+                idx = rest.rfind(". ", search_lo, search_hi)
+                if idx >= 0:
+                    split_at = idx + 2
+                else:
+                    idx = rest.rfind(" ", search_lo, search_hi)
+                    if idx >= 0:
+                        split_at = idx + 1
+        if split_at >= len(rest):
+            split_at = lim
+        if _split_inside_any_fence(rest, split_at):
+            split_at = _move_cut_before_fence(rest, split_at)
+        if split_at <= 0 or split_at >= len(rest):
+            split_at = lim
+        if _split_inside_any_fence(rest, split_at):
+            split_at = _move_cut_before_fence(rest, split_at)
+        chunks.append(rest[:split_at])
+        rest = rest[split_at:].lstrip("\n")
+    return chunks
+
 
 # Placeholders must survive html.escape (ASCII controls are unchanged).
 
@@ -429,7 +493,7 @@ def raw_chunks_for_telegram_html(
     if not raw:
         return []
     out: list[str] = []
-    for piece in split_message(raw, limit=coarse_limit):
+    for piece in split_raw_coarse_for_telegram(raw, limit=coarse_limit):
         _raw_pieces_for_one_coarse_chunk(piece, out)
     return out
 
