@@ -126,7 +126,8 @@ async def send_max_message(
     """
     POST /messages with optional inline_keyboard attachments and markdown/html.
     """
-    if bool(chat_id) == bool(user_id):
+    # Do not use truthiness: chat_id can be 0 (valid dialog id in some APIs).
+    if (chat_id is not None) == (user_id is not None):
         raise ValueError("send_max_message: set exactly one of chat_id or user_id")
 
     base = api_url.rstrip("/")
