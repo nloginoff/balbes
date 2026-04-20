@@ -117,6 +117,18 @@ def _ph(i: int) -> str:
     return f"\x01PH{i:05d}\x01"
 
 
+def _collapse_duplicate_inline_tags(s: str, tag: str) -> str:
+    """``<i><i>x</i></i>`` → ``<i>x</i>`` (same for ``b``) after nested markdown-lite."""
+    open_, close = f"<{tag}>", f"</{tag}>"
+    pat = re.compile(re.escape(open_ + open_) + r"(.*?)" + re.escape(close + close), re.DOTALL)
+    for _ in range(64):
+        s2, n = pat.subn(open_ + r"\1" + close, s)
+        if n == 0:
+            return s2
+        s = s2
+    return s
+
+
 def _safe_href(url: str) -> str | None:
     u = url.strip()
     if u.startswith(("http://", "https://")):
@@ -295,34 +307,34 @@ def _prose_to_telegram_html(segment: str) -> str:
 
     t = re.sub(r"~~([^~]+?)~~", _strike_repl, t)
 
-    # Bold + italic ***text*** (must run before ** and single *)
+    # Underscore __bold__ / _italic_ BEFORE * and *** so patterns like *_spoiler_* and
+    # ***_word_*** become placeholders inside the outer * / *** spans (otherwise literal
+    # underscores remain inside <i>…</i> in Telegram).
+    def _bold_us_early(m: re.Match[str]) -> str:
+        return push(("bold", m.group(1)))
+
+    t = re.sub(r"__([^_]+?)__", _bold_us_early, t)
+
+    def _ital_us_early(m: re.Match[str]) -> str:
+        return push(("italic", m.group(1)))
+
+    t = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", _ital_us_early, t)
+
+    # Bold + italic ***text*** (after inner _/__)
     def _bi_repl(m: re.Match[str]) -> str:
         return push(("bi", m.group(1)))
 
     t = re.sub(r"\*\*\*([^*]+?)\*\*\*", _bi_repl, t)
 
-    # Bold ** and __
     def _bold_star(m: re.Match[str]) -> str:
         return push(("bold", m.group(1)))
 
     t = re.sub(r"\*\*([^*]+?)\*\*", _bold_star, t)
 
-    def _bold_us(m: re.Match[str]) -> str:
-        return push(("bold", m.group(1)))
-
-    t = re.sub(r"__([^_]+?)__", _bold_us, t)
-
-    # Italic *word* (not **)
     def _ital_star(m: re.Match[str]) -> str:
         return push(("italic", m.group(1)))
 
     t = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", _ital_star, t)
-
-    # Italic _word_ (not __)
-    def _ital_us(m: re.Match[str]) -> str:
-        return push(("italic", m.group(1)))
-
-    t = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", _ital_us, t)
 
     t = html.escape(t, quote=False)
 
@@ -416,6 +428,8 @@ def _prose_to_telegram_html(segment: str) -> str:
         return out
 
     t = expand_ph(t)
+    t = _collapse_duplicate_inline_tags(t, "i")
+    t = _collapse_duplicate_inline_tags(t, "b")
     return t
 
 

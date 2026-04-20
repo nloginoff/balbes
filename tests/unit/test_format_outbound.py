@@ -127,6 +127,16 @@ def test_nested_html_b_i() -> None:
     assert s == "<b><i>x</i></b>"
 
 
+def test_star_underscore_nested_no_literal_marks() -> None:
+    """*_x_* and ***_y_***: _italic_ runs before * / *** so Telegram gets tags, not raw _ *."""
+    s = model_text_to_telegram_html("*_Секретное сообщение_*")
+    assert "<i>Секретное сообщение</i>" == s
+    assert "_" not in s and "*" not in s
+    s2 = model_text_to_telegram_html("***_Помните_***")
+    assert s2 == "<b><i>Помните</i></b>"
+    assert "_" not in s2 and "*" not in s2
+
+
 def test_strike_tilde() -> None:
     s = model_text_to_telegram_html("~~z~~")
     assert s == "<s>z</s>"
