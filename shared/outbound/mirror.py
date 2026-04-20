@@ -21,6 +21,7 @@ from shared.identity_client import (
     list_identity_peers,
 )
 from shared.max_api import send_max_message_text
+from shared.telegram_app.format_outbound import model_text_to_telegram_html
 from shared.telegram_app.text import split_long_text
 
 if TYPE_CHECKING:
@@ -131,10 +132,11 @@ async def mirror_agent_text_to_secondaries(
             chat_id = int(ext)
             url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
             for chunk in split_long_text(text):
+                body = model_text_to_telegram_html(chunk)
                 try:
                     if telegram_bot is not None:
                         try:
-                            await telegram_bot.send_message(chat_id, chunk, parse_mode="Markdown")
+                            await telegram_bot.send_message(chat_id, body, parse_mode="HTML")
                         except Exception:
                             await telegram_bot.send_message(chat_id, chunk)
                     else:
@@ -142,8 +144,8 @@ async def mirror_agent_text_to_secondaries(
                             url,
                             json={
                                 "chat_id": chat_id,
-                                "text": chunk,
-                                "parse_mode": "Markdown",
+                                "text": body,
+                                "parse_mode": "HTML",
                             },
                             timeout=45.0,
                         )

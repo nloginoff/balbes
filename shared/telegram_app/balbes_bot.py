@@ -58,6 +58,7 @@ from shared.identity_client import (
     touch_channel_presence,
 )
 from shared.outbound.mirror import deliver_agent_text_with_mirror, mirror_agent_text_to_secondaries
+from shared.telegram_app.format_outbound import send_reply_html_with_plain_fallback
 from shared.telegram_app.telegram_command_matrix import (
     build_slash_bot_commands,
     register_slash_command_handlers,
@@ -2099,16 +2100,11 @@ class BalbesTelegramBot:
                         pass
 
                     if result_text:
-                        for chunk in _split_message(result_text):
-                            try:
-                                await self.app.bot.send_message(
-                                    tg_chat_id, chunk, parse_mode="Markdown"
-                                )
-                            except Exception:
-                                try:
-                                    await self.app.bot.send_message(tg_chat_id, chunk)
-                                except Exception:
-                                    pass
+
+                        async def _send_bg(t: str, *, parse_mode: str | None = None) -> None:
+                            await self.app.bot.send_message(tg_chat_id, t, parse_mode=parse_mode)
+
+                        await send_reply_html_with_plain_fallback(_send_bg, result_text)
                         try:
                             mem_mid = self._bg_monitor_memory_chat.get(key)
                             if not mem_mid:
@@ -2652,11 +2648,10 @@ class BalbesTelegramBot:
                         result_text = f"❌ Ошибка агента:\n`{err_msg}`"
 
                     async def _send_primary_reply() -> None:
-                        for chunk in _split_message(result_text):
-                            try:
-                                await message.reply_text(chunk, parse_mode="Markdown")
-                            except Exception:
-                                await message.reply_text(chunk)
+                        async def _send(t: str, *, parse_mode: str | None = None) -> None:
+                            await message.reply_text(t, parse_mode=parse_mode)
+
+                        await send_reply_html_with_plain_fallback(_send, result_text)
 
                     await deliver_agent_text_with_mirror(
                         settings=settings,

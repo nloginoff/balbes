@@ -29,6 +29,10 @@ TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
 # Разрешённые Telegram user ID (через запятую для нескольких пользователей)
 TELEGRAM_USER_ID=YOUR_TELEGRAM_USER_ID
 
+# Ответы LLM в чат (основной ответ, фон, зеркало в Telegram) уходят с parse_mode=HTML:
+# безопасное экранирование и лёгкая разметка (**жирный**, `код`, блоки ```); при ошибке API —
+# тот же текст без parse_mode. Код: shared/telegram_app/format_outbound.py.
+
 # =============================================================================
 # Web UI Authentication
 # =============================================================================
