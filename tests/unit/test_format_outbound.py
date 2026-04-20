@@ -5,6 +5,7 @@ from shared.telegram_app.format_outbound import (
     model_text_to_telegram_html,
     raw_chunks_for_telegram_html,
     split_raw_coarse_for_telegram,
+    telegram_message_text_units,
 )
 
 
@@ -61,7 +62,21 @@ def test_raw_chunks_split_when_html_longer_than_telegram_limit() -> None:
     chunks = raw_chunks_for_telegram_html(raw)
     assert len(chunks) > 1
     for c in chunks:
-        assert len(model_text_to_telegram_html(c)) <= TELEGRAM_HTML_MSG_LIMIT
+        assert (
+            telegram_message_text_units(model_text_to_telegram_html(c)) <= TELEGRAM_HTML_MSG_LIMIT
+        )
+
+
+def test_raw_chunks_split_when_emoji_utf16_exceeds_limit() -> None:
+    """Emoji are 2 UTF-16 units each; len() can stay under 4096 while Telegram rejects the body."""
+    raw = "\U0001f600" * 2100  # 😀 × 2100 → 4200 UTF-16 units
+    assert len(raw) < TELEGRAM_HTML_MSG_LIMIT
+    assert telegram_message_text_units(raw) > TELEGRAM_HTML_MSG_LIMIT
+    chunks = raw_chunks_for_telegram_html(raw)
+    assert len(chunks) > 1
+    for c in chunks:
+        body = model_text_to_telegram_html(c)
+        assert telegram_message_text_units(body) <= TELEGRAM_HTML_MSG_LIMIT
 
 
 def test_bold_double_underscore() -> None:

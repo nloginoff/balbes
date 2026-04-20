@@ -13,7 +13,7 @@ Fenced ``` blocks become <pre> at the outer level (unchanged).
 Outgoing chunks use ``raw_chunks_for_telegram_html``: coarse split prefers ``\\n\\n``, ``\\n``,
 spaces, and avoids cutting inside fenced ``` blocks so markdown pairs are not torn across
 chunks (which previously led to plain fallback and “only bold/code works”). Then split until
-each HTML chunk fits the 4096-character Telegram limit.
+each HTML chunk fits Telegram’s 4096 **UTF-16 code units** limit (not Python ``len()``).
 
 See https://core.telegram.org/bots/api#html-style
 """
@@ -33,8 +33,18 @@ logger = logging.getLogger(__name__)
 # Fenced ``` ... ``` must not be cut in the middle (breaks conversion and often yields BadRequest).
 _FENCE_SPAN_RE = re.compile(r"```(?:[a-zA-Z0-9_-]*)\s*\n?[\s\S]*?```", re.MULTILINE)
 
-# Telegram Bot API: text after entity processing, max length (Unicode codepoints).
+# Telegram Bot API: sendMessage `text` max length (UTF-16 code units, same basis as entity offsets).
 TELEGRAM_HTML_MSG_LIMIT = 4096
+
+
+def telegram_message_text_units(s: str) -> int:
+    """
+    Length of ``s`` as Telegram counts it for ``text`` (UTF-16 code units).
+
+    Supplementary-plane characters (e.g. most emoji, ``ord(c) > 0xFFFF``) count as 2;
+    BMP characters count as 1. Plain ``len(s)`` can be below 4096 while this exceeds the limit.
+    """
+    return sum(2 if ord(c) > 0xFFFF else 1 for c in s)
 
 
 def _split_inside_any_fence(text: str, cut: int) -> bool:
@@ -462,13 +472,13 @@ def _raw_pieces_for_one_coarse_chunk(piece: str, out: list[str]) -> None:
     Split one raw segment until model_text_to_telegram_html fits TELEGRAM_HTML_MSG_LIMIT.
 
     Raw chunks were limited by length only; HTML expands (&, <, >, tags), so the
-    converted text can exceed 4096 and make Telegram reject parse_mode=HTML —
+    converted text can exceed 4096 UTF-16 units and make Telegram reject parse_mode=HTML —
     then callers fell back to plain and users saw no formatting.
     """
     if not piece:
         return
     body = model_text_to_telegram_html(piece)
-    if len(body) <= TELEGRAM_HTML_MSG_LIMIT:
+    if telegram_message_text_units(body) <= TELEGRAM_HTML_MSG_LIMIT:
         out.append(piece)
         return
     if len(piece) <= 1:
@@ -488,7 +498,7 @@ def raw_chunks_for_telegram_html(
 ) -> list[str]:
     """
     Split raw model text so that each chunk, after model_text_to_telegram_html,
-    is at most TELEGRAM_HTML_MSG_LIMIT characters (Telegram sendMessage limit).
+    is at most TELEGRAM_HTML_MSG_LIMIT UTF-16 units (Telegram sendMessage limit).
     """
     if not raw:
         return []
