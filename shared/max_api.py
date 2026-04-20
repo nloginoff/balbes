@@ -127,6 +127,13 @@ async def send_max_message(
     POST /messages with optional inline_keyboard attachments and markdown/html.
     """
     # Do not use truthiness: chat_id can be 0 (valid dialog id in some APIs).
+    if chat_id is not None and user_id is not None:
+        logger.warning(
+            "MAX send_max_message: both chat_id=%s and user_id=%s — using chat_id only",
+            chat_id,
+            user_id,
+        )
+        user_id = None
     if (chat_id is not None) == (user_id is not None):
         raise ValueError("send_max_message: set exactly one of chat_id or user_id")
 

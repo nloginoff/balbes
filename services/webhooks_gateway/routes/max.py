@@ -344,6 +344,12 @@ async def max_webhook(
             return {"ok": True}
 
         reply_chat_id, reply_user_id = extract_max_reply_targets(msg)
+        if reply_chat_id is None and reply_user_id is None and sender_user_id is not None:
+            reply_user_id = int(sender_user_id)
+            logger.info(
+                "MAX webhook: callback reply target from clicking user_id=%s",
+                reply_user_id,
+            )
         if reply_chat_id is None and reply_user_id is None:
             logger.warning("MAX webhook: callback — no reply target")
             return {"ok": True}

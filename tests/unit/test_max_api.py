@@ -40,3 +40,29 @@ async def test_send_max_message_accepts_chat_id_zero() -> None:
     mock_client.post.assert_called()
     call_kw = mock_client.post.call_args
     assert call_kw[1]["params"]["chat_id"] == 0
+    assert "user_id" not in call_kw[1]["params"]
+
+
+@pytest.mark.asyncio
+async def test_send_max_message_prefers_chat_id_when_both_given() -> None:
+    """Defensive: if both query params slip in, only chat_id is sent."""
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: {"message": {"message_id": 1}}
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("shared.max_api.httpx.AsyncClient", return_value=mock_client):
+        await send_max_message(
+            api_url="https://platform-api.max.ru",
+            token="tok",
+            text="hi",
+            chat_id=-5,
+            user_id=999,
+        )
+    params = mock_client.post.call_args[1]["params"]
+    assert params.get("chat_id") == -5
+    assert "user_id" not in params

@@ -21,25 +21,49 @@ def extract_max_reply_targets(message: dict[str, Any]) -> tuple[int | None, int 
     """
     Return (chat_id, user_id) for POST /messages — exactly one should be used.
 
-    Prefer recipient.chat_id (dialogs/groups), then recipient.user_id (DM target),
-    then sender.user_id for user messages. Bot messages (callbacks) use recipient only.
+    Prefer ``recipient.chat_id`` (dialogs/groups). Some clients nest the id under
+    ``recipient.chat.chat_id``.
+
+    For query ``user_id=`` the peer must be a **human** user. In real DM payloads the
+    human writes to the bot: ``sender.user_id`` is the human, while ``recipient.user_id``
+    is often the **bot** — using ``recipient.user_id`` would POST to the wrong id.
     """
     recipient = message.get("recipient")
+    sender = message.get("sender")
+
     if isinstance(recipient, dict):
         raw_cid = recipient.get("chat_id")
+        if raw_cid is None:
+            chat_obj = recipient.get("chat")
+            if isinstance(chat_obj, dict):
+                raw_cid = chat_obj.get("chat_id")
         if raw_cid is not None:
             cid = _to_int(raw_cid)
             if cid is not None:
                 return (cid, None)
             logger.warning("MAX webhook: invalid recipient.chat_id %r", raw_cid)
-        ruid = recipient.get("user_id")
-        if ruid is not None:
-            try:
-                return (None, int(ruid))
-            except (TypeError, ValueError):
-                logger.warning("MAX webhook: invalid recipient.user_id %r", ruid)
 
-    sender = message.get("sender")
+        ruid_raw = recipient.get("user_id")
+        if ruid_raw is not None:
+            try:
+                ruid = int(ruid_raw)
+            except (TypeError, ValueError):
+                logger.warning("MAX webhook: invalid recipient.user_id %r", ruid_raw)
+            else:
+                sender_uid: int | None = None
+                sender_is_bot = False
+                if isinstance(sender, dict):
+                    sender_is_bot = bool(sender.get("is_bot"))
+                    su = sender.get("user_id")
+                    if su is not None:
+                        try:
+                            sender_uid = int(su)
+                        except (TypeError, ValueError):
+                            sender_uid = None
+                if sender_uid is not None and not sender_is_bot and ruid != sender_uid:
+                    return (None, sender_uid)
+                return (None, ruid)
+
     if isinstance(sender, dict):
         if sender.get("is_bot"):
             return (None, None)

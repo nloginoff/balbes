@@ -27,7 +27,7 @@
 1. **В логах gateway** (`logs/prod/webhooks-gateway.log` или stdout uvicorn) должны появляться строки вроде `MAX webhook: schedule LLM` после `POST /webhook/max`. Если есть только `GET /health` — **события MAX не доходят** до этого хоста: проверьте подписку `POST /subscriptions`, URL `https://…/webhook/max`, прокси/nginx и TLS.
 2. **`MAX_WEBHOOK_SECRET`** задан, а в подписке другой секрет → ответ **403**, MAX не доставит обработку.
 3. **`MAX_ALLOWED_USER_IDS`** — ваш `user_id` должен быть в списке (или список пустой).
-4. Исходящее **`POST /messages`**: идентификатор чата не должен обрабатываться через «truthiness» (`0` — валидное значение в некоторых сценариях); см. исправление в [`shared/max_api.py`](../../shared/max_api.py).
+4. Исходящее **`POST /messages`**: идентификатор чата не должен обрабатываться через «truthiness» (`0` — валидное значение в некоторых сценариях); см. исправление в [`shared/max_api.py`](../../shared/max_api.py). В реальных webhook для диалога у `recipient` бывают и `chat_id`, и `user_id`; последний часто указывает на **бота**, а ответ нужно слать пользователю — разбор в [`shared/max_webhook.py`](../../shared/max_webhook.py) `extract_max_reply_targets` (при отсутствии `chat_id` берётся `sender.user_id` человека). Для `message_callback` добавлен запасной target по `callback.user.user_id`.
 
 Секрет в API MAX: **5–256 символов**, только `[a-zA-Z0-9_-]` (см. документацию).
 
