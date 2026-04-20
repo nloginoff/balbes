@@ -14,6 +14,7 @@ import json
 import logging
 import secrets
 import string
+import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -450,6 +451,108 @@ class RedisClient:
             return f"max:{external_id.strip()}"
         raise ValueError(f"unsupported identity provider: {provider}")
 
+    def _identity_peers_key(self, canonical: str) -> str:
+        return f"identity:peers:{canonical.strip()}"
+
+    def _channel_presence_key(self, canonical: str) -> str:
+        return f"channel_presence:{canonical.strip()}"
+
+    async def _ensure_identity_peer(self, canonical: str, provider: str, external_id: str) -> None:
+        """SADD identity:peers:{canonical} → member telegram:id | max:id."""
+        if not self.client:
+            return
+        p = provider.lower().strip()
+        ext = external_id.strip()
+        if p not in ("telegram", "max") or not ext:
+            return
+        try:
+            UUID(canonical.strip())
+        except ValueError:
+            return
+        await self.client.sadd(self._identity_peers_key(canonical), f"{p}:{ext}")
+
+    async def _backfill_identity_peers(self, canonical: str) -> None:
+        """If peers set is empty, scan identity:link:* pointing at this canonical id."""
+        if not self.client:
+            return
+        cnorm = canonical.strip()
+        for pattern in ("identity:link:telegram:*", "identity:link:max:*"):
+            cur = 0
+            while True:
+                cur, keys = await self.client.scan(cursor=cur, match=pattern, count=200)
+                for k in keys or []:
+                    val = await self.client.get(k)
+                    if val != cnorm:
+                        continue
+                    suf = k[len("identity:link:") :] if k.startswith("identity:link:") else ""
+                    if not suf:
+                        continue
+                    prov, _, rest = suf.partition(":")
+                    if prov == "telegram" and rest:
+                        await self._ensure_identity_peer(cnorm, "telegram", rest)
+                    elif prov == "max" and rest:
+                        await self._ensure_identity_peer(cnorm, "max", rest)
+                if cur == 0:
+                    break
+
+    async def list_identity_peers(self, canonical_user_id: str) -> list[dict[str, str]]:
+        """Return [{'provider': 'telegram'|'max', 'external_id': '...'}, ...]."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        try:
+            UUID(canonical_user_id.strip())
+        except ValueError as e:
+            raise MemoryStorageError("canonical_user_id must be a UUID string") from e
+        key = self._identity_peers_key(canonical_user_id)
+        members = await self.client.smembers(key)
+        if not members:
+            await self._backfill_identity_peers(canonical_user_id)
+            members = await self.client.smembers(key)
+        out: list[dict[str, str]] = []
+        for raw in members or []:
+            m = raw if isinstance(raw, str) else str(raw)
+            if ":" not in m:
+                continue
+            prov, eid = m.split(":", 1)
+            if prov in ("telegram", "max") and eid:
+                out.append({"provider": prov, "external_id": eid})
+        return out
+
+    async def touch_channel_presence(self, canonical_user_id: str, channel: str) -> None:
+        """Record last inbound activity for a messenger (telegram | max)."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        try:
+            UUID(canonical_user_id.strip())
+        except ValueError as e:
+            raise MemoryStorageError("canonical_user_id must be a UUID string") from e
+        ch = channel.lower().strip()
+        if ch not in ("telegram", "max"):
+            raise MemoryStorageError("channel must be telegram or max")
+        now = str(int(time.time()))
+        await self.client.hset(self._channel_presence_key(canonical_user_id), ch, now)
+
+    async def is_channel_presence_active(
+        self, canonical_user_id: str, channel: str, ttl_seconds: int
+    ) -> bool:
+        if not self.client:
+            return False
+        try:
+            UUID(canonical_user_id.strip())
+        except ValueError:
+            return False
+        ch = channel.lower().strip()
+        if ch not in ("telegram", "max"):
+            return False
+        raw = await self.client.hget(self._channel_presence_key(canonical_user_id), ch)
+        if not raw:
+            return False
+        try:
+            ts = int(raw if isinstance(raw, str) else str(raw))
+        except (TypeError, ValueError):
+            return False
+        return (int(time.time()) - ts) <= int(ttl_seconds)
+
     async def _rename_if_dest_missing(self, src: str, dest: str) -> None:
         if not self.client:
             return
@@ -537,6 +640,7 @@ class RedisClient:
         link_key = self._identity_link_key(p, ext)
         existing = await self.client.get(link_key)
         if existing:
+            await self._ensure_identity_peer(existing, p, ext)
             return existing, False
 
         legacy = self._legacy_user_id(p, ext)
@@ -551,12 +655,14 @@ class RedisClient:
                     canonical = str(uuid4())
                     await self._migrate_user_redis_keys(legacy, canonical)
                     await self.client.set(link_key, canonical)
+                    await self._ensure_identity_peer(canonical, p, ext)
                     return canonical, True
                 finally:
                     await self.client.delete(lock_key)
             await asyncio.sleep(0.05)
             existing3 = await self.client.get(link_key)
             if existing3:
+                await self._ensure_identity_peer(existing3, p, ext)
                 return existing3, False
 
         raise MemoryStorageError("could not acquire identity lock")
@@ -566,9 +672,9 @@ class RedisClient:
         if not self.client:
             return False
         try:
-            if await self.client.exists(self._chats_key(user_id)):
-                if await self.client.hlen(self._chats_key(user_id)) > 0:
-                    return True
+            chats_key = self._chats_key(user_id)
+            if await self.client.exists(chats_key) and await self.client.hlen(chats_key) > 0:
+                return True
             if await self.client.exists(self._active_chat_key(user_id)):
                 return True
             cur = 0
@@ -721,6 +827,7 @@ class RedisClient:
                         wiped_any = True
 
                     await self.client.set(link_key, target)
+                    await self._ensure_identity_peer(target, p, ext)
                     await self.client.delete(key)
                     return {
                         "canonical_user_id": target,
@@ -767,6 +874,7 @@ class RedisClient:
                 try:
                     old_link = await self.client.get(link_key)
                     if old_link == to_canonical:
+                        await self._ensure_identity_peer(to_canonical, p, ext)
                         return {
                             "canonical_user_id": to_canonical,
                             "migrated": False,
@@ -790,6 +898,7 @@ class RedisClient:
                         migrated = True
 
                     await self.client.set(link_key, to_canonical)
+                    await self._ensure_identity_peer(to_canonical, p, ext)
                     return {
                         "canonical_user_id": to_canonical,
                         "migrated": migrated,
@@ -800,6 +909,7 @@ class RedisClient:
             await asyncio.sleep(0.05)
             cur = await self.client.get(link_key)
             if cur == to_canonical:
+                await self._ensure_identity_peer(to_canonical, p, ext)
                 return {
                     "canonical_user_id": to_canonical,
                     "migrated": False,

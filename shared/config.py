@@ -192,6 +192,19 @@ class Settings(BaseSettings):
             "Set via MAX_ALLOWED_USER_IDS as comma-separated IDs. Empty = no restriction."
         ),
     )
+    agent_reply_mirror_enabled: bool = Field(
+        default=True,
+        description=(
+            "Mirror agent replies to linked Telegram/MAX when that channel's presence is active "
+            "(see AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS)."
+        ),
+    )
+    agent_reply_mirror_presence_ttl_seconds: int = Field(
+        default=3600,
+        ge=120,
+        le=86400,
+        description="Presence window (seconds) for mirroring to a secondary messenger.",
+    )
 
     # =============================================================================
     # Web UI Authentication

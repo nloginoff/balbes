@@ -13,7 +13,7 @@ from routes.max_chat import (
 )
 
 from shared.config import get_settings
-from shared.identity_client import resolve_canonical_user_id
+from shared.identity_client import resolve_canonical_user_id, touch_channel_presence
 from shared.max_api import (
     max_answer_callback,
     max_send_chat_action,
@@ -29,6 +29,7 @@ from shared.max_webhook import (
     parse_slash_command,
     should_process_message_created,
 )
+from shared.outbound.mirror import deliver_agent_text_with_mirror
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,7 @@ async def _max_run_orchestrator_and_reply(
     reply_chat_id: int | None,
     reply_user_id: int | None,
 ) -> None:
-    """Call orchestrator /api/v1/tasks, then send assistant text via MAX API."""
+    """Call orchestrator /api/v1/tasks, then send assistant text via MAX API (+ optional mirror)."""
     settings = get_settings()
     token = settings.max_bot_token
     if not token:
@@ -189,15 +190,19 @@ async def _max_run_orchestrator_and_reply(
         "source": "max",
     }
 
-    reply_text: str
+    reply_text = ""
+    httpx_timeout = httpx.Timeout(
+        connect=30.0,
+        read=timeout,
+        write=120.0,
+        pool=30.0,
+    )
     try:
-        httpx_timeout = httpx.Timeout(
-            connect=30.0,
-            read=timeout,
-            write=120.0,
-            pool=30.0,
-        )
         async with httpx.AsyncClient(timeout=httpx_timeout) as client:
+            try:
+                await touch_channel_presence(mem, user_key, "max", client=client)
+            except Exception:
+                pass
             resp = await client.post(url, params=params)
             if resp.status_code != 200:
                 reply_text = f"Ошибка оркестратора: HTTP {resp.status_code}"
@@ -213,21 +218,44 @@ async def _max_run_orchestrator_and_reply(
                     reply_text = str(inner.get("output", "")).strip() or "(пустой ответ)"
                 else:
                     reply_text = str(data.get("error", "Неизвестная ошибка"))[:3500]
+
+            async def _primary_max() -> None:
+                await send_max_message_text(
+                    api_url=settings.max_api_url,
+                    token=token,
+                    text=reply_text,
+                    chat_id=reply_chat_id,
+                    user_id=reply_user_id,
+                    timeout=120.0,
+                )
+
+            try:
+                await deliver_agent_text_with_mirror(
+                    settings=settings,
+                    client=client,
+                    memory_url=mem,
+                    canonical_user_id=user_key,
+                    source_channel="max",
+                    text=reply_text,
+                    send_primary=_primary_max,
+                    telegram_bot=None,
+                )
+            except Exception as e:
+                logger.exception("MAX outbound reply failed: %s", e)
     except Exception as e:
         logger.exception("MAX orchestrator request failed: %s", e)
         reply_text = f"Сервис временно недоступен: {e!s}"[:3500]
-
-    try:
-        await send_max_message_text(
-            api_url=settings.max_api_url,
-            token=token,
-            text=reply_text,
-            chat_id=reply_chat_id,
-            user_id=reply_user_id,
-            timeout=120.0,
-        )
-    except Exception as e:
-        logger.exception("MAX outbound reply failed: %s", e)
+        try:
+            await send_max_message_text(
+                api_url=settings.max_api_url,
+                token=token,
+                text=reply_text,
+                chat_id=reply_chat_id,
+                user_id=reply_user_id,
+                timeout=120.0,
+            )
+        except Exception as e2:
+            logger.exception("MAX error reply failed: %s", e2)
 
 
 @router.post("/max")

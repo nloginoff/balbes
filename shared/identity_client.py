@@ -108,3 +108,82 @@ async def redeem_pairing_code(
     finally:
         if own_client:
             await c.aclose()
+
+
+async def touch_channel_presence(
+    memory_service_url: str,
+    canonical_user_id: str,
+    channel: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 8.0,
+) -> None:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.post(
+            f"{base}/api/v1/identity/presence/touch",
+            json={"canonical_user_id": canonical_user_id, "channel": channel},
+        )
+        if resp.status_code != 200:
+            logger.warning(
+                "presence touch failed: HTTP %s %s",
+                resp.status_code,
+                resp.text[:200],
+            )
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def list_identity_peers(
+    memory_service_url: str,
+    canonical_user_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> dict:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(
+            f"{base}/api/v1/identity/peers",
+            params={"canonical_user_id": canonical_user_id},
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"identity peers failed: HTTP {resp.status_code} {resp.text[:300]}")
+        return resp.json()
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def channel_presence_active(
+    memory_service_url: str,
+    canonical_user_id: str,
+    channel: str,
+    ttl_seconds: int,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 8.0,
+) -> bool:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(
+            f"{base}/api/v1/identity/presence/active",
+            params={
+                "canonical_user_id": canonical_user_id,
+                "channel": channel,
+                "ttl_seconds": ttl_seconds,
+            },
+        )
+        if resp.status_code != 200:
+            return False
+        return bool(resp.json().get("active"))
+    finally:
+        if own_client:
+            await c.aclose()

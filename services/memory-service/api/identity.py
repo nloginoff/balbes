@@ -147,6 +147,61 @@ async def create_pairing(
     return {"code": code, "expires_in_seconds": ttl}
 
 
+class PresenceTouchRequest(BaseModel):
+    canonical_user_id: str = Field(..., description="Canonical UUID")
+    channel: str = Field(..., description="telegram | max")
+
+
+@router.get("/identity/peers")
+async def get_identity_peers(
+    canonical_user_id: str = Query(..., description="Canonical UUID"),
+) -> dict[str, Any]:
+    """Linked external ids (telegram / max) for fan-out and mirroring."""
+    redis_client = _get_redis()
+    try:
+        peers = await redis_client.list_identity_peers(canonical_user_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    return {"canonical_user_id": canonical_user_id.strip(), "peers": peers}
+
+
+@router.post("/identity/presence/touch")
+async def touch_presence(body: PresenceTouchRequest) -> dict[str, bool]:
+    """Mark recent activity on a channel (inbound message)."""
+    redis_client = _get_redis()
+    try:
+        await redis_client.touch_channel_presence(body.canonical_user_id, body.channel)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    return {"ok": True}
+
+
+@router.get("/identity/presence/active")
+async def presence_active(
+    canonical_user_id: str = Query(...),
+    channel: str = Query(..., description="telegram | max"),
+    ttl_seconds: int = Query(3600, ge=60, le=86400),
+) -> dict[str, Any]:
+    """Whether the user was active on this channel within ttl_seconds."""
+    redis_client = _get_redis()
+    try:
+        active = await redis_client.is_channel_presence_active(
+            canonical_user_id, channel, ttl_seconds
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    return {"active": active, "channel": channel.lower().strip(), "ttl_seconds": ttl_seconds}
+
+
 @router.post("/identity/pairing/redeem")
 async def redeem_pairing(body: PairingRedeemRequest) -> dict[str, Any]:
     """

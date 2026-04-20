@@ -55,7 +55,9 @@ from shared.identity_client import (
     create_pairing_code,
     redeem_pairing_code,
     resolve_canonical_user_id,
+    touch_channel_presence,
 )
+from shared.outbound.mirror import deliver_agent_text_with_mirror, mirror_agent_text_to_secondaries
 from shared.telegram_app.telegram_command_matrix import (
     build_slash_bot_commands,
     register_slash_command_handlers,
@@ -2083,6 +2085,19 @@ class BalbesTelegramBot:
                                     await self.app.bot.send_message(tg_chat_id, chunk)
                                 except Exception:
                                     pass
+                        try:
+                            async with httpx.AsyncClient(timeout=30.0) as cl:
+                                await mirror_agent_text_to_secondaries(
+                                    settings=settings,
+                                    client=cl,
+                                    memory_url=self.memory_url,
+                                    canonical_user_id=user_id,
+                                    source_channel="telegram",
+                                    text=result_text,
+                                    telegram_bot=self.app.bot if self.app else None,
+                                )
+                        except Exception as e:
+                            logger.debug(f"[bgmon] mirror failed: {e}")
                     break
 
         except asyncio.CancelledError:
@@ -2450,6 +2465,12 @@ class BalbesTelegramBot:
         chat_tg = update.effective_chat
 
         mem_uid = await self._memory_user_id(user)
+        try:
+            await touch_channel_presence(
+                self.memory_url, mem_uid, "telegram", client=self._get_http()
+            )
+        except Exception:
+            pass
         # Resolve active chat
         chat_id = await self._get_active_chat(mem_uid)
         if not chat_id:
@@ -2600,12 +2621,23 @@ class BalbesTelegramBot:
                         err_msg = error or "Неизвестная ошибка оркестратора"
                         result_text = f"❌ Ошибка агента:\n`{err_msg}`"
 
-                    # LLM responses may contain arbitrary Markdown — try V1, fall back to plain
-                    for chunk in _split_message(result_text):
-                        try:
-                            await message.reply_text(chunk, parse_mode="Markdown")
-                        except Exception:
-                            await message.reply_text(chunk)
+                    async def _send_primary_reply() -> None:
+                        for chunk in _split_message(result_text):
+                            try:
+                                await message.reply_text(chunk, parse_mode="Markdown")
+                            except Exception:
+                                await message.reply_text(chunk)
+
+                    await deliver_agent_text_with_mirror(
+                        settings=settings,
+                        client=self._get_http(),
+                        memory_url=self.memory_url,
+                        canonical_user_id=mem_uid,
+                        source_channel="telegram",
+                        text=result_text,
+                        send_primary=_send_primary_reply,
+                        telegram_bot=self.app.bot if self.app else None,
+                    )
 
                 else:
                     # Non-200: try to read the body for details

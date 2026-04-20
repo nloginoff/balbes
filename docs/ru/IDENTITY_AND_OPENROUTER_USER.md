@@ -83,3 +83,11 @@ curl -sS -X POST "http://localhost:8101/api/v1/identity/link" \
 ```
 
 Итог: оба провайдера указывают на один UUID в Redis (`identity:link:telegram:…` и `identity:link:max:…`).
+
+## Зеркалирование ответов агента (Telegram ↔ MAX)
+
+Если два канала связаны с одним `canonical_user_id`, ответ оркестратора можно **дублировать** во второй мессенджер: основной ответ уходит в тот канал, откуда пришло сообщение пользователя; копия — в связанный канал **только если** для него недавно была зафиксирована активность (**presence**), чтобы не слать текст в «холодный» чат.
+
+- **Presence** обновляется при **входящем** сообщении пользователя в канале (не при исходящих ответах бота).
+- Redis: множество `identity:peers:{uuid}`, хэш `channel_presence:{uuid}` с TTL; API Memory: `GET /api/v1/identity/peers`, `POST /api/v1/identity/presence/touch`, `GET /api/v1/identity/presence/active`.
+- Переменные окружения: `AGENT_REPLY_MIRROR_ENABLED` (по умолчанию включено), `AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS` (окно в секундах, по умолчанию 3600). См. [`shared/config.py`](../../shared/config.py), реализация — [`shared/outbound/mirror.py`](../../shared/outbound/mirror.py).

@@ -16,6 +16,9 @@ class _Settings:
     whisper_yandex_stt_timeout_seconds = 60.0
     whisper_language = "ru"
     openrouter_api_key = "k"
+    openrouter_http_referer = ""
+    openrouter_app_title = ""
+    openrouter_categories = ""
     openrouter_service_user = "balbes-service"
     whisper_openrouter_stt_model = "test/audio-model"
     yandex_speech_api_key = None

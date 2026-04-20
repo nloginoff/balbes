@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Зеркалирование ответов агента Telegram ↔ MAX** — после связки аккаунтов дублирование текста во второй канал при активном **presence** (входящие сообщения обновляют окно TTL); Redis `identity:peers:{uuid}`, `channel_presence:{uuid}`; Memory API `GET /api/v1/identity/peers`, `POST /api/v1/identity/presence/touch`, `GET /api/v1/identity/presence/active`; конфиг `AGENT_REPLY_MIRROR_ENABLED`, `AGENT_REPLY_MIRROR_PRESENCE_TTL_SECONDS`. Интеграция: [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`shared/identity_client.py`](shared/identity_client.py), [`services/webhooks_gateway/routes/max.py`](services/webhooks_gateway/routes/max.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py).
+
 ### Fixed
 - **Notify в MAX** — доставка через **`NOTIFY_MAX_USER_ID`** (POST `/messages?user_id=`), т.к. для личных сообщений API отличает `user_id` от `chat_id`; прежний вариант только с `NOTIFY_MAX_CHAT_ID` мог не доставлять в личку. [`shared/notify/delivery.py`](shared/notify/delivery.py), [`shared/config.py`](shared/config.py) (`NOTIFY_MAX_USER_ID`).
 
