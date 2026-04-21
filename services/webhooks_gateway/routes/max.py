@@ -22,7 +22,7 @@ from shared.max_api import (
     max_answer_callback,
     max_send_chat_action,
     send_max_message,
-    send_max_message_text,
+    send_max_message_markdown_from_model,
 )
 from shared.max_bot_ui import MaxUiReply
 from shared.max_inbound import verify_max_webhook_auth
@@ -237,10 +237,10 @@ async def _max_run_orchestrator_and_reply(
                     reply_text = str(data.get("error", "Неизвестная ошибка"))[:3500]
 
             async def _primary_max() -> None:
-                await send_max_message_text(
+                await send_max_message_markdown_from_model(
                     api_url=settings.max_api_url,
                     token=token,
-                    text=reply_text,
+                    raw_model_text=reply_text,
                     chat_id=reply_chat_id,
                     user_id=reply_user_id,
                     timeout=120.0,
@@ -264,10 +264,10 @@ async def _max_run_orchestrator_and_reply(
         logger.exception("MAX orchestrator request failed: %s", e)
         reply_text = f"Сервис временно недоступен: {e!s}"[:3500]
         try:
-            await send_max_message_text(
+            await send_max_message_markdown_from_model(
                 api_url=settings.max_api_url,
                 token=token,
-                text=reply_text,
+                raw_model_text=reply_text,
                 chat_id=reply_chat_id,
                 user_id=reply_user_id,
                 timeout=120.0,

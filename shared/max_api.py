@@ -167,7 +167,7 @@ async def send_max_message(
             chunk_body = {**body, "text": part}
             if i > 0:
                 chunk_body.pop("attachments", None)
-                chunk_body.pop("format", None)
+                # Keep ``format`` on continuation text chunks (markdown/html applies to each part).
             last_exc: Exception | None = None
             for attempt in range(3):
                 try:
@@ -205,6 +205,64 @@ async def send_max_message(
                         await asyncio.sleep(0.5 * (attempt + 1))
             if last_exc is not None:
                 raise last_exc
+    return last_mid
+
+
+async def send_max_message_markdown_from_model(
+    *,
+    api_url: str,
+    token: str,
+    raw_model_text: str,
+    chat_id: int | str | None = None,
+    user_id: int | None = None,
+    timeout: float = 120.0,
+) -> str | None:
+    """
+    Convert orchestrator/model plain text to MAX markdown (see shared.max_format_outbound),
+    POST each chunk with ``format: markdown``. If the API rejects the body (HTTP error), retry
+    that chunk as plain text without ``format``.
+    """
+    from shared.max_format_outbound import (
+        max_markdown_to_plain,
+        model_text_to_max_markdown,
+        raw_chunks_for_max_markdown,
+    )
+
+    pieces = raw_chunks_for_max_markdown(raw_model_text)
+    if not pieces:
+        return None
+
+    last_mid: str | None = None
+    for piece in pieces:
+        md = model_text_to_max_markdown(piece)
+        parts = split_max_text(md) if md else []
+        for part in parts:
+            if not part:
+                continue
+            try:
+                last_mid = await send_max_message(
+                    api_url=api_url,
+                    token=token,
+                    text=part,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    attachments=None,
+                    text_format="markdown",
+                    timeout=timeout,
+                )
+            except Exception as e:
+                logger.warning("MAX markdown send failed, trying plain: %s", e)
+                plain = max_markdown_to_plain(part)
+                last_mid = await send_max_message(
+                    api_url=api_url,
+                    token=token,
+                    text=plain,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    attachments=None,
+                    text_format=None,
+                    timeout=timeout,
+                )
     return last_mid
 
 

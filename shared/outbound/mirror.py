@@ -8,7 +8,6 @@ or primary+secondaries via deliver_agent_text_with_mirror.
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +20,7 @@ from shared.identity_client import (
     get_active_chat_scoped,
     list_identity_peers,
 )
-from shared.max_api import send_max_message_text
+from shared.max_api import send_max_message_markdown_from_model
 from shared.telegram_app.format_outbound import (
     model_text_to_telegram_html,
     raw_chunks_for_telegram_html,
@@ -40,16 +39,6 @@ def mirror_target_providers(settings: Settings) -> frozenset[str]:
     if not raw:
         return frozenset()
     return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
-
-
-def text_plain_for_max(markdownish: str) -> str:
-    """Best-effort strip for MAX (plain); cap at API limit."""
-    t = markdownish
-    t = re.sub(r"\*\*([^*]+)\*\*", r"\1", t)
-    t = re.sub(r"\*([^*]+)\*", r"\1", t)
-    t = re.sub(r"`([^`]+)`", r"\1", t)
-    t = re.sub(r"^#+\s*", "", t, flags=re.MULTILINE)
-    return t.strip()[:4000]
 
 
 async def mirror_agent_text_to_secondaries(
@@ -122,11 +111,10 @@ async def mirror_agent_text_to_secondaries(
             continue
         if prov == "max" and token:
             try:
-                plain = text_plain_for_max(text)
-                await send_max_message_text(
+                await send_max_message_markdown_from_model(
                     api_url=api,
                     token=token,
-                    text=plain,
+                    raw_model_text=text,
                     user_id=int(ext),
                     timeout=120.0,
                 )

@@ -56,7 +56,7 @@ async def test_mirror_skips_when_target_active_differs() -> None:
         patch.object(
             m, "get_active_chat_scoped", new_callable=AsyncMock, return_value="other-chat"
         ),
-        patch.object(m, "send_max_message_text", new_callable=AsyncMock) as sm,
+        patch.object(m, "send_max_message_markdown_from_model", new_callable=AsyncMock) as sm,
     ):
         await m.mirror_agent_text_to_secondaries(
             settings=settings,
