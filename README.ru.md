@@ -77,6 +77,13 @@
 | Голосовые сообщения | `faster-whisper` + опциональная LLM-коррекция |
 | Лимиты токенов | Суточные/часовые бюджеты на агента с автоматическим fallback |
 | Несколько чатов | Отдельные истории, агенты и настройки на каждый чат |
+| MAX Messenger (опция) | Тот же оркестратор и память через [`POST /webhook/max`](docs/ru/MAX_WEBHOOK.md); ответы LLM в **Markdown MAX** (`format: markdown`) с запасным plain |
+
+---
+
+### MAX Messenger (опциональный канал)
+
+Пользователи могут общаться с Balbes в [**MAX**](https://max.ru) параллельно с Telegram: отдельный **webhooks gateway** принимает HTTPS-события, вызывает оркестратор (`POST /api/v1/tasks`), шлёт ответы через `POST .../messages`. Исходящий текст агента приводится к диалекту Markdown платформы (жирный, курсив, подчёркивание `++`, ссылки, блоки кода). Полная инструкция — **[MAX: webhook и разметка](docs/ru/MAX_WEBHOOK.md)**. Связка аккаунтов с Telegram, зеркалирование ответов — также в [`docs/ru/IDENTITY_AND_OPENROUTER_USER.md`](docs/ru/IDENTITY_AND_OPENROUTER_USER.md).
 
 ---
 
@@ -104,6 +111,8 @@
 ---
 
 ## Архитектура
+
+**Входящие:** основной **Telegram**-бот в составе оркестратора (или webhook-режим PTB через **`services/webhooks_gateway`**). События **MAX** всегда идут в тот же gateway (`POST /webhook/max`). См. [`services/webhooks_gateway/README.md`](services/webhooks_gateway/README.md).
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -249,6 +258,7 @@ balbes/
 │       │   └── config.yaml     # Переопределение настроек (высший приоритет)
 │       └── coder/
 ├── services/
+│   ├── webhooks_gateway/       # HTTPS: webhook Telegram, MAX, /webhook/notify
 │   ├── orchestrator/           # Главный агент + Telegram-бот (порт 18102)
 │   ├── coder/                  # Агент-кодер (порт 18103)
 │   └── memory-service/         # Память и история (порт 18100)
@@ -300,5 +310,6 @@ MIT — см. [LICENSE](LICENSE)
 | Руководство по агентам | [docs/en/AGENTS_GUIDE.md](docs/en/AGENTS_GUIDE.md) | [docs/ru/AGENTS_GUIDE.md](docs/ru/AGENTS_GUIDE.md) |
 | Деплой | [docs/en/DEPLOYMENT.md](docs/en/DEPLOYMENT.md) | [docs/ru/DEPLOYMENT.md](docs/ru/DEPLOYMENT.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) | — |
+| MAX Messenger | — | [docs/ru/MAX_WEBHOOK.md](docs/ru/MAX_WEBHOOK.md) (webhook, исходящая Markdown-разметка) |
 
 *[README in English](README.md)*

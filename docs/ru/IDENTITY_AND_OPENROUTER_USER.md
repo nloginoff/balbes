@@ -97,3 +97,5 @@ curl -sS -X POST "http://localhost:8101/api/v1/identity/link" \
 Один `canonical_user_id` ведёт **общий** список чатов (`chats:{uuid}`), но **активный** чат хранится **отдельно** для Telegram и для MAX: Redis `active_chat:{uuid}:telegram` и `active_chat:{uuid}:max` (старый ключ `active_chat:{uuid}` остаётся fallback для совместимости). API: `GET/PUT /api/v1/chats/{user_id}/active?channel=telegram|max`. Переключение чата в Telegram не меняет выбранный чат в MAX и наоборот.
 
 **Зеркалирование ответа** во второй канал выполняется только если совпадает **memory `chat_id`** сессии: у целевого канала в настройках активен тот же чат, что и ответ агента (запрос `GET .../active?channel=...&create_if_missing=false` для проверки). Если в MAX открыт другой чат, дубликат туда не уходит.
+
+Копия во **второй** канал MAX использует ту же **markdown**-разметку и конвейер, что и основной ответ пользователю в MAX (`send_max_message_markdown_from_model`). Подробности — [MAX_WEBHOOK.md](MAX_WEBHOOK.md) (раздел про зеркалирование и таблицу Telegram vs MAX).

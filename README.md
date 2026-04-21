@@ -95,6 +95,13 @@ No Web UI needed. Everything — switching models, managing chats, reading logs,
 | Business chat monitoring | Silent bot in employee Telegram groups — anonymizes messages, daily summaries |
 | Post approval flow | Inline ✅/✏️/❌ buttons in Telegram, edit instructions via LLM revision |
 | Publishing queue | Scheduled post release (1–3/day) across 3 channels (RU, EN, personal) |
+| MAX Messenger (optional) | Same orchestrator and memory via [`POST /webhook/max`](docs/ru/MAX_WEBHOOK.md); LLM replies use **MAX Markdown** (`format: markdown`) with plain fallback |
+
+---
+
+### MAX Messenger (optional channel)
+
+Balbes can talk to users on [**MAX Messenger**](https://max.ru) (Russian platform) in parallel with Telegram: a dedicated **webhooks gateway** receives HTTPS events, calls the orchestrator (`POST /api/v1/tasks`), and sends replies with `POST .../messages`. Outbound assistant text is formatted for the MAX Markdown flavor (bold, italics, underline `++`, links, code fences) — see the full **[MAX webhook & formatting guide (RU)](docs/ru/MAX_WEBHOOK.md)**. Slash commands, `/link` pairing with Telegram, and optional **mirroring** of agent replies to the linked account are documented there and in [`docs/ru/IDENTITY_AND_OPENROUTER_USER.md`](docs/ru/IDENTITY_AND_OPENROUTER_USER.md).
 
 ---
 
@@ -122,6 +129,8 @@ No Web UI needed. Everything — switching models, managing chats, reading logs,
 ---
 
 ## Architecture
+
+**Ingress:** the main user-facing **Telegram** bot runs inside the orchestrator (or PTB webhook mode via **`services/webhooks_gateway`**). **MAX** events always use the same gateway (`POST /webhook/max`). See [`services/webhooks_gateway/README.md`](services/webhooks_gateway/README.md).
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -301,6 +310,7 @@ balbes/
 │   │       └── config.yaml
 │   └── cursor_chats/           # Drop Cursor AI markdown exports here
 ├── services/
+│   ├── webhooks_gateway/       # HTTPS: Telegram webhook, MAX webhook, /webhook/notify
 │   ├── orchestrator/           # Main agent + Telegram bot (port 18102)
 │   │   ├── agent.py
 │   │   ├── telegram_bot.py
@@ -365,5 +375,6 @@ MIT — see [LICENSE](LICENSE)
 | Agents Guide | [docs/en/AGENTS_GUIDE.md](docs/en/AGENTS_GUIDE.md) | [docs/ru/AGENTS_GUIDE.md](docs/ru/AGENTS_GUIDE.md) |
 | Deployment | [docs/en/DEPLOYMENT.md](docs/en/DEPLOYMENT.md) | [docs/ru/DEPLOYMENT.md](docs/ru/DEPLOYMENT.md) |
 | Changelog | [CHANGELOG.md](CHANGELOG.md) | — |
+| MAX Messenger | — | [docs/ru/MAX_WEBHOOK.md](docs/ru/MAX_WEBHOOK.md) (webhook, Markdown outbound) |
 
 *[README на русском](README.ru.md)*

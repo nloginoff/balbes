@@ -116,22 +116,67 @@ python scripts/max_subscriptions.py apply \
 - Обычный текст (не команда) → фоновый **`POST /api/v1/tasks`** → ответ в MAX (`POST /messages`).
 - Если **`MAX_BOT_TOKEN`** не задан, webhook всё равно отвечает `{"ok": true}`, но ответ пользователю не отправится (см. логи gateway).
 
-### Исходящая разметка ответов LLM
+## Исходящие сообщения MAX: разметка и доставка
 
-Ответ оркестратора и зеркалирование в MAX идут через **`format: markdown`** ([документация API](https://dev.max.ru/docs-api/objects/NewMessageBody)): конвейер [`shared/max_format_outbound.py`](../../shared/max_format_outbound.py) (`model_text_to_max_markdown`) и отправка [`send_max_message_markdown_from_model`](../../shared/max_api.py). Длинные тексты режутся с учётом лимита **4000 символов** и грубого разреза по абзацам / границам fenced ```, чтобы не рвать блоки кода пополам. Продолжения многочастного сообщения **тоже** несут `format: markdown` (раньше при втором и следующих чанках разметка терялась — исправлено в [`send_max_message`](../../shared/max_api.py)).
+Платформа MAX в теле [`NewMessageBody`](https://dev.max.ru/docs-api/objects/NewMessageBody) принимает поле **`format`**: **`markdown`** или **`html`**. Без него текст отображается как обычный. Лимит поля **`text`**: до **4000 символов** (в коде — `len()` строки Python; тип «кодовых единиц» в официальной доке для MAX не уточнён, при расхождениях с API смотрите логи ответа).
 
-Если API отклоняет тело с разметкой, для **этого же** фрагмента выполняется повтор **без** `format`, с обезвреженным текстом (`max_markdown_to_plain`).
+Ниже описан путь **ответов от LLM** (оркестратор) и **зеркалирования** в MAX. Он **отличается** от пути slash-команд и inline-меню (см. подраздел **UI-ответы и ответ LLM** ниже).
 
-| Возможность | Telegram (исходящие) | MAX (исходящие LLM) |
-|-------------|----------------------|---------------------|
-| Жирный / курсив / зачёркнутое | HTML `<b>`, `<i>`, `<s>` | `**`, `*`, `~~` ([список MAX](https://dev.max.ru/docs-api)) |
-| Подчёркивание | HTML `<u>` | `++текст++` (не HTML) |
-| Inline-код, блок кода | `` `<code>` ``, `<pre>` `` | `` ` `` и fenced ``` (через общий конвертер → HTML → MAX) |
+### Краткая схема потока
+
+1. Пользователь пишет в MAX → [`POST /webhook/max`](../../services/webhooks_gateway/routes/max.py) → `POST /api/v1/tasks` оркестратору.
+2. Текст ответа (`result.output`) — «как от модели» (markdown-подобный plain, блоки кода, списки).
+3. [`model_text_to_max_markdown`](../../shared/max_format_outbound.py) внутренне использует тот же этап «нормализации», что и Telegram ([`model_text_to_telegram_html`](../../shared/telegram_app/format_outbound.py)), затем переводит подмножество HTML в **синтаксис MAX Markdown** (`++` подчёркивание, `~~` зачёркивание, `[текст](url)` и т.д.).
+4. [`raw_chunks_for_max_markdown`](../../shared/max_format_outbound.py) режет **исходный** текст на части так, чтобы после шага 3 длина каждой части не превышала 4000; при необходимости ищется разрез в окне середины сегмента, с учётом границ fenced-блоков ``` (вспомогательные функции из того же конвейера, что и для Telegram).
+5. [`send_max_message_markdown_from_model`](../../shared/max_api.py) для каждой части вызывает [`send_max_message`](../../shared/max_api.py) с **`text_format="markdown"`** (в JSON уходит **`format": "markdown"`**).
+6. Если отправка с разметкой **падает с исключением** (в т.ч. HTTP ≥ 400 от платформы), для **той же** части текста выполняется повтор **без** `format`, с текстом из [`max_markdown_to_plain`](../../shared/max_format_outbound.py).
+
+### Справочник по файлам
+
+| Файл | Роль |
+|------|------|
+| [`shared/max_format_outbound.py`](../../shared/max_format_outbound.py) | `model_text_to_max_markdown`, `telegram_html_to_max_markdown`, `raw_chunks_for_max_markdown`, `max_markdown_to_plain` |
+| [`shared/max_api.py`](../../shared/max_api.py) | `send_max_message`, `send_max_message_markdown_from_model`, `send_max_message_text`, `split_max_text`, нормализация токена и query-параметров |
+| [`services/webhooks_gateway/routes/max.py`](../../services/webhooks_gateway/routes/max.py) | Webhook `POST /webhook/max`, вызов оркестратора, первичная доставка ответа |
+| [`shared/outbound/mirror.py`](../../shared/outbound/mirror.py) | Зеркалирование ответа агента во второй канал (в т.ч. MAX) |
+| [`shared/max_bot_ui.py`](../../shared/max_bot_ui.py) | Ответы UI без `max_format_outbound` (см. таблицу ниже) |
+| [`shared/notify/delivery.py`](../../shared/notify/delivery.py) | Notify в MAX без форматированного конвейера |
+
+### Таблица: Telegram vs MAX (исходящие от агента)
+
+| Возможность | Telegram (исходящие) | MAX (исходящие LLM / зеркало) |
+|-------------|----------------------|-------------------------------|
+| Жирный / курсив / зачёркнутое | HTML `<b>`, `<i>`, `<s>` | `**`, `*`, `~~` ([дока MAX](https://dev.max.ru/docs-api)) |
+| Подчёркивание | HTML `<u>` | `++текст++` |
+| Inline-код, блок кода | `` `<code>` ``, `<pre>` `` | `` ` `` и fenced ``` (через HTML-пайплайн → MAX) |
 | Ссылки | `<a href>` | `[текст](url)` |
-| Спойлер `||…||` | `<tg-spoiler>` | без разметки (в MAX нет документированного аналога) |
-| Цитата `> …` | `<blockquote>` | строки с префиксом `> `; вложенный `<blockquote>` в HTML может склеиваться неидеально — при необходимости стоит упростить вложенность в ответе модели |
+| Спойлер `||…||` | `<tg-spoiler>` | содержимое без спойлер-тега (аналога в доке MAX нет) |
+| Цитата `> …` | `<blockquote>` | строки с префиксом `> `; сложные вложенные цитаты могут отображаться грубо |
 
-Уведомления мониторинга в MAX ([`shared/notify/delivery.py`](../../shared/notify/delivery.py)) по-прежнему отправляются **как plain** (`send_max_message_text`), без этого конвейера.
+### UI-ответы и ответ LLM
+
+| Путь | Код | Разметка |
+|------|-----|----------|
+| Slash-команды, нажатия кнопок меню | [`_max_send_ui_reply`](../../services/webhooks_gateway/routes/max.py) + [`MaxUiReply`](../../shared/max_bot_ui.py) | Уже задаётся **`text_format`** (часто `markdown`) и при необходимости **attachments** (inline keyboard); **не** через `max_format_outbound`. |
+| Долгий ответ оркестратора после сообщения пользователя | [`_max_run_orchestrator_and_reply`](../../services/webhooks_gateway/routes/max.py) | **Только** [`send_max_message_markdown_from_model`](../../shared/max_api.py). |
+| Зеркало в MAX при активном диалоге в другом канале | [`mirror_agent_text_to_secondaries`](../../shared/outbound/mirror.py) | Тот же [`send_max_message_markdown_from_model`](../../shared/max_api.py). |
+| Алерты мониторинга / notify | [`shared/notify/delivery.py`](../../shared/notify/delivery.py) | **Plain**, [`send_max_message_text`](../../shared/max_api.py) — без конвейера markdown. |
+
+Стиль экранирования в UI и в LLM-конвейере стараются **не конфликтовать**: оба используют в итоге официальный markdown MAX для исходящих с форматированием.
+
+### Многочастные сообщения (`split_max_text`)
+
+Если один фрагмент после конвертации всё ещё длиннее 4000 символов, [`send_max_message`](../../shared/max_api.py) разбивает его на несколько `POST /messages`. Для **всех** таких частей с текстом сохраняется **`format: markdown`**; **`attachments`** при необходимости передаются **только в первом** запросе (как и раньше). Раньше при `i > 0` поле `format` ошибочно сбрасывалось — это исправлено.
+
+### Зеркалирование (`AGENT_REPLY_MIRROR_*`)
+
+При включённом зеркале и совпадении активного Memory-чата тексты от агента дублируются во второй мессенджер. Ветка MAX больше **не** обрезает разметку в plain: используется тот же pipeline, что и для основного ответа в MAX. Подробнее — [`IDENTITY_AND_OPENROUTER_USER.md`](IDENTITY_AND_OPENROUTER_USER.md), [`CONFIGURATION.md`](CONFIGURATION.md) (переменные `AGENT_REPLY_MIRROR_*`).
+
+### Ограничения и диагностика
+
+- **Поддержка конструкций в клиенте MAX** (блочный markdown, вложенные списки, все нюансы fenced) без теста на реальном приложении не гарантируется — при странном отображении смотрите ответ API и при необходимости fallback на plain в логах (`MAX markdown send failed, trying plain: …`).
+- **Спойлеры Telegram** в MAX не имеют документированного эквивалента — текст выводится читаемо, но без скрытия.
+- Если «пропала разметка» только **со второго куска** длинного сообщения — проверьте версию кода: в актуальной ветке `format` на продолжениях не удаляется.
 
 ## См. также
 
