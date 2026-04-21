@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Скрипт `scripts/max_send_test.py`** — отправка одного тестового сообщения через MAX platform-api (`POST /messages`) для проверки токена на сервере; `--user-id` / `--chat-id` или `NOTIFY_MAX_USER_ID` / `NOTIFY_MAX_CHAT_ID` из env. [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md).
 - **Скрипт `scripts/telegram_html_smoke.py`** — быстрая проверка конвертера в Telegram HTML (в т.ч. `||**_…_**||`) без отправки в API. [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md).
 - **Диагностика Telegram HTML** — при отправке ответа агента и при зеркалировании в Telegram пишутся структурированные логи: префикс ``telegram_html_outbound`` (чанк, длины, utf16, успех или ``BadRequest`` с текстом API и HTML-телом), для зеркала — ``mirror: telegram``. Упрощает поиск причин plain fallback. [`shared/telegram_app/format_outbound.py`](shared/telegram_app/format_outbound.py), [`shared/outbound/mirror.py`](shared/outbound/mirror.py), [`tests/unit/test_format_outbound.py`](tests/unit/test_format_outbound.py).
 

@@ -427,6 +427,7 @@ services:
 | `scripts/healthcheck.sh prod` | Проверка 10 компонентов |
 | `scripts/diagnose_telegram_stack.sh [dev\|test\|prod]` | Диагностика «бот молчит»: health Memory/Orchestrator/Webhooks, `getWebhookInfo`, хвост лога gateway |
 | `python scripts/telegram_html_smoke.py` (из каталога `dev/`) | Печать HTML без Bot API: спойлер + жирный курсив и др. строки для проверки конвертера |
+| `python scripts/max_send_test.py --env-file .env.prod --user-id <ваш_MAX_user_id>` | Проверка **MAX_BOT_TOKEN**: одно исходящее `POST /messages` в личку (`--chat-id` для чата; иначе `NOTIFY_MAX_*` из env) |
 | `scripts/setup_memory_repo.sh <url>` | Инициализация приватного git-репо для data/agents/ |
 | `scripts/start_dev.sh` | Запуск dev-окружения |
 
