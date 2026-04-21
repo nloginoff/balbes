@@ -7,7 +7,8 @@
 # the logical agent (balbes, coder, blogger). See shared/agent_schedules.py.
 #
 # Main repo .gitignore ignores data/; workspace files (including schedules.yaml)
-# are usually versioned in the private memory repo under data/agents/.
+# are usually versioned in the private memory repo under data/agents/ (same commit/push
+# hook as workspace_write when using manage_schedule or save_yaml_for_agent).
 
 jobs:
   - id: daily_morning_briefing

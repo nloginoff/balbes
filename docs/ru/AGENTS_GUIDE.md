@@ -133,13 +133,21 @@ server_commands:
 2. `config/providers.yaml` → секция `agents[id]`
 3. Глобальные defaults в `providers.yaml`
 
-### Версионирование workspace
+### Версионирование workspace (приватный git в `data/agents/`)
 
-При каждой записи в workspace-файл:
-1. `git add {file} && git commit -m "agent: update {file}"` (синхронно)
-2. `threading.Timer(30, git_push)` — debounced push через 30 секунд
+Корень репозитория — каталог [`data/agents/`](../../data/agents) (отдельный clone от основного проекта). Реализация: [`services/orchestrator/workspace.py`](../../services/orchestrator/workspace.py) — `write_file` → `_git_auto_push`.
 
-Репозиторий: приватный GitHub-репо, настроенный через `setup_memory_repo.sh`.
+При каждой успешной записи в **разрешённый** workspace-файл (см. `WRITEABLE_FILES` в `workspace.py`):
+1. `git add -A` и commit с сообщением вида `agent(<id>): update <filename>` (синхронно, если есть изменения);
+2. debounced `git push origin HEAD` через **30** секунд (`PUSH_DEBOUNCE_SECONDS`), чтобы сгруппировать серию правок.
+
+Файлы: в том числе `*.md`, **`config.yaml`**, **`schedules.yaml`** (если они не игнорируются `.gitignore` репозитория).
+
+**`manage_schedule`** (добавление/удаление cron/interval-задач) пишет `data/agents/<agent>/schedules.yaml` через [`shared/agent_schedules.py`](../../shared/agent_schedules.py) (`save_yaml_for_agent`). С версии с общим хуком это вызывает **тот же** commit/push, что и `workspace_write` для `schedules.yaml` (функция `trigger_memory_repo_commit_for_agent`). Сообщение «планировщик применит ~30 с» относится к **hot-reload** APScheduler в Telegram-боте; push на GitHub — отдельно, с тем же debounce 30 с.
+
+Первичная настройка: [`scripts/setup_memory_repo.sh`](../../scripts/setup_memory_repo.sh). Скрипт создаёт `.gitignore`, разрешающий `**/*.md` и `**/*.yaml`. Уже существующие репозитории без `*.yaml` в правилах стоит **вручную** добавить те же исключения (или пересоздать `.gitignore` по образцу скрипта), иначе YAML не попадёт в git.
+
+Ручной снимок: [`scripts/backup_memory.sh`](../../scripts/backup_memory.sh).
 
 ---
 

@@ -221,6 +221,10 @@ temperature: 0.7
 
 Edit any of these files to change agent behavior — changes take effect on the next message.
 
+### Private git repo for `data/agents/`
+
+Run [`scripts/setup_memory_repo.sh`](../../scripts/setup_memory_repo.sh) once with your private Git URL so `data/agents/` is its own repository. Auto-commit and debounced push apply to **workspace writes** (`workspace_write`) and to **`schedules.yaml`** updates from **`manage_schedule`** (same mechanism as in [`docs/en/AGENTS_GUIDE.md`](AGENTS_GUIDE.md) — *Workspace Versioning*). The generated `.gitignore` allows `**/*.md` and `**/*.yaml`; older repos that only tracked `.md` should add the YAML negation rules manually.
+
 ---
 
 ## Execution Modes

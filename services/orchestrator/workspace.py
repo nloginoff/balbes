@@ -316,3 +316,17 @@ class AgentWorkspace:
         if not self.workspace_dir.exists():
             return []
         return [f.name for f in self.workspace_dir.iterdir() if f.suffix in (".md", ".yaml")]
+
+
+def trigger_memory_repo_commit_for_agent(
+    agent_id: str, filename: str, workspace_root: str | None = None
+) -> None:
+    """
+    Run the same auto-commit and debounced push as :meth:`AgentWorkspace.write_file`
+    for files written outside the workspace tool (e.g. ``save_yaml_for_agent`` for
+    ``schedules.yaml``). No-op if ``data/agents/`` is not a git repository.
+
+    ``workspace_root`` — optional path to the ``data/agents`` parent (same as
+    :meth:`AgentWorkspace`); pass when callers resolve agent dirs from a test temp tree.
+    """
+    AgentWorkspace(agent_id, workspace_root=workspace_root)._git_auto_push(filename)

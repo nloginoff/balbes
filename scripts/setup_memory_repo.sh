@@ -117,11 +117,13 @@ git remote add origin "$REPO_URL"
 git config user.name  "$GIT_NAME"
 git config user.email "$GIT_EMAIL"
 
-# Create a root .gitignore so only .md files are tracked
+# Create a root .gitignore: workspace markdown + structured YAML (config, schedules)
 cat > .gitignore <<'GITIGNORE'
-# Track only workspace markdown files
+# Deny all by default; un-ignore dirs then *.md / *.yaml in any agent folder
 *
-!*.md
+!**/
+!**/*.md
+!**/*.yaml
 !.gitignore
 GITIGNORE
 

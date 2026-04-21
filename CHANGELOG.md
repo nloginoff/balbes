@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Версионирование `schedules.yaml` в приватном memory-репо** — после `save_yaml_for_agent` вызывается тот же commit + debounced push, что и у `workspace_write` ([`services/orchestrator/workspace.py`](services/orchestrator/workspace.py) — `trigger_memory_repo_commit_for_agent`). [`scripts/setup_memory_repo.sh`](scripts/setup_memory_repo.sh) создаёт `.gitignore` с `**/*.md` и `**/*.yaml`. Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md), [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md). Тест: [`tests/unit/test_agent_schedules.py`](tests/unit/test_agent_schedules.py).
+
 ### Fixed
 - **Оркестратор + Telegram: параллельные запросы** — у одного `user_id` foreground-задачи **сериализуются** (`asyncio.Lock` на пользователя, heartbeat вне его): дополнительные `POST` **ждут в очереди (FIFO)**, ничего не «отваливается» с `failed` из-за занятости. **Telegram:** таймаут чтения `POST` увеличен (чтобы хватало на ожидание в очереди + LLM, по умолчанию 600 с); по **ReadTimeout** бот **не** вызывает **cancel** на оркестраторе, чтобы не гасить идущую/очередь чужой работы. Файлы: [`services/orchestrator/agent.py`](services/orchestrator/agent.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py); тест [`tests/unit/test_orchestrator_user_lock.py`](tests/unit/test_orchestrator_user_lock.py).
 - **render_solution (PNG):** в [`shared/solution_render.py`](shared/solution_render.py) сужен перенос (`MAX_WRAP`), сдвинуто поле вправо, для длинных формул — уменьшение `fontsize`, после `savefig` — **tight-crop** по нетексту (PIL), чтобы не было пустой высоты и лучше вписывать текст по ширине.

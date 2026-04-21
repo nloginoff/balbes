@@ -433,6 +433,10 @@ services:
 
 ### setup_memory_repo.sh
 
+Инициализирует **отдельный** приватный репозиторий с корнем в `data/agents/`: markdown workspace, `config.yaml`, `schedules.yaml` версионируются **автоматически** при записи через `workspace_write` и при изменениях из инструмента `manage_schedule` (тот же commit + debounced push, см. «Версионирование workspace» в [`docs/ru/AGENTS_GUIDE.md`](AGENTS_GUIDE.md)).
+
+Создаваемый `.gitignore` разрешает `**/*.md` и `**/*.yaml`. Если репозиторий настроен **раньше** (только `*.md`), добавь в `data/agents/.gitignore` строки `!**/*.yaml` (или скопируй блок из актуального скрипта), иначе YAML не попадёт в git.
+
 ```bash
 # Первый раз на dev
 bash scripts/setup_memory_repo.sh git@github.com:user/balbes-memory.git

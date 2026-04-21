@@ -146,11 +146,20 @@ Or via the agent tools `save_to_memory` and `recall_from_memory`.
 
 ## Workspace Versioning
 
-If `setup_memory_repo.sh` was run, every write to `data/agents/*/` is auto-committed and pushed to a private GitHub repo. This gives you:
+The private git repo root is `data/agents/` (separate clone from the main app repo). Implementation: [`services/orchestrator/workspace.py`](../../services/orchestrator/workspace.py) — `write_file` → `_git_auto_push`.
 
-- Full history of agent workspace changes
-- Easy rollback if the agent writes something wrong
-- Backup of `MEMORY.md`, `HEARTBEAT.md`, and other workspace files
+On each successful write to an allowed workspace file (see `WRITEABLE_FILES` in `workspace.py`):
+
+1. `git add -A` and a commit such as `agent(<id>): update <filename>` (if there is a diff);
+2. Debounced `git push origin HEAD` after **30** seconds (`PUSH_DEBOUNCE_SECONDS`) to batch bursts.
+
+Tracked content includes `*.md`, **`config.yaml`**, and **`schedules.yaml`**, as long as they are not excluded by the repo `.gitignore`.
+
+The **`manage_schedule`** tool updates `data/agents/<agent>/schedules.yaml` via [`shared/agent_schedules.py`](../../shared/agent_schedules.py) (`save_yaml_for_agent`). It triggers the **same** commit/push hook as `workspace_write` for `schedules.yaml` (`trigger_memory_repo_commit_for_agent`). The “scheduler will pick this up in ~30s” message refers to the Telegram bot’s APScheduler hot-reload; the GitHub push uses the same 30s debounce independently.
+
+First-time setup: [`scripts/setup_memory_repo.sh`](../../scripts/setup_memory_repo.sh) — the generated `.gitignore` allows `**/*.md` and `**/*.yaml`. Existing repos that only whitelisted markdown should **manually** add the same YAML rules (or align `.gitignore` with the script) so YAML is tracked.
+
+Manual snapshot: [`scripts/backup_memory.sh`](../../scripts/backup_memory.sh).
 
 ---
 

@@ -126,3 +126,16 @@ def save_yaml_for_agent(agent_id: str, data: dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+    # Same private-repo versioning as workspace_write (debounced commit + push to data/agents/ git).
+    try:
+        from services.orchestrator.workspace import trigger_memory_repo_commit_for_agent
+    except ImportError:  # e.g. tests with minimal path
+        logger.debug("save_yaml: skip memory-repo commit (orchestrator not importable)")
+    else:
+        try:
+            trigger_memory_repo_commit_for_agent(
+                agent_id, SCHEDULE_FILENAME, workspace_root=str(agents_base_dir())
+            )
+        except Exception as e:
+            logger.warning("save_yaml: memory-repo commit failed: %s", e)
