@@ -352,9 +352,10 @@ async def test_task_execution_api(http_client, user_id):
     try:
         response = await http_client.post(
             "http://localhost:8102/api/v1/tasks",
-            params={
+            json={
                 "user_id": user_id,
                 "description": "Test task via API",
+                "mode": "ask",
             },
         )
 

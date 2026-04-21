@@ -362,9 +362,10 @@ async def test_perf_e2e_task_execution(http_client, check_service):
         # Create task
         response = await http_client.post(
             f"{BASE_URLS['orchestrator']}/api/v1/tasks",
-            params={
+            json={
                 "user_id": "perf_test",
                 "description": task_data["description"],
+                "mode": "ask",
             },
         )
         assert response.status_code == 200

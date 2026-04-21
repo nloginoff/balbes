@@ -221,7 +221,18 @@ async def root() -> dict:
 
 
 # Import and include API routers
-from api import agent_session, agents, context, history, identity, logs, memory, tasks, tokens
+from api import (
+    agent_session,
+    agents,
+    context,
+    history,
+    identity,
+    logs,
+    memory,
+    tasks,
+    tokens,
+    user_settings,
+)
 
 app.include_router(context.router, prefix="/api/v1", tags=["context"])
 app.include_router(history.router, prefix="/api/v1", tags=["history"])
@@ -232,6 +243,7 @@ app.include_router(tasks.router, prefix="/api/v1", tags=["tasks"])
 app.include_router(logs.router, prefix="/api/v1", tags=["logs"])
 app.include_router(tokens.router, prefix="/api/v1", tags=["tokens"])
 app.include_router(identity.router, prefix="/api/v1", tags=["identity"])
+app.include_router(user_settings.router, prefix="/api/v1", tags=["user-settings"])
 
 
 if __name__ == "__main__":

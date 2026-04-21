@@ -446,6 +446,23 @@ agents:
 # Models available for user selection (shown in /model menu)
 # First entry = default when Memory has no per-chat model_id (see orchestrator _get_model_for_chat).
 # Sorted by tier after the default: free → cheap → medium → premium
+# Vision models for image analysis (global per user via /vision). Separate from chat model.
+vision_models:
+  default_tier: cheap
+  tiers:
+    - tier: cheap
+      id: "openrouter/google/gemini-2.0-flash-001"
+      display_name: "👁 Gemini 2.0 Flash (vision, дёшево)"
+      capabilities: [chat, vision]
+    - tier: medium
+      id: "openrouter/google/gemini-2.5-flash-preview-05-20"
+      display_name: "👁 Gemini 2.5 Flash (vision)"
+      capabilities: [chat, vision]
+    - tier: premium
+      id: "openrouter/openai/gpt-4o"
+      display_name: "👁 GPT-4o (vision)"
+      capabilities: [chat, vision]
+
 active_models:
   # ── Default chat model (cheap, OpenRouter paid tier) ─────────────────────
   - id: "openrouter/meta-llama/llama-3.3-70b-instruct"

@@ -1127,3 +1127,23 @@ class RedisClient:
             return bool(exists)
         except Exception:
             return False
+
+    # =========================================================================
+    # Global vision tier (per canonical user, not per chat) — /vision
+    # =========================================================================
+
+    def _vision_tier_key(self, canonical_user_id: str) -> str:
+        return f"vision_tier:{canonical_user_id}"
+
+    async def get_vision_tier(self, canonical_user_id: str) -> str | None:
+        """Return cheap | medium | premium or None if unset (caller uses default from yaml)."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        v = await self.client.get(self._vision_tier_key(canonical_user_id))
+        return v if v else None
+
+    async def set_vision_tier(self, canonical_user_id: str, tier: str) -> None:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        t = tier.strip().lower()
+        await self.client.set(self._vision_tier_key(canonical_user_id), t)

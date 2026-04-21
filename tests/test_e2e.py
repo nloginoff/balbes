@@ -125,9 +125,10 @@ async def test_e2e_complete_task_workflow(http_client, services_health):
     # Step 1: Submit task
     response = await http_client.post(
         f"{BASE_URLS['orchestrator']}/api/v1/tasks",
-        params={
+        json={
             "user_id": "test_e2e_user",
             "description": "E2E Test: Calculate fibonacci(10)",
+            "mode": "ask",
         },
     )
     assert response.status_code == 200
@@ -613,7 +614,7 @@ async def test_e2e_error_handling(http_client, services_health):
     if services_health.get("orchestrator"):
         response = await http_client.post(
             f"{BASE_URLS['orchestrator']}/api/v1/tasks",
-            json={"agent_id": "", "description": ""},  # Invalid
+            json={"user_id": "", "description": ""},  # Invalid
         )
         # Should handle gracefully (might succeed with empty fields or fail)
         assert response.status_code in [200, 400, 422]
@@ -726,9 +727,10 @@ async def test_e2e_data_consistency(http_client, services_health):
     # Step 1: Create task via Orchestrator
     response = await http_client.post(
         f"{BASE_URLS['orchestrator']}/api/v1/tasks",
-        params={
+        json={
             "user_id": "test_e2e_user",
             "description": "E2E Consistency Test Task",
+            "mode": "ask",
         },
     )
     assert response.status_code == 200

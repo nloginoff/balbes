@@ -3,38 +3,41 @@ Orchestrator API routes for task management.
 """
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("orchestrator.api.tasks")
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 
+class TaskCreateRequest(BaseModel):
+    """JSON body for POST /api/v1/tasks (application/json)."""
+
+    user_id: str = Field(..., description="Canonical user id (Memory UUID)")
+    description: str = Field(..., description="User message / task text")
+    chat_id: str | None = None
+    agent_id: str | None = None
+    model_id: str | None = None
+    source: str = "user"
+    debug: bool = False
+    mode: str = "ask"
+    bot_id: str | None = None
+    attachments: list[dict[str, Any]] | None = None
+    vision_tier: str | None = Field(
+        default=None,
+        description="Override vision tier for this request: cheap | medium | premium",
+    )
+
+
 @router.post("")
-async def create_task(
-    user_id: str,
-    description: str,
-    chat_id: str | None = None,
-    agent_id: str | None = None,
-    model_id: str | None = None,
-    source: str = "user",
-    debug: bool = False,
-    mode: str = "ask",
-    bot_id: str | None = None,
-) -> dict:
+async def create_task(req: TaskCreateRequest) -> dict:
     """
     Create and execute a task within a chat session.
 
-    Args:
-        user_id: User identifier (Telegram user_id)
-        description: Task / message text
-        chat_id: Chat session ID (optional, uses active chat if omitted)
-        agent_id: Agent to use (balbes | coder | ...). Defaults to 'balbes'.
-        model_id: Override model for this task (e.g. heartbeat uses a fixed free model).
-        source: Origin of the task — "user" | "heartbeat" (used for activity log tagging).
-        debug: If true, collect execution trace events and return them in response.
-        mode: "agent" (all tools) | "ask" (no exec/write tools — read-only).
+    Clients must send ``Content-Type: application/json`` with a TaskCreateRequest body.
     """
     import main as orchestrator_main
 
@@ -46,12 +49,19 @@ async def create_task(
 
     try:
         result = await orchestrator_main.orchestrator_agent.execute_task(
-            description=description,
-            user_id=user_id,
-            chat_id=chat_id,
-            agent_id=agent_id,
-            model_id=model_id,
-            context={"source": source, "debug": debug, "mode": mode, "bot_id": bot_id},
+            description=req.description,
+            user_id=req.user_id,
+            chat_id=req.chat_id,
+            agent_id=req.agent_id,
+            model_id=req.model_id,
+            context={
+                "source": req.source,
+                "debug": req.debug,
+                "mode": req.mode,
+                "bot_id": req.bot_id,
+                "attachments": req.attachments,
+                "vision_tier": req.vision_tier,
+            },
         )
         return result
 
@@ -124,10 +134,7 @@ async def bg_events(
     consume_result: bool = False,
 ) -> dict:
     """
-    Poll background task progress for a specific user+agent pair.
-    Returns accumulated debug events (drains the buffer) and current status.
-    Pass consume_result=true when the client is ready to display the final result
-    (removes it from the internal store so get_agent_result tool won't double-report).
+    Poll background task status and optional debug events.
     """
     import main as orchestrator_main
 
@@ -137,24 +144,5 @@ async def bg_events(
             detail="Orchestrator not initialized",
         )
     return orchestrator_main.orchestrator_agent.poll_bg_task(
-        user_id=user_id,
-        agent_id=agent_id,
-        consume_result=consume_result,
+        user_id, agent_id, consume_result=consume_result
     )
-
-
-@router.get("/{task_id}")
-async def get_task(task_id: str) -> dict:
-    """Get task status and results."""
-    import main as orchestrator_main
-
-    if not orchestrator_main.orchestrator_agent:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Orchestrator not initialized",
-        )
-    agent = orchestrator_main.orchestrator_agent
-    entry = agent._task_registry.get(task_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail=f"Task {task_id!r} not found")
-    return entry

@@ -188,10 +188,11 @@ async def _max_run_orchestrator_and_reply(
     mem = settings.memory_service_url.rstrip("/")
     timeout = float(settings.task_timeout_seconds) + 120.0
     user_key = await _max_canonical_user_id(mem, sender_user_id)
-    params: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "user_id": user_key,
         "description": text,
         "source": "max",
+        "mode": "ask",
     }
 
     reply_text = ""
@@ -217,10 +218,10 @@ async def _max_run_orchestrator_and_reply(
                     client=client,
                 )
                 if mem_chat_id:
-                    params["chat_id"] = mem_chat_id
+                    payload["chat_id"] = mem_chat_id
             except Exception:
                 mem_chat_id = None
-            resp = await client.post(url, params=params)
+            resp = await client.post(url, json=payload)
             if resp.status_code != 200:
                 reply_text = f"Ошибка оркестратора: HTTP {resp.status_code}"
                 try:

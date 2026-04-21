@@ -283,17 +283,28 @@ _background_results → result_text (если завершено)
 
 ### POST /api/v1/tasks
 
+Тело запроса — **JSON** (`Content-Type: application/json`). Поле текста пользователя — **`description`** (не `input`).
+
 ```json
 {
-  "user_id": "YOUR_TELEGRAM_USER_ID",
+  "user_id": "uuid-canonical-user-id",
+  "description": "Что на изображении?",
   "chat_id": "abc123",
-  "input": "Посмотри статус git",
+  "agent_id": "balbes",
   "model_id": "openrouter/minimax/minimax-m2.5",
   "source": "user",
   "mode": "ask",
-  "debug": true
+  "debug": true,
+  "bot_id": "main",
+  "attachments": [
+    {"kind": "image", "data_url": "data:image/jpeg;base64,..."},
+    {"kind": "file_text", "filename": "notes.txt", "text": "..."}
+  ],
+  "vision_tier": "cheap"
 }
 ```
+
+Подробнее про вложения и vision — [`docs/ru/ATTACHMENTS.md`](ATTACHMENTS.md).
 
 Ответ:
 ```json

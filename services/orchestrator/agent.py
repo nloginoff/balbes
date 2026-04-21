@@ -58,7 +58,9 @@ from shared.agent_base import BaseAgent
 from shared.agent_execute_contract import delegation_headers
 from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent_with_manifest
 from shared.config import get_settings
+from shared.identity_client import get_vision_tier as fetch_vision_tier_http
 from shared.openrouter_http import openrouter_json_headers
+from shared.vision_models import default_vision_tier, resolve_vision_model_id
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
@@ -517,6 +519,44 @@ class OrchestratorAgent(BaseAgent):
                 self.tool_dispatcher.workspace = workspace
                 self.tool_dispatcher._logger = activity_log
 
+            user_message_for_model = description
+            user_message_for_history = description
+            vision_usage_pre: dict[str, int] = {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+            if not is_heartbeat:
+                att = ctx.get("attachments")
+                if att and isinstance(att, list) and len(att) > 0:
+                    try:
+                        (
+                            user_message_for_model,
+                            user_message_for_history,
+                            vision_usage_pre,
+                        ) = await self._expand_attachments(
+                            description=description,
+                            attachments=att,
+                            user_id=user_id,
+                            vision_tier_override=ctx.get("vision_tier"),
+                        )
+                    except LLMUnavailableError:
+                        raise
+                    except Exception as e:
+                        logger.exception("attachment expand failed: %s", e)
+                        duration_ms = (
+                            datetime.now(timezone.utc) - start_time
+                        ).total_seconds() * 1000
+                        self._fg_debug_buffer.pop(f"{user_id}:{effective_agent_id}:fg", None)
+                        self._finish_task(task_id, "error")
+                        return {
+                            "task_id": task_id,
+                            "status": "failed",
+                            "error": f"Вложения: {e!s}",
+                            "chat_id": chat_id,
+                            "duration_ms": duration_ms,
+                        }
+
             # Optionally summarize old history if context window would be exceeded
             history_summary: str | None = None
             if not is_heartbeat:
@@ -525,7 +565,7 @@ class OrchestratorAgent(BaseAgent):
                     chat_id=chat_id,
                     history=history,
                     system_prompt=system_prompt,
-                    user_input=description,
+                    user_input=user_message_for_model,
                     model_id=model_id,
                 )
 
@@ -533,14 +573,14 @@ class OrchestratorAgent(BaseAgent):
             messages = build_messages_for_llm(
                 system_prompt=system_prompt,
                 history=history,
-                user_input=description,
+                user_input=user_message_for_model,
                 model_id=model_id,
                 history_summary=history_summary,
             )
 
             # Save user message to history (skip for heartbeat — don't pollute user history)
             if not is_heartbeat:
-                await self._save_to_history(user_id, chat_id, "user", description)
+                await self._save_to_history(user_id, chat_id, "user", user_message_for_history)
 
             debug: bool = ctx.get("debug", False)
             mode: str = ctx.get("mode", "agent")
@@ -588,6 +628,9 @@ class OrchestratorAgent(BaseAgent):
                 ),
                 between_rounds_delay=between_rounds_delay,
             )
+
+            for k in vision_usage_pre:
+                token_usage[k] = token_usage.get(k, 0) + vision_usage_pre.get(k, 0)
 
             # Detect newly started background tasks during this execution
             _bg_keys_after = set(self._background_tasks.keys())
@@ -1328,6 +1371,102 @@ class OrchestratorAgent(BaseAgent):
     # -------------------------------------------------------------------------
     # Model helpers
     # -------------------------------------------------------------------------
+
+    async def _run_vision_analysis(
+        self,
+        text_prompt: str,
+        images: list[dict[str, Any]],
+        vision_model_id: str,
+        user_id: str,
+    ) -> tuple[str, dict[str, int]]:
+        """Single multimodal call, no tools. Returns (assistant_text, usage)."""
+        prompt = (text_prompt or "").strip() or (
+            "Опиши изображения подробно и ответь на вопрос пользователя, если он есть."
+        )
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt[:12000]}]
+        for im in images:
+            url = (im.get("data_url") or "").strip()
+            if not url and im.get("base64"):
+                mime = (im.get("mime_type") or "image/jpeg").strip()
+                b64 = str(im.get("base64") or "")
+                url = f"data:{mime};base64,{b64}"
+            if url:
+                parts.append({"type": "image_url", "image_url": {"url": url}})
+        if len(parts) < 2:
+            raise RuntimeError("Нет данных изображения для vision")
+        messages = [{"role": "user", "content": parts}]
+        data, model_used, llm_error, usage = await self._call_llm(
+            messages=messages,
+            model_id=vision_model_id,
+            with_tools=False,
+            agent_id=None,
+            available_tools=[],
+            openrouter_user_end_id=user_id,
+        )
+        if data is None or llm_error:
+            raise LLMUnavailableError(llm_error or "vision call failed")
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        return str(content).strip(), usage
+
+    async def _expand_attachments(
+        self,
+        *,
+        description: str,
+        attachments: list[dict[str, Any]],
+        user_id: str,
+        vision_tier_override: str | None,
+    ) -> tuple[str, str, dict[str, int]]:
+        """
+        Merge file text + optional vision pass into agent description.
+        Returns (agent_description, history_line_for_redis, vision_usage).
+        """
+        vision_usage: dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        file_texts: list[str] = []
+        images: list[dict[str, Any]] = []
+        for a in attachments:
+            if a.get("kind") == "file_text":
+                fn = a.get("filename") or "file"
+                tx = (a.get("text") or "").strip()
+                if tx:
+                    file_texts.append(f"--- {fn} ---\n{tx}")
+            elif a.get("kind") == "image":
+                images.append(a)
+
+        base = (description or "").strip()
+        if file_texts:
+            base = (base + "\n\n" + "\n\n".join(file_texts)).strip()
+
+        hist_lines: list[str] = []
+        if (description or "").strip():
+            hist_lines.append((description or "").strip())
+        if file_texts:
+            hist_lines.append(f"[вложения: {len(file_texts)} файлов, текст извлечён в контекст]")
+
+        if not images:
+            hist = "\n".join(hist_lines) if hist_lines else base
+            return base or "(пустое сообщение)", hist or base, vision_usage
+
+        vision_tier = vision_tier_override
+        if not vision_tier:
+            vision_tier = await fetch_vision_tier_http(
+                self.memory_service_url, user_id, client=self.http_client
+            )
+        if not vision_tier:
+            vision_tier = default_vision_tier()
+        vmid = resolve_vision_model_id(vision_tier)
+        if not vmid:
+            raise RuntimeError("Не настроен vision_models в config/providers.yaml")
+        vtext, vu = await self._run_vision_analysis(base, images, vmid, user_id)
+        for k in vision_usage:
+            vision_usage[k] = vision_usage.get(k, 0) + vu.get(k, 0)
+        agent_text = f"{base}\n\n--- Разбор изображений (vision, tier {vision_tier}) ---\n{vtext}"
+        hist_lines.append(f"[изображения: {len(images)} — vision tier {vision_tier}]")
+        hist = "\n".join(hist_lines)
+        return agent_text, hist, vision_usage
 
     async def _get_model_for_chat(self, user_id: str, chat_id: str) -> str:
         """Get model assigned to this chat, falling back to default."""

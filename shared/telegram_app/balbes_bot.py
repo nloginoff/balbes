@@ -17,6 +17,10 @@ Commands:
 
 Voice messages: short audio is transcribed locally (openai-whisper, configurable model); longer or
 unknown duration uses cloud STT (OpenRouter / Yandex SpeechKit), then optional LLM correction.
+
+Photos and documents (when enabled in the agent manifest) are sent to the orchestrator as JSON
+attachments (vision pass for images, text extraction for PDF/DOCX/XLSX/text). /vision sets the global
+vision quality tier stored in Memory.
 """
 
 import asyncio
@@ -25,7 +29,7 @@ import logging
 import re
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -51,10 +55,13 @@ from telegram.ext import (
 
 from shared.agent_manifest import get_agent_manifest
 from shared.config import get_settings
+from shared.document_extract import extract_text_from_bytes
 from shared.identity_client import (
     create_pairing_code,
+    get_vision_tier,
     redeem_pairing_code,
     resolve_canonical_user_id,
+    set_vision_tier,
     touch_channel_presence,
 )
 from shared.outbound.mirror import deliver_agent_text_with_mirror, mirror_agent_text_to_secondaries
@@ -63,6 +70,8 @@ from shared.telegram_app.telegram_command_matrix import (
     build_slash_bot_commands,
     register_slash_command_handlers,
 )
+from shared.user_media import image_to_data_url_jpeg
+from shared.vision_models import default_vision_tier, list_vision_tiers, vision_tier_display_name
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
@@ -73,6 +82,7 @@ CALLBACK_AGENT_PREFIX = "agent:"
 CALLBACK_NEW_CHAT = "new_chat"
 CALLBACK_MODEL_UNAVAIL_YES = "model_unavail:yes:"
 CALLBACK_MODEL_UNAVAIL_NO = "model_unavail:no"
+CALLBACK_VISION_PREFIX = "vision:"
 
 
 _MD2_ESCAPE_RE = str.maketrans({c: f"\\{c}" for c in r"\_*[]()~`>#+-=|{}.!"})
@@ -601,16 +611,17 @@ class BalbesTelegramBot:
                 if user_id and user_id != "0"
                 else user_id
             )
-            params: dict = {
+            payload: dict = {
                 "user_id": mem_uid,
                 "description": prompt,
                 "agent_id": agent_id,
                 "source": f"scheduler:{job_id}",
-                "debug": str(debug).lower(),
+                "debug": debug,
+                "mode": "ask",
             }
             response = await self._get_http().post(
                 f"{self.orchestrator_url}/api/v1/tasks",
-                params=params,
+                json=payload,
                 timeout=120.0,
             )
         except Exception as e:
@@ -695,18 +706,19 @@ class BalbesTelegramBot:
 
         for attempt, model_id in enumerate(models_to_try):
             try:
-                params: dict = {
+                payload: dict = {
                     "user_id": mem_uid,
                     "description": HEARTBEAT_PROMPT,
                     "agent_id": "balbes",
                     "source": "heartbeat",
+                    "mode": "ask",
                 }
                 if model_id:
-                    params["model_id"] = model_id
+                    payload["model_id"] = model_id
 
                 response = await self._get_http().post(
                     f"{self.orchestrator_url}/api/v1/tasks",
-                    params=params,
+                    json=payload,
                     timeout=90.0,
                 )
             except Exception as e:
@@ -862,6 +874,10 @@ class BalbesTelegramBot:
             self.app.add_handler(
                 CallbackQueryHandler(self.cb_model_unavail, pattern="^model_unavail:")
             )
+        if tg.vision_command:
+            self.app.add_handler(
+                CallbackQueryHandler(self.cb_vision_tier, pattern=f"^{CALLBACK_VISION_PREFIX}")
+            )
         if tg.agents_switch:
             self.app.add_handler(
                 CallbackQueryHandler(self.cb_agent_selected, pattern=f"^{CALLBACK_AGENT_PREFIX}")
@@ -880,6 +896,11 @@ class BalbesTelegramBot:
         # Voice messages
         if tg.voice:
             self.app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, self.handle_voice))
+
+        # Photos / documents → orchestrator attachments (vision + text extract)
+        if tg.vision_command:
+            self.app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
+            self.app.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
 
         # Regular text messages
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
@@ -1392,6 +1413,46 @@ class BalbesTelegramBot:
         await update.message.reply_text(
             f"🤖 *Выбери модель для текущего чата*\nСейчас: _{current_name}_",
             reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+    async def cmd_vision(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global vision tier (cheap / medium / premium) — stored in Memory per user."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        mem_uid = await self._memory_user_id(user)
+        current = await get_vision_tier(self.memory_url, mem_uid, client=self._get_http())
+        if not current:
+            current = default_vision_tier()
+        tiers = list_vision_tiers()
+        if not tiers:
+            await update.message.reply_text(
+                "⚠️ Секция `vision_models` не настроена в `config/providers.yaml`."
+            )
+            return
+        buttons: list[list[InlineKeyboardButton]] = []
+        for row in tiers:
+            tier = (row.get("tier") or "").strip().lower()
+            if not tier:
+                continue
+            label = str(row.get("display_name") or tier)
+            mark = "✓ " if tier == current else ""
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{mark}{label}",
+                        callback_data=f"{CALLBACK_VISION_PREFIX}{tier}",
+                    )
+                ]
+            )
+        if not buttons:
+            await update.message.reply_text("⚠️ Нет доступных tier в конфиге.")
+            return
+        await update.message.reply_text(
+            "🖼 *Качество разбора изображений* (одинаково для всех чатов):\n"
+            f"Сейчас: _{vision_tier_display_name(current)}_",
+            reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="Markdown",
         )
 
@@ -2183,6 +2244,29 @@ class BalbesTelegramBot:
             parse_mode="Markdown",
         )
 
+    async def cb_vision_tier(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user or not query.data:
+            return
+        data = query.data
+        if not data.startswith(CALLBACK_VISION_PREFIX):
+            return
+        tier = data[len(CALLBACK_VISION_PREFIX) :].strip().lower()
+        if not tier:
+            return
+        mem_uid = await self._memory_user_id(user)
+        ok = await set_vision_tier(self.memory_url, mem_uid, tier, client=self._get_http())
+        label = vision_tier_display_name(tier)
+        if ok:
+            await query.edit_message_text(
+                f"✅ Разбор изображений: *{label}*",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text("❌ Не удалось сохранить настройку (Memory Service).")
+
     async def cb_model_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
@@ -2478,12 +2562,103 @@ class BalbesTelegramBot:
                 await typing_task
             self._active_tasks.pop(user_id, None)
 
+    async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Photo → vision attachment + optional caption as user text."""
+        user: User | None = update.effective_user
+        message = update.message
+        if not user or not message or not message.photo:
+            return
+        user_id = str(user.id)
+        self._active_tasks[user_id] = asyncio.current_task()  # type: ignore[assignment]
+        try:
+            photo = message.photo[-1]
+            file = await context.bot.get_file(photo.file_id)
+            raw = bytes(await file.download_as_bytearray())
+            data_url = image_to_data_url_jpeg(raw)
+            caption = (message.caption or "").strip() or (
+                "Опиши изображение и ответь на вопрос, если он есть."
+            )
+            att = [{"kind": "image", "data_url": data_url}]
+            await self._process_user_input(
+                update=update,
+                context=context,
+                user=user,
+                text=caption,
+                attachments=att,
+            )
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await message.reply_text("✋ Выполнение остановлено")
+        except Exception as e:
+            logger.error("handle_photo failed: %s", e, exc_info=True)
+            await message.reply_text(f"❌ Не удалось обработать фото: {e!s}")
+        finally:
+            self._active_tasks.pop(user_id, None)
+
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Document → image (vision) or extracted text."""
+        user: User | None = update.effective_user
+        message = update.message
+        if not user or not message:
+            return
+        doc = message.document
+        if not doc:
+            return
+        user_id = str(user.id)
+        self._active_tasks[user_id] = asyncio.current_task()  # type: ignore[assignment]
+        try:
+            fname = doc.file_name or "file"
+            mime = (doc.mime_type or "").lower()
+            file = await context.bot.get_file(doc.file_id)
+            raw = bytes(await file.download_as_bytearray())
+            if len(raw) > 20 * 1024 * 1024:
+                await message.reply_text("❌ Файл больше 20 МБ — уменьши размер.")
+                return
+
+            attachments: list[dict[str, Any]]
+            if mime.startswith("image/"):
+                data_url = image_to_data_url_jpeg(raw)
+                attachments = [{"kind": "image", "data_url": data_url}]
+            else:
+                extracted, err = extract_text_from_bytes(fname, raw)
+                if err and not (extracted or "").strip():
+                    await message.reply_text(f"❌ {err}")
+                    return
+                note = f"\n\n[примечание: {err}]" if err else ""
+                attachments = [
+                    {
+                        "kind": "file_text",
+                        "filename": fname,
+                        "text": (extracted or "").strip() + note,
+                    }
+                ]
+
+            caption = (message.caption or "").strip() or "Обработай вложение."
+            await self._process_user_input(
+                update=update,
+                context=context,
+                user=user,
+                text=caption,
+                attachments=attachments,
+            )
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await message.reply_text("✋ Выполнение остановлено")
+        except Exception as e:
+            logger.error("handle_document failed: %s", e, exc_info=True)
+            await message.reply_text(f"❌ Не удалось обработать файл: {e!s}")
+        finally:
+            self._active_tasks.pop(user_id, None)
+
     async def _process_user_input(
         self,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
         user: User,
         text: str,
+        *,
+        attachments: list[dict[str, Any]] | None = None,
+        vision_tier: str | None = None,
     ) -> None:
         """Send user input to orchestrator and deliver the response."""
         message = update.message
@@ -2525,23 +2700,28 @@ class BalbesTelegramBot:
                 if chat_id:
                     chat_settings = await self._get_chat_settings(mem_uid, chat_id)
 
-                # Send to orchestrator
-                params = {
+                # Send to orchestrator (JSON body)
+                payload: dict[str, Any] = {
                     "user_id": mem_uid,
                     "description": text,
                     "debug": chat_settings.get("debug", False),
                     "mode": chat_settings.get("mode", "ask"),
                     "bot_id": self.bot_label,
+                    "source": "user",
                 }
                 if chat_id:
-                    params["chat_id"] = chat_id
+                    payload["chat_id"] = chat_id
                     agent_id = await self._get_chat_agent(mem_uid, chat_id)
                     if agent_id:
-                        params["agent_id"] = agent_id
+                        payload["agent_id"] = agent_id
+                if attachments:
+                    payload["attachments"] = attachments
+                if vision_tier:
+                    payload["vision_tier"] = vision_tier
 
                 await self._touch_agent_session(
                     mem_uid,
-                    params.get("agent_id") or "balbes",
+                    payload.get("agent_id") or "balbes",
                     chat_id or "default",
                 )
 
@@ -2549,9 +2729,9 @@ class BalbesTelegramBot:
                 #   debug=True  → full debug trace (existing behaviour)
                 #   agent mode  → compact progress indicator (new)
                 fg_monitor: asyncio.Task | None = None
-                _active_agent_id = params.get("agent_id", "balbes")
+                _active_agent_id = payload.get("agent_id", "balbes")
                 _is_debug = chat_settings.get("debug", False)
-                _is_agent_mode = params.get("mode", "ask") == "agent"
+                _is_agent_mode = payload.get("mode", "ask") == "agent"
                 if chat_tg and (_is_debug or _is_agent_mode):
                     fg_monitor = self._start_fg_monitor(
                         tg_chat_id=chat_tg.id,
@@ -2563,7 +2743,7 @@ class BalbesTelegramBot:
                 try:
                     response = await self._get_http().post(
                         f"{self.orchestrator_url}/api/v1/tasks",
-                        params=params,
+                        json=payload,
                         timeout=120.0,
                     )
                 except httpx.ReadTimeout:

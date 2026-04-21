@@ -36,6 +36,9 @@ SLASH_COMMANDS_ORCHESTRATOR: tuple[SlashCommandRow, ...] = (
     SlashCommandRow("multi_chat", "newchat", "Создать новый чат", "cmd_newchat"),
     SlashCommandRow("multi_chat", "rename", "Переименовать текущий чат", "cmd_rename"),
     SlashCommandRow("model_switch", "model", "Выбрать модель для чата", "cmd_model"),
+    SlashCommandRow(
+        "vision_command", "vision", "Качество разбора изображений (tier)", "cmd_vision"
+    ),
     SlashCommandRow("clear_command", "clear", "Очистить историю чата", "cmd_clear"),
     SlashCommandRow(
         "memory_commands", "remember", "Сохранить в долгосрочную память", "cmd_remember"

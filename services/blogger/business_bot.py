@@ -461,17 +461,18 @@ class BusinessBot:
             http = self._http or httpx.AsyncClient(timeout=90.0)
             own = self._http is None
             try:
-                params: dict = {
+                payload: dict = {
                     "user_id": str(cfg["target_user_id"]),
                     "description": HEARTBEAT_PROMPT,
                     "agent_id": "balbes",
                     "source": "heartbeat",
+                    "mode": "ask",
                 }
                 if cfg.get("model"):
-                    params["model_id"] = cfg["model"]
+                    payload["model_id"] = cfg["model"]
                 response = await http.post(
                     f"{self._orchestrator_url}/api/v1/tasks",
-                    params=params,
+                    json=payload,
                 )
                 if response.status_code == 200:
                     await update.message.reply_text("✅ Heartbeat выполнен")
