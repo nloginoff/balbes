@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Telegram: вложения-документы** — извлечение текста в [`shared/document_extract.py`](shared/document_extract.py): для типов кроме PDF/DOCX/XLSX/XLS используется **определение текста по содержимому** (UTF-8/UTF-16, кириллица, эвристика печатных символов), чтобы не отклонять `.py`, `.pl`, файлы без расширения и прочие текстовые форматы без расширения белого списка. PDF/DOCX/XLS с битым содержимым при возможности откатываются к sniff-тексту.
+- **Голос (Whisper): `FileNotFoundError`** — в [`services/orchestrator/skills/whisper_transcribe.py`](services/orchestrator/skills/whisper_transcribe.py) сообщение «установите ffmpeg» показывается только если отсутствует бинарник `ffmpeg`; иные `FileNotFoundError` (кэш модели и т.д.) пробрасываются как есть. [`docs/ru/ATTACHMENTS.md`](docs/ru/ATTACHMENTS.md): пояснение.
+
 ### Added
 - **Документация `manage_schedule`** — подраздел в [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) (пути, `agent_id`, уникальность `job_id`, YAML, hot-reload). Расширены **`TOOLS.md`** в workspace оркестратора и coder (в `data/agents/`, коммит через memory-репо): списки файлов с `schedules.yaml` и инструкции по расписаниям.
 - **Инструмент `render_solution`** — рендер цельного текстового решения с формулами в одну или несколько PNG **фиксированного размера** (900×1200 px при DPI 120); вложения уходят в поле `outbound_attachments` ответа `POST /api/v1/tasks` и отправляются в Telegram отдельными фото; при делегировании в coder вложения сливаются в ответ оркестратора. Реализация: [`shared/solution_render.py`](shared/solution_render.py), [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py), [`services/coder/api/execute.py`](services/coder/api/execute.py); зависимость **matplotlib**; allowlist **coder** в [`config/providers.yaml`](config/providers.yaml).

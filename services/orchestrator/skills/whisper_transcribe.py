@@ -284,8 +284,13 @@ async def transcribe_voice(
         local_label = f"локально ({s.whisper_local_model})"
         return VoiceTranscribeResult(text=text, stt_label_ru=local_label)
 
-    except FileNotFoundError:
-        raise RuntimeError("ffmpeg not found. Install it: sudo apt install ffmpeg")
+    except FileNotFoundError as e:
+        # asyncio.create_subprocess_exec("ffmpeg", ...) raises FileNotFoundError with
+        # filename='ffmpeg' when the binary is missing. Other FileNotFoundErrors (e.g. missing
+        # Whisper cache path) must propagate with the real message.
+        if getattr(e, "filename", None) in ("ffmpeg", b"ffmpeg"):
+            raise RuntimeError("ffmpeg not found. Install it: sudo apt install ffmpeg") from e
+        raise
     except Exception as e:
         logger.error(f"Transcription failed: {e}", exc_info=True)
         raise
