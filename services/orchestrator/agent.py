@@ -339,6 +339,9 @@ class OrchestratorAgent(BaseAgent):
 
         # Per-user cancellation flags (set by /stop, cleared at task start)
         self._cancel_flags: dict[str, bool] = {}
+        # Serialize foreground execute_task per user (avoid concurrent tool_dispatcher use).
+        # Heartbeat and background agents use separate code paths; they skip this lock.
+        self._user_execute_locks: dict[str, asyncio.Lock] = {}
 
         # Background task registry: key = f"{user_id}:{agent_id}"
         self._background_tasks: dict[str, asyncio.Task] = {}
@@ -390,6 +393,11 @@ class OrchestratorAgent(BaseAgent):
 
     def _clear_cancel(self, user_id: str) -> None:
         self._cancel_flags.pop(user_id, None)
+
+    def _lock_for_user(self, user_id: str) -> asyncio.Lock:
+        if user_id not in self._user_execute_locks:
+            self._user_execute_locks[user_id] = asyncio.Lock()
+        return self._user_execute_locks[user_id]
 
     async def connect(self) -> None:
         """Initialize HTTP client, Redis, load default workspace, warm up tools."""
@@ -475,17 +483,41 @@ class OrchestratorAgent(BaseAgent):
 
         ctx = context or {}
         source_early: str = ctx.get("source", "user")
-        if source_early != "heartbeat":
-            self._register_task(
-                task_id=task_id,
-                agent_id=effective_agent_id,
-                user_id=user_id,
-                description=description,
-                source=source_early,
-                is_background=False,
-            )
+        is_heartbeat_for_lock: bool = source_early == "heartbeat"
+
+        acquired_user_lock: bool = False
+        if not is_heartbeat_for_lock:
+            ulock = self._lock_for_user(user_id)
+            try:
+                # Non-blocking: reject if another foreground task is already running for this user.
+                await asyncio.wait_for(ulock.acquire(), timeout=0.0)
+                acquired_user_lock = True
+            except TimeoutError:
+                logger.warning(
+                    f"[{task_id}] Rejected duplicate task for user={user_id} (already running)"
+                )
+                return {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": (
+                        "Уже выполняется другая задача. Дождитесь ответа, "
+                        "отправьте /stop, затем пришлите запрос снова."
+                    ),
+                    "chat_id": None,
+                    "duration_ms": 0.0,
+                }
 
         try:
+            if source_early != "heartbeat":
+                self._register_task(
+                    task_id=task_id,
+                    agent_id=effective_agent_id,
+                    user_id=user_id,
+                    description=description,
+                    source=source_early,
+                    is_background=False,
+                )
+
             ctx = context or {}
             source: str = ctx.get("source", "user")
             is_heartbeat: bool = source == "heartbeat"
@@ -720,6 +752,10 @@ class OrchestratorAgent(BaseAgent):
                 "chat_id": chat_id,
                 "duration_ms": duration_ms,
             }
+
+        finally:
+            if acquired_user_lock:
+                self._lock_for_user(user_id).release()
 
     # -------------------------------------------------------------------------
     # LLM call with tool call loop

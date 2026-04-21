@@ -79,6 +79,9 @@ from shared.vision_models import default_vision_tier, list_vision_tiers, vision_
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
 
+# httpx read timeout for POST /api/v1/tasks (orchestrator runs the full LLM loop in one request)
+ORCHESTRATOR_POST_TIMEOUT_SEC = 120.0
+
 
 def _synthetic_filename_for_text_extract(fname: str, mime: str) -> str:
     """If Telegram omits an extension, infer a synthetic name so text extraction routes correctly."""
@@ -643,7 +646,7 @@ class BalbesTelegramBot:
             response = await self._get_http().post(
                 f"{self.orchestrator_url}/api/v1/tasks",
                 json=payload,
-                timeout=120.0,
+                timeout=ORCHESTRATOR_POST_TIMEOUT_SEC,
             )
         except Exception as e:
             logger.error(f"Scheduler: job '{job_id}' request failed: {e}")
@@ -2766,16 +2769,22 @@ class BalbesTelegramBot:
                     response = await self._get_http().post(
                         f"{self.orchestrator_url}/api/v1/tasks",
                         json=payload,
-                        timeout=120.0,
+                        timeout=ORCHESTRATOR_POST_TIMEOUT_SEC,
                     )
                 except httpx.ReadTimeout:
                     if fg_monitor and not fg_monitor.done():
                         fg_monitor.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await fg_monitor
+                    # Client dropped the HTTP wait; the worker may still be running — ask orchestrator
+                    # to co-operatively cancel (checked between LLM / tool rounds) to avoid a stuck
+                    # session and duplicate-foreground work for the same user.
+                    await self._cancel_orchestrator_task(mem_uid)
+                    tmo = int(ORCHESTRATOR_POST_TIMEOUT_SEC)
                     await message.reply_text(
-                        "⏳ Задача выполняется дольше 120 с. "
-                        "Результат придёт автоматически — следи через /tasks"
+                        f"⏳ Запрос в оркестраторе дольше {tmo} с — соединение оборвано, "
+                        "серверу отправлен сигнал остановки. "
+                        "Если ответ не появится, проверь /tasks или отправь /stop и запрос снова."
                     )
                     return
 
