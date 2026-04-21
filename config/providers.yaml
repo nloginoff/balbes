@@ -204,6 +204,7 @@ agents:
         - "python -m {module}"
         - "python3 -m {module}"
         - "pip install {package}"
+        - "pip install *"
         - "pip list"
         - "pip show {package}"
         - "node {script}"

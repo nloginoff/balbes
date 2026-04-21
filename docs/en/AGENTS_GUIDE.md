@@ -12,7 +12,7 @@ Balbes has three active agents that work together:
 | **Coder** | Development agent — reads/writes code, runs commands, works in background | 18103 |
 | **Blogger** | Content agent — generates blog posts, monitors business chats, publishes to Telegram channels | 18105 |
 
-The Orchestrator receives every message. Delegation to Coder and Blogger uses **`POST /api/v1/agent/execute`** only (see [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) and [`shared/agent_execute_contract.py`](../../shared/agent_execute_contract.py)). Optional shared secret: `DELEGATION_SHARED_SECRET` + header `X-Balbes-Delegation-Key`.
+The Orchestrator receives every message. Delegation to Coder and Blogger uses **`POST /api/v1/agent/execute`** only ([`shared/agent_execute_contract.py`](../../shared/agent_execute_contract.py)). Base URLs default to [`Settings.coder_base_url` / `blogger_base_url`](../../shared/config.py) from env (`CODER_PORT` / `CODER_SERVICE_URL`, `BLOGGER_SERVICE_PORT` / `BLOGGER_SERVICE_URL`). Optional `delegate_targets` in [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) overrides those; a stale hard-coded port causes a fast connection error and an almost empty tool result. Optional shared secret: `DELEGATION_SHARED_SECRET` + header `X-Balbes-Delegation-Key`.
 
 ---
 

@@ -82,7 +82,7 @@ class OrchestratorAgent(BaseAgent):
 
 ### Делегирование (HTTP)
 
-Инструмент `delegate_to_agent` обращается к микросервисам **только по HTTP**: `POST /api/v1/agent/execute` на базовый URL из [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) (`delegate_targets`) или из портов по умолчанию для `coder` и `blogger`. Заголовок доверия: `X-Balbes-Delegation-Key` при установленном `DELEGATION_SHARED_SECRET`. Внутрипроцессного запуска «второго агента» через LLM оркестратора больше нет.
+Инструмент `delegate_to_agent` обращается к микросервисам **только по HTTP**: `POST /api/v1/agent/execute`. Базовый URL: по умолчанию из окружения — [`Settings.coder_base_url` / `blogger_base_url`](../../shared/config.py) (`CODER_PORT` / `CODER_SERVICE_URL`, `BLOGGER_SERVICE_PORT` / `BLOGGER_SERVICE_URL`). Опционально в [`config/agents/balbes.yaml`](../../config/agents/balbes.yaml) можно задать `delegate_targets` (переопределяет env). Жёстко прописанный URL с **другим портом**, чем у запущенных сервисов, даёт быстрый `ConnectError` и почти пустой ответ инструмента. Заголовок доверия: `X-Balbes-Delegation-Key` при `DELEGATION_SHARED_SECRET`. Внутрипроцессного запуска второго агента через LLM оркестратора больше нет.
 
 ---
 
@@ -257,6 +257,10 @@ _background_results → result_text (если завершено)
 - `git -C {path} <cmd>` — команды с явным путём к репо (требуется для Coder)
 
 > ⚠️ Coder должен использовать `git -C /path/to/repo command`, а не `cd /path && git command` — второй вариант не проходит вайтлист.
+
+**Если команда отклонена, хотя в репозитории шаблон есть** — проверьте `data/agents/balbes/config.yaml` на сервере: блок `server_commands` / `allowed_commands` имеет **высший приоритет** над `providers.yaml` и может полностью заменить белый список.
+
+**Многострочные команды (heredoc)** — в логах stderr может смешивать вывод shell и Python (например, после `pip install` следующий запуск скрипта без пакета). Для создания файлов надёжнее `workspace_write` / `file_write`, чем длинный `execute_command` с heredoc.
 
 ---
 

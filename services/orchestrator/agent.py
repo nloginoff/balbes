@@ -961,7 +961,7 @@ class OrchestratorAgent(BaseAgent):
         if not base:
             return (
                 f"HTTP delegation: agent '{agent_id}' has no base URL. "
-                "Configure delegate_targets in config/agents/balbes.yaml (or coder/blogger ports in .env)."
+                "Set CODER_PORT / CODER_SERVICE_URL or BLOGGER_* in .env, or delegate_targets in balbes.yaml."
             )
         url = f"{base}/api/v1/agent/execute"
         payload = {
@@ -1011,12 +1011,13 @@ class OrchestratorAgent(BaseAgent):
         if not get_delegate_base_url(agent_id):
             return (
                 f"Delegation to '{agent_id}' is not available: no HTTP endpoint configured. "
-                "Add delegate_targets in config/agents/balbes.yaml (or use default coder/blogger ports)."
+                "Set CODER_PORT / CODER_SERVICE_URL or BLOGGER_SERVICE_PORT / BLOGGER_SERVICE_URL in .env, "
+                "or add delegate_targets in config/agents/balbes.yaml."
             )
         parent_debug = self.tool_dispatcher._debug_collector if self.tool_dispatcher else None
         logger.info(f"Delegating to '{agent_id}' via HTTP (mode={mode}): {task[:60]}…")
         text = await self._invoke_agent_http(agent_id, task, context, mode, parent_debug)
-        return f"[Agent {agent_id}]:\n{text}"
+        return text
 
     async def run_agent_background(
         self,
