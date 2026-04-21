@@ -100,6 +100,14 @@ def main() -> int:
         except ValueError:
             pass
 
+    if uid is not None and cid is not None:
+        print(
+            "INFO: в env заданы и NOTIFY_MAX_USER_ID, и NOTIFY_MAX_CHAT_ID — "
+            "для теста используется user_id (личка).",
+            file=sys.stderr,
+        )
+        cid = None
+
     if (uid is not None) == (cid is not None):
         print(
             "ERROR: укажите ровно один из --user-id или --chat-id "
