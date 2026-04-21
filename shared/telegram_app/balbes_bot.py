@@ -454,40 +454,32 @@ class BalbesTelegramBot:
     # -------------------------------------------------------------------------
     # Cron Scheduler (APScheduler) with hot-reload
     # -------------------------------------------------------------------------
+    # Jobs live in data/agents/<agent>/schedules.yaml (see shared/agent_schedules.py).
 
-    _SCHEDULES_PATH = Path(__file__).parent.parent.parent / "config" / "schedules.yaml"
+    def _load_schedules_raw(self) -> list[tuple[str, dict]]:
+        """Load (api_agent_id, job) from all per-agent schedule files."""
+        from shared.agent_schedules import load_all_jobs_flat
 
-    def _load_schedules_raw(self) -> list[dict]:
-        """Read schedules.yaml and return all job dicts (regardless of enabled flag)."""
-        import yaml
+        return load_all_jobs_flat()
 
-        if not self._SCHEDULES_PATH.exists():
-            return []
-        try:
-            with open(self._SCHEDULES_PATH, encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-            return raw.get("jobs") or []
-        except Exception as e:
-            logger.error(f"Scheduler: failed to read schedules.yaml: {e}")
-            return []
-
-    def _register_job(self, job: dict) -> bool:
+    def _register_job(self, job: dict, api_agent_id: str) -> bool:
         """Add or replace one enabled job in self._scheduler. Returns True on success."""
         if not self._scheduler:
             return False
-        job_id = job.get("id", "unnamed")
+        raw_id = job.get("id", "unnamed")
+        sched_id = f"{api_agent_id}:{raw_id}"
         trigger = job.get("trigger", "cron")
-        agent_id = job.get("agent_id", "balbes")
+        agent_id = job.get("agent_id", api_agent_id)
         user_id = str(job.get("user_id", "0"))
         prompt = job.get("prompt", "")
         debug = job.get("debug", False)
 
         if not prompt:
-            logger.warning(f"Scheduler: job '{job_id}' has no prompt — skipping")
+            logger.warning(f"Scheduler: job '{sched_id}' has no prompt — skipping")
             return False
 
         job_kwargs = {
-            "job_id": job_id,
+            "job_id": raw_id,
             "agent_id": agent_id,
             "user_id": user_id,
             "prompt": prompt,
@@ -503,7 +495,7 @@ class BalbesTelegramBot:
                 self._scheduler.add_job(
                     self._run_scheduled_task,
                     "cron",
-                    id=job_id,
+                    id=sched_id,
                     kwargs=job_kwargs,
                     replace_existing=True,
                     **trigger_kwargs,
@@ -515,19 +507,23 @@ class BalbesTelegramBot:
                 self._scheduler.add_job(
                     self._run_scheduled_task,
                     "interval",
-                    id=job_id,
+                    id=sched_id,
                     kwargs=job_kwargs,
                     replace_existing=True,
                     **interval_kwargs,
                 )
             else:
-                logger.warning(f"Scheduler: job '{job_id}' unknown trigger '{trigger}' — skipping")
+                logger.warning(
+                    f"Scheduler: job '{sched_id}' unknown trigger '{trigger}' — skipping"
+                )
                 return False
         except Exception as e:
-            logger.error(f"Scheduler: failed to register job '{job_id}': {e}")
+            logger.error(f"Scheduler: failed to register job '{sched_id}': {e}")
             return False
 
-        logger.info(f"Scheduler: registered '{job_id}' ({trigger}) agent={agent_id} user={user_id}")
+        logger.info(
+            f"Scheduler: registered '{sched_id}' ({trigger}) agent={agent_id} user={user_id}"
+        )
         return True
 
     async def start_scheduler(self) -> None:
@@ -543,12 +539,12 @@ class BalbesTelegramBot:
         self._scheduler = AsyncIOScheduler(timezone="UTC")
 
         jobs = self._load_schedules_raw()
-        enabled = [j for j in jobs if j.get("enabled", False)]
+        enabled = [(aid, j) for aid, j in jobs if j.get("enabled", False)]
         if not enabled:
-            logger.info("Scheduler: no enabled jobs in schedules.yaml")
+            logger.info("Scheduler: no enabled jobs in data/agents/*/schedules.yaml")
         else:
-            for job in enabled:
-                self._register_job(job)
+            for api_aid, job in enabled:
+                self._register_job(job, api_aid)
 
         self._scheduler.start()
         logger.info(f"Scheduler started ({len(enabled)} enabled job(s))")
@@ -566,7 +562,9 @@ class BalbesTelegramBot:
             return "Планировщик не запущен."
 
         jobs = self._load_schedules_raw()
-        enabled_ids = {j["id"] for j in jobs if j.get("enabled", False) and j.get("id")}
+        enabled_ids = {
+            f"{aid}:{j['id']}" for aid, j in jobs if j.get("enabled", False) and j.get("id")
+        }
 
         # Remove jobs no longer present or disabled
         removed = 0
@@ -578,27 +576,25 @@ class BalbesTelegramBot:
 
         # Add / replace enabled jobs
         added = 0
-        for job in jobs:
-            if job.get("enabled", False) and job.get("id") and self._register_job(job):
+        for api_aid, job in jobs:
+            if job.get("enabled", False) and job.get("id") and self._register_job(job, api_aid):
                 added += 1
 
         logger.info(f"Scheduler reloaded: +{added} registered, -{removed} removed")
         return f"Планировщик обновлён: добавлено {added}, удалено {removed} задач."
 
     async def _schedule_watcher(self) -> None:
-        """Poll schedules.yaml every 30 s; hot-reload when the file changes."""
-        last_mtime: float = (
-            self._SCHEDULES_PATH.stat().st_mtime if self._SCHEDULES_PATH.exists() else 0.0
-        )
+        """Poll per-agent schedule files every 30 s; hot-reload when any changes."""
+        from shared.agent_schedules import schedules_snapshot
+
+        last_snap = schedules_snapshot()
         while True:
             await asyncio.sleep(30)
             try:
-                if not self._SCHEDULES_PATH.exists():
-                    continue
-                mtime = self._SCHEDULES_PATH.stat().st_mtime
-                if mtime != last_mtime:
-                    last_mtime = mtime
-                    logger.info("Scheduler: schedules.yaml changed — hot-reloading")
+                snap = schedules_snapshot()
+                if snap != last_snap:
+                    last_snap = snap
+                    logger.info("Scheduler: schedules file(s) changed — hot-reloading")
                     await self.reload_schedules()
             except Exception as e:
                 logger.warning(f"Scheduler watcher error: {e}")
@@ -618,7 +614,7 @@ class BalbesTelegramBot:
                 "user_id": mem_uid,
                 "description": prompt,
                 "agent_id": agent_id,
-                "source": f"scheduler:{job_id}",
+                "source": f"scheduler:{agent_id}:{job_id}",
                 "debug": debug,
                 "mode": "ask",
             }

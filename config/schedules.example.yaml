@@ -1,0 +1,47 @@
+# Example per-agent schedules (NOT loaded by the bot until copied into workspace).
+#
+# Copy to:
+#   data/agents/<agent_dir>/schedules.yaml
+# where agent_dir matches the agent workspace (e.g. orchestrator when there is no
+# data/agents/balbes/ — same rule as SOUL.md). API agent_id in each job must match
+# the logical agent (balbes, coder, blogger). See shared/agent_schedules.py.
+#
+# Main repo .gitignore ignores data/; workspace files (including schedules.yaml)
+# are usually versioned in the private memory repo under data/agents/.
+
+jobs:
+  - id: daily_morning_briefing
+    enabled: false
+    trigger: cron
+    agent_id: balbes
+    user_id: "0"
+    hour: 9
+    minute: 0
+    prompt: >
+      Доброе утро! Подготовь краткий утренний дайджест:
+      проверь актуальные новости по темам из MEMORY.md,
+      напомни о незавершённых задачах, если они есть.
+    debug: false
+
+  - id: weekly_status
+    enabled: false
+    trigger: cron
+    agent_id: balbes
+    user_id: "0"
+    day_of_week: mon
+    hour: 10
+    minute: 0
+    prompt: >
+      Начало недели. Сформируй краткий статус проекта:
+      что было сделано на прошлой неделе (по памяти),
+      какие задачи запланированы.
+    debug: false
+
+  - id: hourly_ping
+    enabled: false
+    trigger: interval
+    agent_id: balbes
+    user_id: "0"
+    minutes: 60
+    prompt: "Проверь, нет ли срочных уведомлений или задач."
+    debug: false

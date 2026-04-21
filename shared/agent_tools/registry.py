@@ -102,7 +102,8 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "name": "workspace_read",
             "description": (
                 "Read one of the agent's own workspace files. "
-                "Available files: AGENTS.md, SOUL.md, USER.md, MEMORY.md, TOOLS.md, IDENTITY.md"
+                "Available files: AGENTS.md, SOUL.md, USER.md, MEMORY.md, TOOLS.md, IDENTITY.md, "
+                "HEARTBEAT.md, schedules.yaml (cron jobs for this agent)"
             ),
             "parameters": {
                 "type": "object",
@@ -123,7 +124,8 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Overwrite a workspace file with new content. "
                 "Always read the file first, then write the complete updated version. "
-                "Writable files: AGENTS.md, SOUL.md, USER.md, MEMORY.md, IDENTITY.md"
+                "Writable files: AGENTS.md, SOUL.md, USER.md, MEMORY.md, IDENTITY.md, HEARTBEAT.md, "
+                "schedules.yaml (YAML; same schema as manage_schedule)"
             ),
             "parameters": {
                 "type": "object",
@@ -808,8 +810,8 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "name": "manage_schedule",
             "description": (
                 "Manage scheduled tasks (cron/interval jobs). "
-                "Use to list current jobs, add new recurring tasks, or remove/enable/disable existing ones. "
-                "Changes take effect within ~30 seconds without a restart."
+                "Jobs are stored per agent in data/agents/<agent>/schedules.yaml (like workspace files). "
+                "Use list/add/remove/enable/disable. Changes take effect within ~30 seconds without a restart."
             ),
             "parameters": {
                 "type": "object",
@@ -839,7 +841,10 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     },
                     "agent_id": {
                         "type": "string",
-                        "description": "Agent to run the task (default: balbes).",
+                        "description": (
+                            "Which agent's schedules.yaml to edit (default: current task agent). "
+                            "Must match the job's agent. For list, all agents are shown."
+                        ),
                     },
                     "hour": {
                         "type": "integer",
@@ -1189,7 +1194,7 @@ class ToolDispatcher:
                 result = self._do_manage_todo(tool_args)
 
             elif tool_name == "manage_schedule":
-                result = self._do_manage_schedule(tool_args)
+                result = self._do_manage_schedule(tool_args, context)
 
             elif tool_name == "render_solution":
                 result = await self._do_render_solution(tool_args)
@@ -1334,7 +1339,9 @@ class ToolDispatcher:
             return "Workspace not available."
         filename = args.get("filename") or args.get("file") or args.get("path") or args.get("name")
         if not filename:
-            available = "AGENTS.md, SOUL.md, MEMORY.md, HEARTBEAT.md, TOOLS.md, IDENTITY.md"
+            available = (
+                "AGENTS.md, SOUL.md, MEMORY.md, HEARTBEAT.md, TOOLS.md, IDENTITY.md, schedules.yaml"
+            )
             return (
                 "Error: 'filename' parameter is required. "
                 f"Available files: {available}. "
@@ -1729,25 +1736,8 @@ class ToolDispatcher:
         return result
 
     # ------------------------------------------------------------------
-    # Schedule management
+    # Schedule management (per-agent data/agents/<id>/schedules.yaml)
     # ------------------------------------------------------------------
-
-    _SCHEDULES_PATH = _PROJECT_ROOT / "config" / "schedules.yaml"
-
-    def _load_schedules_yaml(self) -> dict:
-        import yaml
-
-        if not self._SCHEDULES_PATH.exists():
-            return {"jobs": []}
-        with open(self._SCHEDULES_PATH, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {"jobs": []}
-
-    def _save_schedules_yaml(self, data: dict) -> None:
-        import yaml
-
-        self._SCHEDULES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(self._SCHEDULES_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
     def _do_manage_todo(self, args: dict[str, Any]) -> str:
         """Read or update the project TODO.md."""
@@ -1834,27 +1824,43 @@ class ToolDispatcher:
 
         return f"Error: неизвестное действие '{action}'. Допустимые: read, add, done."
 
-    def _do_manage_schedule(self, args: dict[str, Any]) -> str:
+    def _schedule_tool_target_agent(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        explicit = (args.get("agent_id") or "").strip()
+        if explicit:
+            return explicit
+        return (context.get("agent_id") or "balbes") or "balbes"
+
+    def _do_manage_schedule(
+        self, args: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> str:
+        from shared.agent_schedules import (
+            load_all_jobs_flat,
+            load_yaml_for_agent,
+            save_yaml_for_agent,
+        )
+
+        context = context or {}
         action = args.get("action", "").strip().lower()
 
         if action == "list":
-            data = self._load_schedules_yaml()
-            jobs: list[dict] = data.get("jobs") or []
-            if not jobs:
-                return "Расписание пустое — задач нет."
-            lines = ["Запланированные задачи:\n"]
-            for j in jobs:
+            flat = load_all_jobs_flat()
+            if not flat:
+                return "Расписание пустое — нет файлов data/agents/*/schedules.yaml с задачами."
+            lines = ["Запланированные задачи (по всем агентам):\n"]
+            for aid, j in flat:
                 status = "✅" if j.get("enabled", False) else "⏸"
                 jid = j.get("id", "?")
                 trigger = j.get("trigger", "?")
-                agent = j.get("agent_id", "balbes")
                 prompt_preview = str(j.get("prompt", ""))[:80].replace("\n", " ")
 
                 if trigger == "cron":
                     dow = j.get("day_of_week", "*")
                     h = j.get("hour", "*")
                     m = j.get("minute", 0)
-                    schedule_str = f"cron {dow} {h}:{m:02d}"
+                    try:
+                        schedule_str = f"cron {dow} {h}:{int(m):02d}"
+                    except (TypeError, ValueError):
+                        schedule_str = f"cron {dow} {h}:{m}"
                 elif trigger == "interval":
                     parts = []
                     if j.get("hours"):
@@ -1865,37 +1871,40 @@ class ToolDispatcher:
                 else:
                     schedule_str = trigger
 
-                lines.append(f"{status} [{jid}] {schedule_str} → {agent}\n   {prompt_preview}")
+                lines.append(f"{status} [{aid}] {jid} — {schedule_str}\n   {prompt_preview}")
             return "\n".join(lines)
 
-        elif action == "add":
+        target = self._schedule_tool_target_agent(args, context)
+
+        if action == "add":
             job_id = (args.get("job_id") or "").strip()
             trigger = (args.get("trigger") or "").strip()
             prompt = (args.get("prompt") or "").strip()
             if not job_id:
-                return "Ошибка: укажи job_id (уникальный идентификатор задачи)."
+                return "Ошибка: укажи job_id (уникальный идентификатор задачи внутри этого агента)."
             if not trigger:
                 return "Ошибка: укажи trigger — 'cron' или 'interval'."
             if not prompt:
                 return "Ошибка: укажи prompt — что агент должен сделать."
 
-            data = self._load_schedules_yaml()
-            jobs = data.setdefault("jobs", [])
+            data = load_yaml_for_agent(target)
+            jobs: list = data.setdefault("jobs", [])
 
-            # Check for duplicates
-            if any(j.get("id") == job_id for j in jobs):
-                return f"Ошибка: задача с id='{job_id}' уже существует. Используй enable/disable или сначала remove."
+            if any(isinstance(j, dict) and j.get("id") == job_id for j in jobs):
+                return (
+                    f"Ошибка: у агента '{target}' уже есть задача id='{job_id}'. "
+                    "Используй enable/disable или remove."
+                )
 
             new_job: dict[str, Any] = {
                 "id": job_id,
                 "enabled": True,
                 "trigger": trigger,
-                "agent_id": args.get("agent_id") or "balbes",
+                "agent_id": target,
                 "user_id": str(args.get("user_id", "0")),
                 "prompt": prompt,
                 "debug": bool(args.get("debug", False)),
             }
-            # Add trigger-specific fields
             if trigger == "cron":
                 for field in ("year", "month", "day", "day_of_week", "hour", "minute", "second"):
                     if args.get(field) is not None:
@@ -1908,10 +1917,10 @@ class ToolDispatcher:
                         new_job[field] = args[field]
 
             jobs.append(new_job)
-            self._save_schedules_yaml(data)
+            save_yaml_for_agent(target, data)
             return (
-                f"Задача '{job_id}' добавлена и включена.\n"
-                f"Триггер: {trigger}, агент: {new_job['agent_id']}.\n"
+                f"Задача '{job_id}' добавлена для агента '{target}' и включена.\n"
+                f"Файл: data/agents/.../schedules.yaml (каталог как у workspace этого агента).\n"
                 "Планировщик применит изменения в течение ~30 секунд."
             )
 
@@ -1919,32 +1928,37 @@ class ToolDispatcher:
             job_id = (args.get("job_id") or "").strip()
             if not job_id:
                 return "Ошибка: укажи job_id задачи для удаления."
-            data = self._load_schedules_yaml()
+            data = load_yaml_for_agent(target)
             jobs = data.get("jobs") or []
             before = len(jobs)
-            data["jobs"] = [j for j in jobs if j.get("id") != job_id]
+            data["jobs"] = [j for j in jobs if isinstance(j, dict) and j.get("id") != job_id]
             if len(data["jobs"]) == before:
-                return f"Задача '{job_id}' не найдена."
-            self._save_schedules_yaml(data)
-            return f"Задача '{job_id}' удалена. Планировщик обновится в течение ~30 секунд."
+                return f"Задача '{job_id}' не найдена у агента '{target}'. См. list."
+            save_yaml_for_agent(target, data)
+            return (
+                f"Задача '{job_id}' удалена (агент '{target}'). "
+                "Планировщик обновится в течение ~30 секунд."
+            )
 
         elif action in ("enable", "disable"):
             job_id = (args.get("job_id") or "").strip()
             if not job_id:
                 return f"Ошибка: укажи job_id задачи для {action}."
-            data = self._load_schedules_yaml()
+            data = load_yaml_for_agent(target)
             jobs = data.get("jobs") or []
             found = False
             for j in jobs:
-                if j.get("id") == job_id:
+                if isinstance(j, dict) and j.get("id") == job_id:
                     j["enabled"] = action == "enable"
                     found = True
                     break
             if not found:
-                return f"Задача '{job_id}' не найдена."
-            self._save_schedules_yaml(data)
+                return f"Задача '{job_id}' не найдена у агента '{target}'."
+            save_yaml_for_agent(target, data)
             word = "включена" if action == "enable" else "выключена"
-            return f"Задача '{job_id}' {word}. Планировщик обновится в течение ~30 секунд."
+            return (
+                f"Задача '{job_id}' ({target}) {word}. Планировщик обновится в течение ~30 секунд."
+            )
 
         else:
             return f"Неизвестное действие '{action}'. Доступно: list, add, remove, enable, disable."
@@ -2307,7 +2321,12 @@ def _summarize_input(tool_name: str, args: dict) -> str:
     if tool_name == "manage_schedule":
         action = args.get("action", "?")
         jid = args.get("job_id", "")
-        return f"action={action}" + (f" job_id='{jid}'" if jid else "")
+        aid = args.get("agent_id", "")
+        return (
+            f"action={action}"
+            + (f" agent_id='{aid}'" if aid else "")
+            + (f" job_id='{jid}'" if jid else "")
+        )
     if tool_name == "render_solution":
         return f"content_len={len(args.get('content') or '')}"
     return str(args)[:80]

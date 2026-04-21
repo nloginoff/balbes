@@ -2,12 +2,13 @@
 Agent Workspace — manages per-agent MD config files (OpenClaw-style).
 
 Each agent has its own folder under data/agents/{agent_id}/ containing:
-  AGENTS.md    — operational instructions, behaviour rules, priorities
-  SOUL.md      — personality, tone, values, hard limits
-  USER.md      — user profile, how to address them
-  TOOLS.md     — available tools/skills reference
-  MEMORY.md    — curated long-term facts (always loaded into context)
-  IDENTITY.md  — agent name, role, emoji
+  AGENTS.md      — operational instructions, behaviour rules, priorities
+  SOUL.md        — personality, tone, values, hard limits
+  USER.md        — user profile, how to address them
+  TOOLS.md       — available tools/skills reference
+  MEMORY.md      — curated long-term facts (always loaded into context)
+  IDENTITY.md    — agent name, role, emoji
+  schedules.yaml — cron/interval jobs for this agent (optional; not in system prompt)
 
 Bootstrap files are loaded at service start and cached in memory.
 The agent can read/write its own files via workspace_read / workspace_write tools.
@@ -45,6 +46,7 @@ BOOTSTRAP_FILES = [
 # Files the agent is allowed to write to via workspace_write tool.
 # config.yaml is treated specially: readable/writable but NOT injected into
 # the system prompt — it holds structured settings the system reads directly.
+# schedules.yaml — cron/interval jobs for this agent (same format as data/agents/*/schedules.yaml).
 WRITEABLE_FILES = {
     "AGENTS.md",
     "SOUL.md",
@@ -53,6 +55,7 @@ WRITEABLE_FILES = {
     "IDENTITY.md",
     "HEARTBEAT.md",
     "config.yaml",
+    "schedules.yaml",
 }
 
 

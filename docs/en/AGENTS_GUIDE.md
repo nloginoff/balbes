@@ -30,13 +30,14 @@ The Orchestrator is the entry point for everything. It:
 
 ```
 data/agents/orchestrator/
-├── SOUL.md        ← Personality and communication style
-├── AGENTS.md      ← Full behavioral instructions
-├── MEMORY.md      ← Always-loaded important context
-├── HEARTBEAT.md   ← Topics for proactive messages
-├── TOOLS.md       ← Tool documentation
-├── IDENTITY.md    ← Identity details
-└── config.yaml    ← Model/limit overrides
+├── SOUL.md          ← Personality and communication style
+├── AGENTS.md        ← Full behavioral instructions
+├── MEMORY.md        ← Always-loaded important context
+├── HEARTBEAT.md     ← Topics for proactive messages
+├── TOOLS.md         ← Tool documentation
+├── IDENTITY.md      ← Identity details
+├── config.yaml      ← Model/limit overrides
+└── schedules.yaml   ← Cron/interval jobs for this agent (same schema as `manage_schedule`; see `config/schedules.example.yaml`)
 ```
 
 ### Customizing behavior

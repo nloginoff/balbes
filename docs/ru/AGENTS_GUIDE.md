@@ -105,6 +105,9 @@ class OrchestratorAgent(BaseAgent):
 | `TOOLS.md` | Документация по всем доступным инструментам |
 | `IDENTITY.md` | Имя, описание, примеры общения |
 | `config.yaml` | Переопределение модели/лимитов (высший приоритет) |
+| `schedules.yaml` | Cron/interval задачи для этого агента (тот же формат, что и `manage_schedule`; для `balbes` каталог может быть `orchestrator/`) |
+
+Схема полей и пример — [`config/schedules.example.yaml`](../../config/schedules.example.yaml).
 
 ### config.yaml агента
 
@@ -218,7 +221,7 @@ _background_results → result_text (если завершено)
 | `index_codebase` | ✅ | ✅ | Переиндексировать кодовую базу в Qdrant |
 | `manage_todo` | ✅ | ✅ | Читать/обновлять TODO.md |
 | `read_agent_logs` | ✅ | ✅ | Прочитать JSONL-логи активности |
-| `manage_schedule` | ✅ | ✅ | Управление задачами по расписанию |
+| `manage_schedule` | ✅ | ✅ | Управление задачами по расписанию (файлы `data/agents/<id>/schedules.yaml`; `list` показывает всех агентов) |
 | `delegate_to_agent` | ❌ | ✅ | Делегировать задачу другому агенту |
 | `get_agent_result` | ❌ | ✅ | Получить результат фоновой задачи |
 | `cancel_agent_task` | ❌ | ✅ | Отменить фоновую задачу |
