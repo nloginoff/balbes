@@ -33,7 +33,8 @@ def test_pl_extension():
 
 
 def test_binary_not_decoded_as_text():
-    data = bytes(range(256)) * 40  # lots of NULs and controls
+    # High NUL ratio in the sniff sample rejects binary blobs (latin-1 of all bytes looks "printable").
+    data = b"\x00" * 4000 + b"\xff" * 4000
     assert sniff_plain_text_bytes(data) is None
 
 
@@ -44,3 +45,24 @@ def test_pdf_magic_without_extension():
     # may fail to extract text from junk - that's ok
     assert isinstance(text, str)
     assert isinstance(err, str | None)
+
+
+def test_empty_code_file_message():
+    text, err = extract_text_from_bytes("x.py", b"   \n\t  ")
+    assert not text.strip()
+    assert err == "В файле нет текста"
+
+
+def test_no_extension_with_mime_text_plain():
+    text, err = extract_text_from_bytes("file", b"line1\nline2\n", mime_type="text/plain")
+    assert "line1" in text
+    assert err is None
+
+
+def test_binary_unknown_extension_error_wording():
+    data = b"\x00" * 500 + b"\x01\x02\x03" * 200
+    text, err = extract_text_from_bytes("weird.bin", data)
+    assert not text.strip()
+    assert "Не удалось извлечь текст" in (err or "")
+    assert "Неподдерживаемый" not in (err or "")
+    assert ".bin" in (err or "")

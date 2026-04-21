@@ -79,6 +79,26 @@ from shared.vision_models import default_vision_tier, list_vision_tiers, vision_
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
 
+
+def _synthetic_filename_for_text_extract(fname: str, mime: str) -> str:
+    """If Telegram omits an extension, infer a synthetic name so text extraction routes correctly."""
+    name = fname or "file"
+    if Path(name).suffix:
+        return name
+    m = (mime or "").lower().strip()
+    if m.startswith("text/"):
+        if m in ("text/x-python", "text/x-script.python"):
+            return "upload.py"
+        if m == "text/x-perl":
+            return "upload.pl"
+        return "upload.txt"
+    if m in ("application/x-python-code", "application/x-python"):
+        return "upload.py"
+    if m in ("application/json", "application/xml"):
+        return "upload.json" if m == "application/json" else "upload.xml"
+    return name
+
+
 CALLBACK_CHAT_PREFIX = "chat:"
 CALLBACK_MODEL_PREFIX = "model:"
 CALLBACK_AGENT_PREFIX = "agent:"
@@ -2619,7 +2639,8 @@ class BalbesTelegramBot:
                 data_url = image_to_data_url_jpeg(raw)
                 attachments = [{"kind": "image", "data_url": data_url}]
             else:
-                extracted, err = extract_text_from_bytes(fname, raw)
+                extract_fname = _synthetic_filename_for_text_extract(fname, mime)
+                extracted, err = extract_text_from_bytes(extract_fname, raw, mime_type=mime or None)
                 if err and not (extracted or "").strip():
                     await message.reply_text(f"❌ {err}")
                     return

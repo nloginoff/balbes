@@ -83,6 +83,35 @@ _FALLBACK_UTF8_SUFFIXES = frozenset(
     }
 )
 
+# MIME (lowercase) -> synthetic suffix for routing when Telegram sends no file_name extension
+_MIME_SUFFIX_HINT: dict[str, str] = {
+    "text/x-python": ".py",
+    "text/x-script.python": ".py",
+    "application/x-python-code": ".py",
+    "application/x-python": ".py",
+    "text/x-perl": ".pl",
+    "text/x-shellscript": ".sh",
+    "application/x-sh": ".sh",
+    "application/x-yaml": ".yaml",
+    "application/x-httpd-php": ".php",
+    "application/javascript": ".js",
+    "application/json": ".json",
+    "application/xml": ".xml",
+}
+
+# MIME types that imply plain text when extension is missing or sniff failed
+_MIME_PLAIN_EXTRA = frozenset(
+    {
+        "application/json",
+        "application/xml",
+        "application/javascript",
+        "application/x-javascript",
+    }
+)
+
+# Reject sniff only if null bytes dominate the sample (binary), not a single stray NUL
+_NULL_RATIO_REJECT = 0.01
+
 
 def _truncate(s: str) -> tuple[str, bool]:
     if len(s) <= MAX_EXTRACT_CHARS:
@@ -98,6 +127,36 @@ def _mostly_printable(s: str, threshold: float = 0.82) -> bool:
         return False
     ok = sum(1 for c in s if c.isprintable() or c in "\n\r\t\f\v")
     return (ok / n) >= threshold
+
+
+def _suffix_hint_from_mime(mime_l: str) -> str | None:
+    if not mime_l:
+        return None
+    return _MIME_SUFFIX_HINT.get(mime_l)
+
+
+def _mime_implies_plain_text_after_sniff(mime_l: str) -> bool:
+    """Whether to attempt UTF-8 replace when path has no extension or sniff failed."""
+    if not mime_l:
+        return False
+    if mime_l.startswith("text/"):
+        return True
+    if mime_l in _MIME_PLAIN_EXTRA:
+        return True
+    if _suffix_hint_from_mime(mime_l) is not None:
+        return True
+    return False
+
+
+def _utf8_fallback_eligible(
+    path_suffix: str,
+    mime_l: str,
+) -> bool:
+    if path_suffix in _FALLBACK_UTF8_SUFFIXES:
+        return True
+    if not path_suffix:
+        return True
+    return _mime_implies_plain_text_after_sniff(mime_l)
 
 
 def sniff_plain_text_bytes(data: bytes) -> str | None:
@@ -118,8 +177,10 @@ def sniff_plain_text_bytes(data: bytes) -> str | None:
             return None
 
     sample = data[: min(len(data), 65536)]
-    if b"\x00" in sample:
-        return None
+    if sample:
+        null_ratio = sample.count(b"\x00") / len(sample)
+        if null_ratio > _NULL_RATIO_REJECT:
+            return None
 
     for enc in ("utf-8-sig", "utf-8", "cp1251", "koi8-r", "latin-1"):
         try:
@@ -131,20 +192,27 @@ def sniff_plain_text_bytes(data: bytes) -> str | None:
     return None
 
 
-def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None]:
+def extract_text_from_bytes(
+    filename: str,
+    data: bytes,
+    *,
+    mime_type: str | None = None,
+) -> tuple[str, str | None]:
     """
     Returns (extracted_text, error_message).
     error_message is set when nothing could be read (caller may still use empty string).
+
+    mime_type: optional hint (e.g. Telegram document.mime_type) when file_name has no extension.
     """
     if not data:
         return "", "Пустой файл"
 
-    suffix = Path(filename or "").suffix.lower()
-    name_l = (filename or "").lower()
+    path_suffix = Path(filename or "").suffix.lower()
+    mime_l = (mime_type or "").lower().strip()
 
     try:
         # ── PDF ──────────────────────────────────────────────────────────
-        if suffix == ".pdf" or (not suffix and data[:4] == b"%PDF"):
+        if path_suffix == ".pdf" or (not path_suffix and data[:4] == b"%PDF"):
             import fitz  # PyMuPDF
 
             doc = fitz.open(stream=data, filetype="pdf")
@@ -162,7 +230,7 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
             return out, None
 
         # ── DOCX ─────────────────────────────────────────────────────────
-        if suffix == ".docx":
+        if path_suffix == ".docx":
             import docx
 
             try:
@@ -186,7 +254,7 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
             return out, None
 
         # ── XLSX ───────────────────────────────────────────────────────────
-        if suffix == ".xlsx":
+        if path_suffix == ".xlsx":
             import openpyxl
 
             try:
@@ -218,7 +286,7 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
             return out, None
 
         # ── XLS (legacy) ─────────────────────────────────────────────────
-        if suffix == ".xls":
+        if path_suffix == ".xls":
             import xlrd
 
             try:
@@ -250,20 +318,26 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
             return out, None
 
         # ── Plain text: sniff first (unknown ext, no ext, code files) ────
-        if suffix not in _STRUCTURED_SUFFIXES:
+        if path_suffix not in _STRUCTURED_SUFFIXES:
             sniffed = sniff_plain_text_bytes(data)
             if sniffed is not None:
                 out, _ = _truncate(sniffed.strip())
                 return out, None
 
-            if suffix in _FALLBACK_UTF8_SUFFIXES or (not suffix and "readme" in name_l):
+            if _utf8_fallback_eligible(path_suffix, mime_l):
                 text = data.decode("utf-8", errors="replace")
                 out, _ = _truncate(text.strip())
-                if out.strip():
+                if out.strip() and _mostly_printable(out):
                     return out, None
+                if not out.strip():
+                    return "", "В файле нет текста"
 
     except Exception as e:
         logger.warning("document_extract failed for %s: %s", filename, e)
         return "", f"Не удалось прочитать файл: {e!s}"
 
-    return "", f"Неподдерживаемый тип файла ({suffix or 'без расширения'}) — не похоже на текст"
+    label = path_suffix or _suffix_hint_from_mime(mime_l) or "без расширения"
+    return (
+        "",
+        f"Не удалось извлечь текст ({label}). Файл похож на бинарный или не текст.",
+    )
