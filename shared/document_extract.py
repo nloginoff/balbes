@@ -1,4 +1,4 @@
-"""Extract plain text from common document types (PDF, docx, xlsx, text)."""
+"""Extract plain text from common document types (PDF, docx, xlsx, xls, text)."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
             out, _ = _truncate(raw)
             return out, None
 
-        if suffix in (".xlsx", ".xls"):
+        if suffix == ".xlsx":
             import openpyxl
 
             wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
@@ -73,9 +73,28 @@ def extract_text_from_bytes(filename: str, data: bytes) -> tuple[str, str | None
                 lines.append(f"## {sheet.title}")
                 for row in sheet.iter_rows(values_only=True):
                     cells = [str(c) if c is not None else "" for c in row]
-                    if any(x.strip() for x in cells):
+                    if any(str(x).strip() for x in cells):
                         lines.append("\t".join(cells))
             wb.close()
+            raw = "\n".join(lines).strip()
+            if not raw:
+                return "", "Таблица пуста"
+            out, _ = _truncate(raw)
+            return out, None
+
+        if suffix == ".xls":
+            # Legacy Excel (BIFF), not ZIP — openpyxl only supports .xlsx
+            import xlrd
+
+            book = xlrd.open_workbook(file_contents=data)
+            lines: list[str] = []
+            for sheet in book.sheets():
+                lines.append(f"## {sheet.name}")
+                for row_idx in range(sheet.nrows):
+                    row = sheet.row_values(row_idx)
+                    cells = [str(c) if c is not None else "" for c in row]
+                    if any(x.strip() for x in cells):
+                        lines.append("\t".join(cells))
             raw = "\n".join(lines).strip()
             if not raw:
                 return "", "Таблица пуста"
