@@ -339,8 +339,8 @@ class OrchestratorAgent(BaseAgent):
 
         # Per-user cancellation flags (set by /stop, cleared at task start)
         self._cancel_flags: dict[str, bool] = {}
-        # Serialize foreground execute_task per user (avoid concurrent tool_dispatcher use).
-        # Heartbeat and background agents use separate code paths; they skip this lock.
+        # One foreground task at a time per user; extra POST /tasks for the same user wait
+        # (FIFO) instead of interleaving on shared tool_dispatcher state. Heartbeat skips this.
         self._user_execute_locks: dict[str, asyncio.Lock] = {}
 
         # Background task registry: key = f"{user_id}:{agent_id}"
@@ -485,27 +485,13 @@ class OrchestratorAgent(BaseAgent):
         source_early: str = ctx.get("source", "user")
         is_heartbeat_for_lock: bool = source_early == "heartbeat"
 
+        ulock: asyncio.Lock | None = None
         acquired_user_lock: bool = False
         if not is_heartbeat_for_lock:
             ulock = self._lock_for_user(user_id)
-            try:
-                # Non-blocking: reject if another foreground task is already running for this user.
-                await asyncio.wait_for(ulock.acquire(), timeout=0.0)
-                acquired_user_lock = True
-            except TimeoutError:
-                logger.warning(
-                    f"[{task_id}] Rejected duplicate task for user={user_id} (already running)"
-                )
-                return {
-                    "task_id": task_id,
-                    "status": "failed",
-                    "error": (
-                        "Уже выполняется другая задача. Дождитесь ответа, "
-                        "отправьте /stop, затем пришлите запрос снова."
-                    ),
-                    "chat_id": None,
-                    "duration_ms": 0.0,
-                }
+            # Wait: queue behind any other foreground work for this user (no message loss).
+            await ulock.acquire()
+            acquired_user_lock = True
 
         try:
             if source_early != "heartbeat":
@@ -754,8 +740,8 @@ class OrchestratorAgent(BaseAgent):
             }
 
         finally:
-            if acquired_user_lock:
-                self._lock_for_user(user_id).release()
+            if acquired_user_lock and ulock is not None:
+                ulock.release()
 
     # -------------------------------------------------------------------------
     # LLM call with tool call loop

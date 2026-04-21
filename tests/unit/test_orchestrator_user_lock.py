@@ -1,8 +1,7 @@
 """
-Regression: one foreground task per user_id (orchestrator).
+Regression: per-user asyncio.Lock on foreground execute_task (orchestrator).
 
-Parallel POST /api/v1/tasks for the same user used to share one ToolDispatcher and
-left multiple tasks stuck in *running*; a non-blocking per-user lock rejects duplicates.
+Serializes work for the same user_id (queue); heartbeat does not use this lock.
 """
 
 import asyncio

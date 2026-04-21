@@ -79,8 +79,8 @@ from shared.vision_models import default_vision_tier, list_vision_tiers, vision_
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
 
-# httpx read timeout for POST /api/v1/tasks (orchestrator runs the full LLM loop in one request)
-ORCHESTRATOR_POST_TIMEOUT_SEC = 120.0
+# httpx read timeout for POST /api/v1/tasks: full LLM run + possible wait in per-user server queue
+ORCHESTRATOR_POST_TIMEOUT_SEC = 600.0
 
 
 def _synthetic_filename_for_text_extract(fname: str, mime: str) -> str:
@@ -2776,15 +2776,12 @@ class BalbesTelegramBot:
                         fg_monitor.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await fg_monitor
-                    # Client dropped the HTTP wait; the worker may still be running — ask orchestrator
-                    # to co-operatively cancel (checked between LLM / tool rounds) to avoid a stuck
-                    # session and duplicate-foreground work for the same user.
-                    await self._cancel_orchestrator_task(mem_uid)
                     tmo = int(ORCHESTRATOR_POST_TIMEOUT_SEC)
                     await message.reply_text(
-                        f"⏳ Запрос в оркестраторе дольше {tmo} с — соединение оборвано, "
-                        "серверу отправлен сигнал остановки. "
-                        "Если ответ не появится, проверь /tasks или отправь /stop и запрос снова."
+                        f"⏳ Бот дольше {tmo} с не дождался HTTP-ответа от оркестратора "
+                        "(длинная обработка или очередь запросов). "
+                        "Задача на сервере может ещё выполняться — смотри /tasks. "
+                        "Чтобы остановить текущую: /stop, затем при необходимости повтори запрос."
                     )
                     return
 
