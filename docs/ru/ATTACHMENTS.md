@@ -2,7 +2,9 @@
 
 ## Конфигурация
 
-В [`config/providers.yaml`](../../config/providers.yaml) секция **`vision_models`**: `default_tier` и список **`tiers`** (`cheap` / `medium` / `premium`) с полями `id` (OpenRouter), `display_name`.
+В [`config/providers.yaml`](../../config/providers.yaml) секция **`vision_models`**: `default_tier`, **`timeout_seconds`** (HTTP-таймаут запроса к OpenRouter для мультимодальных вызовов; по умолчанию в коде 300 с, в YAML обычно 300), и список **`tiers`** (`cheap` / `medium` / `premium`) с полями `id` (OpenRouter), `display_name`.
+
+При ответе OpenRouter **504** / **5xx** оркестратор **последовательно пробует остальные модели из `tiers`** (порядок как в YAML): сначала выбранный tier пользователя, затем следующие — без отдельной настройки `fallback_chain`.
 
 ## Глобальный tier пользователя
 
@@ -30,6 +32,8 @@
 - **`{"kind": "file_text", "filename": "x.txt", "text": "..."}`** — уже извлечённый текст (PDF/DOCX/XLSX/текст обрабатываются на стороне клиента, например Telegram-бота).
 
 Пайплайн: при наличии изображений выполняется один вызов **vision-модели** (без инструментов), затем основной агент с инструментами получает расширенный `description`. Токены vision суммируются в `token_usage` ответа.
+
+Если стабильно приходят **504** или **The operation was aborted**, уменьшите размер изображения (бот режет по `max_side` в [`shared/user_media.py`](../../shared/user_media.py)), увеличьте **`vision_models.timeout_seconds`**, или переключите tier через **`/vision`** (другая модель в цепочке).
 
 ## Telegram
 

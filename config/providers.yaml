@@ -449,6 +449,8 @@ agents:
 # Vision models for image analysis (global per user via /vision). Separate from chat model.
 vision_models:
   default_tier: cheap
+  # Longer than chat: multimodal uploads + upstream latency (504 if too low).
+  timeout_seconds: 300
   tiers:
     - tier: cheap
       id: "openrouter/google/gemini-2.0-flash-001"

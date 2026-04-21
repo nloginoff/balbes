@@ -43,3 +43,33 @@ def vision_tier_display_name(tier: str) -> str:
         if (row.get("tier") or "").strip().lower() == tier.strip().lower():
             return str(row.get("display_name") or row.get("id") or tier)
     return tier
+
+
+def vision_request_timeout_seconds() -> float:
+    """HTTP read timeout for OpenRouter vision (multimodal) calls."""
+    vm = vision_models_config()
+    raw = vm.get("timeout_seconds", 300)
+    try:
+        return max(30.0, float(raw))
+    except (TypeError, ValueError):
+        return 300.0
+
+
+def vision_fallback_candidates(primary_model_id: str) -> list[str]:
+    """
+    Ordered model ids for vision: user's tier (primary) first, then remaining tiers
+    in YAML order — used when OpenRouter returns 504/5xx on the first model.
+    """
+    primary = (primary_model_id or "").strip()
+    ordered_ids: list[str] = []
+    for row in list_vision_tiers():
+        mid = (row.get("id") or "").strip()
+        if mid:
+            ordered_ids.append(mid)
+    out: list[str] = []
+    if primary:
+        out.append(primary)
+    for mid in ordered_ids:
+        if mid not in out:
+            out.append(mid)
+    return out

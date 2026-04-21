@@ -60,7 +60,12 @@ from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent
 from shared.config import get_settings
 from shared.identity_client import get_vision_tier as fetch_vision_tier_http
 from shared.openrouter_http import openrouter_json_headers
-from shared.vision_models import default_vision_tier, resolve_vision_model_id
+from shared.vision_models import (
+    default_vision_tier,
+    resolve_vision_model_id,
+    vision_fallback_candidates,
+    vision_request_timeout_seconds,
+)
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.agent")
@@ -1287,9 +1292,16 @@ class OrchestratorAgent(BaseAgent):
         agent_id: str | None = None,
         available_tools: list[dict] | None = None,
         openrouter_user_end_id: str | None = None,
+        *,
+        model_candidates: list[str] | None = None,
+        request_timeout: float | None = None,
     ) -> tuple[dict[str, Any] | None, str, str, dict[str, int]]:
         """
         Call LLM API, optionally trying a fallback chain.
+
+        model_candidates: if set, use this ordered list instead of _get_model_candidates
+            (e.g. vision: all vision_models.tiers after the user's tier).
+        request_timeout: if set, overrides providers.openrouter.timeout for this call (vision).
 
         Returns (response_json, model_id_used, error_message, usage_dict).
           - On success: (data, candidate, "", {prompt_tokens, completion_tokens, total_tokens})
@@ -1298,11 +1310,15 @@ class OrchestratorAgent(BaseAgent):
         if not self.http_client or not settings.openrouter_api_key:
             return None, model_id, "API key not configured", {}
 
-        candidates = self._get_model_candidates(model_id, agent_id=agent_id)
+        if model_candidates is not None:
+            candidates = list(model_candidates)
+        else:
+            candidates = self._get_model_candidates(model_id, agent_id=agent_id)
         last_error = "No response from API"
 
         cfg = get_providers_config()
         llm_timeout = float(cfg.get("providers", {}).get("openrouter", {}).get("timeout", 60))
+        effective_timeout = float(request_timeout) if request_timeout is not None else llm_timeout
 
         for candidate in candidates:
             openrouter_model = self._to_openrouter_id(candidate)
@@ -1324,7 +1340,7 @@ class OrchestratorAgent(BaseAgent):
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=openrouter_json_headers(settings),
                     json=payload,
-                    timeout=llm_timeout,
+                    timeout=effective_timeout,
                 )
 
                 if response.status_code == 200:
@@ -1402,6 +1418,8 @@ class OrchestratorAgent(BaseAgent):
             agent_id=None,
             available_tools=[],
             openrouter_user_end_id=user_id,
+            model_candidates=vision_fallback_candidates(vision_model_id),
+            request_timeout=vision_request_timeout_seconds(),
         )
         if data is None or llm_error:
             raise LLMUnavailableError(llm_error or "vision call failed")
