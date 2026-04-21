@@ -59,6 +59,16 @@ def test_no_extension_with_mime_text_plain():
     assert err is None
 
 
+def test_legacy_doc_needs_antiword_without_tool() -> None:
+    """.doc is OLE/binary; without antiword/catdoc the handler returns a clear install hint."""
+    data = b"\xd0\xcf\x11\xe0" + b"\x00" * 800
+    text, err = extract_text_from_bytes("note.doc", data)
+    assert not text.strip()
+    assert err is not None
+    assert "antiword" in (err or "").lower()
+    assert ".docx" in (err or "") or "docx" in (err or "").lower()
+
+
 def test_binary_unknown_extension_error_wording():
     data = b"\x00" * 500 + b"\x01\x02\x03" * 200
     text, err = extract_text_from_bytes("weird.bin", data)

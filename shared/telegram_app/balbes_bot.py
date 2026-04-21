@@ -96,6 +96,8 @@ def _synthetic_filename_for_text_extract(fname: str, mime: str) -> str:
         return "upload.py"
     if m in ("application/json", "application/xml"):
         return "upload.json" if m == "application/json" else "upload.xml"
+    if m in ("application/msword", "application/cdfv2-encrypted"):
+        return "upload.doc"
     return name
 
 

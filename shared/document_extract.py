@@ -1,4 +1,7 @@
-"""Extract plain text from common document types (PDF, docx, xlsx, xls, plain text).
+"""Extract plain text from common document types (PDF, docx, legacy doc, xlsx, xls, plain text).
+
+**Legacy .doc (Word 97-2003)** is binary; text is read via the **antiword** or **catdoc** CLI
+if installed (e.g. ``sudo apt install antiword``). It is not the same as **.docx** (Open XML).
 
 Non-binary files are detected by **sniffing** (UTF-8/UTF-16/legacy encodings) so unknown
 extensions (.py, .pl, no extension) work without maintaining a huge allowlist.
@@ -8,14 +11,17 @@ from __future__ import annotations
 
 import io
 import logging
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACT_CHARS = 120_000
 
-# Formats handled by structured parsers only
-_STRUCTURED_SUFFIXES = frozenset({".pdf", ".docx", ".xlsx", ".xls"})
+# Formats handled by structured parsers only (incl. legacy Word .doc — not plain text)
+_STRUCTURED_SUFFIXES = frozenset({".pdf", ".docx", ".doc", ".xlsx", ".xls"})
 
 # If sniff fails, still try UTF-8 replace for these (known text/code extensions)
 _FALLBACK_UTF8_SUFFIXES = frozenset(
@@ -97,6 +103,7 @@ _MIME_SUFFIX_HINT: dict[str, str] = {
     "application/javascript": ".js",
     "application/json": ".json",
     "application/xml": ".xml",
+    "application/msword": ".doc",
 }
 
 # MIME types that imply plain text when extension is missing or sniff failed
@@ -143,9 +150,7 @@ def _mime_implies_plain_text_after_sniff(mime_l: str) -> bool:
         return True
     if mime_l in _MIME_PLAIN_EXTRA:
         return True
-    if _suffix_hint_from_mime(mime_l) is not None:
-        return True
-    return False
+    return _suffix_hint_from_mime(mime_l) is not None
 
 
 def _utf8_fallback_eligible(
@@ -157,6 +162,55 @@ def _utf8_fallback_eligible(
     if not path_suffix:
         return True
     return _mime_implies_plain_text_after_sniff(mime_l)
+
+
+def _try_subprocess_text_tool(
+    tool_name: str, data: bytes, tmp_suffix: str, timeout: int = 120
+) -> str | None:
+    """Run external CLI (antiword, catdoc) on a temp file. Returns text or None."""
+    exe = shutil.which(tool_name)
+    if not exe:
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=tmp_suffix, delete=True) as f:
+            f.write(data)
+            f.flush()
+            p = subprocess.run(
+                [exe, f.name],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+    except (OSError, subprocess.SubprocessError, TimeoutError) as e:
+        logger.warning("%s failed: %s", tool_name, e)
+        return None
+    if p.returncode != 0:
+        return None
+    out = (p.stdout or "").strip()
+    return out or None
+
+
+def _legacy_msword_doc_error() -> str:
+    return (
+        "Старый Word (.doc) не прочитан. Установи на сервере «sudo apt install antiword» "
+        "(запасной вариант — «catdoc») или пришли документ в .docx."
+    )
+
+
+def extract_text_legacy_msword_doc(data: bytes) -> tuple[str, str | None]:
+    """
+    Microsoft Word 97-2003 binary .doc (not OOXML .docx). Uses antiword or catdoc if installed.
+    """
+    t = _try_subprocess_text_tool("antiword", data, ".doc")
+    if t is not None:
+        out, _ = _truncate(t)
+        return out, None
+    t2 = _try_subprocess_text_tool("catdoc", data, ".doc")
+    if t2 is not None:
+        out, _ = _truncate(t2)
+        return out, None
+    return "", _legacy_msword_doc_error()
 
 
 def sniff_plain_text_bytes(data: bytes) -> str | None:
@@ -209,6 +263,8 @@ def extract_text_from_bytes(
 
     path_suffix = Path(filename or "").suffix.lower()
     mime_l = (mime_type or "").lower().strip()
+    if not path_suffix and mime_l in ("application/msword", "application/cdfv2-encrypted"):
+        path_suffix = ".doc"
 
     try:
         # ── PDF ──────────────────────────────────────────────────────────
@@ -252,6 +308,10 @@ def extract_text_from_bytes(
                 return "", "Не удалось прочитать DOCX"
             out, _ = _truncate(raw)
             return out, None
+
+        # ── Legacy MS Word .doc (OLE, not OOXML) — antiword / catdoc ───────
+        if path_suffix == ".doc":
+            return extract_text_legacy_msword_doc(data)
 
         # ── XLSX ───────────────────────────────────────────────────────────
         if path_suffix == ".xlsx":
