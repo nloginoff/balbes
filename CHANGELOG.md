@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Инструмент `render_solution`** — рендер цельного текстового решения с формулами в одну или несколько PNG **фиксированного размера** (900×1200 px при DPI 120); вложения уходят в поле `outbound_attachments` ответа `POST /api/v1/tasks` и отправляются в Telegram отдельными фото; при делегировании в coder вложения сливаются в ответ оркестратора. Реализация: [`shared/solution_render.py`](shared/solution_render.py), [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py), [`services/coder/api/execute.py`](services/coder/api/execute.py); зависимость **matplotlib**; allowlist **coder** в [`config/providers.yaml`](config/providers.yaml).
+
 ### Fixed
 - **Вложения: старый Excel `.xls`** — `openpyxl` читает только `.xlsx` (ZIP); для legacy `.xls` (BIFF) добавлено чтение через **`xlrd`** в [`shared/document_extract.py`](shared/document_extract.py); зависимости: [`pyproject.toml`](pyproject.toml), [`services/orchestrator/requirements.txt`](services/orchestrator/requirements.txt).
 - **Вложения: PDF/DOCX/XLSX в Telegram** — в [`services/orchestrator/requirements.txt`](services/orchestrator/requirements.txt) добавлены `PyMuPDF`, `Pillow`, `python-docx`, `openpyxl` (как в корневом [`pyproject.toml`](pyproject.toml)); иначе при чтении документов возникало `No module named 'fitz'` — прод-venv оркестратора/бота ставился только по этому файлу.

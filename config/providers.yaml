@@ -255,6 +255,7 @@ agents:
       - file_patch
       - manage_todo
       - manage_schedule
+      - render_solution
     features:
       delegation: false
     # Coder uses a capable model by default (good at code); overrides chat model for delegations
@@ -457,13 +458,13 @@ vision_models:
       id: "openrouter/google/gemini-2.0-flash-001"
       display_name: "👁 Gemini 2.0 Flash (vision, дёшево)"
       capabilities: [chat, vision]
-    - tier: medium
-      id: "openrouter/google/gemini-2.5-flash"
-      display_name: "👁 Gemini 2.5 Flash (vision)"
-      capabilities: [chat, vision]
     - tier: premium
       id: "openrouter/openai/gpt-4o"
       display_name: "👁 GPT-4o (vision)"
+      capabilities: [chat, vision]
+    - tier: medium
+      id: "openrouter/google/gemini-2.5-flash"
+      display_name: "👁 Gemini 2.5 Flash (vision)"
       capabilities: [chat, vision]
 
 active_models:

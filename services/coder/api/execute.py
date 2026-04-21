@@ -39,7 +39,7 @@ async def agent_execute(request: Request, body: AgentExecuteRequest) -> dict[str
 
     if result.get("status") == "success":
         inner = result.get("result") or {}
-        return {
+        payload: dict[str, Any] = {
             "status": "success",
             "output": inner.get("output", ""),
             "task_id": result.get("task_id"),
@@ -47,6 +47,9 @@ async def agent_execute(request: Request, body: AgentExecuteRequest) -> dict[str
             "debug_events": result.get("debug_events"),
             "chat_id": result.get("chat_id"),
         }
+        if result.get("outbound_attachments"):
+            payload["outbound_attachments"] = result["outbound_attachments"]
+        return payload
 
     return {
         "status": "failed",

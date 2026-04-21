@@ -4,6 +4,7 @@ Shared tool registry for all agents (OpenAI function-calling schemas + ToolDispa
 Dispatches tool calls to skill implementations; logging via AgentActivityLogger.
 """
 
+import asyncio
 import logging
 import time
 from pathlib import Path
@@ -869,6 +870,31 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "render_solution",
+            "description": (
+                "Render a complete written solution (text + formulas) as one or more fixed-size PNG "
+                "pages for comfortable reading in chat. Pass the entire solution in one call — do not "
+                "split into many tool calls per formula. Use when the user needs readable math in "
+                "messengers; plain copyable text can still be given in the normal assistant reply."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Full solution text: steps, explanations, and LaTeX-style formulas "
+                            "($...$ or lines with \\frac, ^, _). Cyrillic and plain text are supported."
+                        ),
+                    },
+                },
+                "required": ["content"],
+            },
+        },
+    },
 ]
 
 
@@ -1030,6 +1056,8 @@ class ToolDispatcher:
 
         # Per-task call counters for rate limiting
         self._call_counts: dict[str, int] = {}
+        # Images / files produced by tools for outbound delivery (Telegram, MAX, web)
+        self._outbound_attachments: list[dict[str, Any]] = []
 
     # Per-task rate limits (max calls per tool per task)
     _RATE_LIMITS: dict[str, int] = {
@@ -1041,12 +1069,26 @@ class ToolDispatcher:
         "file_patch": 20,
         "workspace_read": 40,
         "workspace_write": 20,
+        "render_solution": 3,
     }
     _DEFAULT_RATE_LIMIT = 20
 
     def reset_call_counts(self) -> None:
         """Reset per-tool call counters. Call at the start of each new task."""
         self._call_counts.clear()
+        self._outbound_attachments.clear()
+
+    def take_outbound_attachments(self) -> list[dict[str, Any]]:
+        """Return and clear pending outbound images/files for this task."""
+        out = list(self._outbound_attachments)
+        self._outbound_attachments.clear()
+        return out
+
+    def extend_outbound_attachments(self, items: list[dict[str, Any]]) -> None:
+        """Merge attachments from a sub-agent HTTP response (e.g. coder delegation)."""
+        for it in items:
+            if isinstance(it, dict) and it.get("kind") == "image" and it.get("base64"):
+                self._outbound_attachments.append(dict(it))
 
     def set_debug_collector(self, collector: list[dict] | None) -> None:
         """Attach (or detach) a debug event list for the current task."""
@@ -1148,6 +1190,9 @@ class ToolDispatcher:
 
             elif tool_name == "manage_schedule":
                 result = self._do_manage_schedule(tool_args)
+
+            elif tool_name == "render_solution":
+                result = await self._do_render_solution(tool_args)
 
             # ── Blogger tools (only meaningful when agent_id == "blogger") ──
             elif tool_name == "read_chat_history":
@@ -1904,6 +1949,45 @@ class ToolDispatcher:
         else:
             return f"Неизвестное действие '{action}'. Доступно: list, add, remove, enable, disable."
 
+    async def _do_render_solution(self, args: dict[str, Any]) -> str:
+        """Render full solution to fixed-size PNG page(s); queue for outbound delivery."""
+        content = (args.get("content") or "").strip()
+        if not content:
+            return "Error: content is empty."
+        from shared.solution_render import render_solution_pages
+
+        try:
+            pages = await asyncio.to_thread(render_solution_pages, content)
+        except ValueError as e:
+            return f"Ошибка рендера: {e}"
+        except Exception as e:
+            logger.warning("render_solution failed: %s", e, exc_info=True)
+            return f"Ошибка рендера: {type(e).__name__}: {e}"
+
+        if not pages:
+            return "Рендер не дал изображений."
+
+        n = len(pages)
+        for i, png in enumerate(pages):
+            cap = f"Решение (стр. {i + 1}/{n})" if n > 1 else "Решение"
+            self._append_outbound_png(png, cap)
+        return (
+            f"Сформировано изображение решения: {n} стр. "
+            f"({n} фиксированных страниц). Оно будет отправлено в чат отдельным сообщением."
+        )
+
+    def _append_outbound_png(self, png_bytes: bytes, caption: str) -> None:
+        import base64
+
+        self._outbound_attachments.append(
+            {
+                "kind": "image",
+                "mime_type": "image/png",
+                "base64": base64.b64encode(png_bytes).decode("ascii"),
+                "caption": (caption or "")[:1024],
+            }
+        )
+
     # =========================================================================
     # Blogger tools implementation
     # =========================================================================
@@ -2224,6 +2308,8 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         action = args.get("action", "?")
         jid = args.get("job_id", "")
         return f"action={action}" + (f" job_id='{jid}'" if jid else "")
+    if tool_name == "render_solution":
+        return f"content_len={len(args.get('content') or '')}"
     return str(args)[:80]
 
 

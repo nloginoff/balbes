@@ -24,7 +24,9 @@ vision quality tier stored in Memory.
 """
 
 import asyncio
+import base64
 import contextlib
+import io
 import logging
 import re
 import time
@@ -38,6 +40,7 @@ import httpx
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputFile,
     Update,
     User,
 )
@@ -2790,6 +2793,25 @@ class BalbesTelegramBot:
                                         await message.reply_text(chunk, parse_mode="HTML")
                                     except Exception:
                                         await message.reply_text(chunk)
+
+                        outbound = result.get("outbound_attachments") or []
+                        for att in outbound:
+                            if att.get("kind") != "image" or not att.get("base64"):
+                                continue
+                            try:
+                                raw = base64.b64decode(att["base64"])
+                                cap = (att.get("caption") or "").strip() or None
+                                if cap and len(cap) > 1024:
+                                    cap = cap[:1021] + "…"
+                                await message.reply_photo(
+                                    photo=InputFile(
+                                        io.BytesIO(raw),
+                                        filename="solution.png",
+                                    ),
+                                    caption=cap,
+                                )
+                            except Exception as e:
+                                logger.warning("outbound image send failed: %s", e)
 
                         # Start background monitors for newly delegated agents
                         bg_started = result.get("background_tasks_started", [])

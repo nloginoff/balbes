@@ -684,11 +684,17 @@ class OrchestratorAgent(BaseAgent):
                 result["background_tasks_started"] = background_tasks_started
             if debug and debug_events:
                 result["debug_events"] = debug_events
+            if self.tool_dispatcher:
+                oa = self.tool_dispatcher.take_outbound_attachments()
+                if oa:
+                    result["outbound_attachments"] = oa
             return result
 
         except LLMUnavailableError as e:
             logger.warning(f"[{task_id}] LLM unavailable: {e}")
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+            if self.tool_dispatcher:
+                self.tool_dispatcher.take_outbound_attachments()
             self._fg_debug_buffer.pop(f"{user_id}:{effective_agent_id}:fg", None)
             self._finish_task(task_id, "error")
             return {
@@ -703,6 +709,8 @@ class OrchestratorAgent(BaseAgent):
             logger.error(f"[{task_id}] Task failed: {e}", exc_info=True)
             duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
             err_detail = str(e) or "(нет описания)"
+            if self.tool_dispatcher:
+                self.tool_dispatcher.take_outbound_attachments()
             self._fg_debug_buffer.pop(f"{user_id}:{effective_agent_id}:fg", None)
             self._finish_task(task_id, "error")
             return {
@@ -995,6 +1003,9 @@ class OrchestratorAgent(BaseAgent):
         ev = data.get("debug_events")
         if debug_events is not None and isinstance(ev, list):
             debug_events.extend(ev)
+        sub_oa = data.get("outbound_attachments")
+        if self.tool_dispatcher and sub_oa and isinstance(sub_oa, list):
+            self.tool_dispatcher.extend_outbound_attachments(sub_oa)
         return out
 
     async def _delegate_task(

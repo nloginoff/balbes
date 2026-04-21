@@ -69,6 +69,7 @@ The Coder is specialized for software development. It receives delegated tasks f
 - Run shell commands from the whitelist (`execute_command`)
 - Execute git, grep, rg, diff, tree, bash scripts
 - Auto-commit file changes to git
+- Call `render_solution` to turn a full written solution (text + math) into fixed-size PNG page(s); the API includes them in `outbound_attachments` (base64), and the Telegram bot sends them as photos alongside the normal text reply
 
 ### Running in background
 

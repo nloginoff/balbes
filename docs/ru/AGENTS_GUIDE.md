@@ -54,7 +54,7 @@ class OrchestratorAgent(BaseAgent):
    │   └── return (response_text, model_used, token_usage)
    ├── Сохранение ответа в историю Redis
    ├── _record_token_usage() — fire-and-forget → /api/v1/tokens/record
-   └── return TaskResult {output, model_used, token_usage, debug_events}
+   └── return TaskResult {output, model_used, token_usage, debug_events, outbound_attachments?}
 ```
 
 ### XML Tool Call Parsing
@@ -223,6 +223,7 @@ _background_results → result_text (если завершено)
 | `get_agent_result` | ❌ | ✅ | Получить результат фоновой задачи |
 | `cancel_agent_task` | ❌ | ✅ | Отменить фоновую задачу |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
+| `render_solution` | ✅ | ✅ | Текст решения с формулами → одна или несколько PNG фиксированного размера; файлы попадают в `outbound_attachments` ответа задачи и в Telegram отправляются отдельными фото (текст ответа LLM остаётся обычным сообщением) |
 
 **Heartbeat** использует только `workspace_read` (минимальный набор для экономии токенов).
 
@@ -236,6 +237,7 @@ _background_results → result_text (если завершено)
 | `fetch_url` | 15 |
 | `file_read` / `file_write` / `file_patch` | 20–40 |
 | `execute_command` | 30 |
+| `render_solution` | 3 |
 | остальные | 20 |
 
 При превышении лимита инструмент возвращает ошибку с просьбой подвести итог.
@@ -317,9 +319,14 @@ _background_results → result_text (если завершено)
   "output": "Текст ответа агента",
   "model_used": "openrouter/minimax/minimax-m2.5",
   "debug_events": [...],
-  "background_tasks_started": [{"agent_id": "coder", "key": "YOUR_TELEGRAM_USER_ID:coder"}]
+  "background_tasks_started": [{"agent_id": "coder", "key": "YOUR_TELEGRAM_USER_ID:coder"}],
+  "outbound_attachments": [
+    {"kind": "image_png", "filename": "solution_p1.png", "data_base64": "..."}
+  ]
 }
 ```
+
+Поле **`outbound_attachments`** присутствует, если агент вызывал инструмент `render_solution` (или делегированный coder вернул вложения — они сливаются в ответ оркестратора). Клиенты вроде Telegram отправляют эти изображения отдельно от текста `output`.
 
 ### GET /api/v1/tasks/bg/events
 
