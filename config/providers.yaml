@@ -458,7 +458,7 @@ vision_models:
       display_name: "👁 Gemini 2.0 Flash (vision, дёшево)"
       capabilities: [chat, vision]
     - tier: medium
-      id: "openrouter/google/gemini-2.5-flash-preview-05-20"
+      id: "openrouter/google/gemini-2.5-flash"
       display_name: "👁 Gemini 2.5 Flash (vision)"
       capabilities: [chat, vision]
     - tier: premium
