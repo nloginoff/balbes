@@ -1,5 +1,7 @@
 """Tests for solution PNG rendering."""
 
+import io
+
 import pytest
 
 from shared.solution_render import (
@@ -24,3 +26,14 @@ def test_fixed_dimensions_constants():
 def test_empty_raises():
     with pytest.raises(ValueError):
         render_solution_pages("   ")
+
+
+def test_short_text_crops_empty_bottom() -> None:
+    """Tight crop removes large blank area below last line."""
+    from PIL import Image
+
+    short = "Задание 1\n\nx = 1"
+    pages = render_solution_pages(short)
+    h = Image.open(io.BytesIO(pages[0])).height
+    # Full canvas would be 1200px; cropped should be much shorter
+    assert h < PAGE_HEIGHT_PX - 200
