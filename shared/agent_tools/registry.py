@@ -272,9 +272,12 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "name": "delegate_to_agent",
             "description": (
                 "Delegate a task to a specialist sub-agent and return their response. "
-                "Use 'coder' for code, files, tests, git. "
+                "Use 'coder' only for **explicit** repo/code/test/git work the user asked for. "
+                "Do **not** use for: summarizing an attachment, writing scenarios/articles, or tasks "
+                "you can do in this chat. "
                 "Use 'blogger' for drafts, posts, channel content, blog summaries. "
-                "Provide a complete, self-contained task — the sub-agent has NO chat history."
+                "Provide a complete, self-contained task — the sub-agent has NO chat history. "
+                "Prefer mode 'ask' unless the user clearly needs file writes in the project."
             ),
             "parameters": {
                 "type": "object",
@@ -295,11 +298,11 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "mode": {
                         "type": "string",
                         "description": (
-                            "'agent' = can run commands, write files, use git (default). "
-                            "'ask' = safe info commands only, no writes."
+                            "'ask' = read-only (default): safe commands, no file writes to the project — use for reviews and advice. "
+                            "'agent' = full: commands, file_write, git — only when the user explicitly needs changes in the repo."
                         ),
-                        "enum": ["agent", "ask"],
-                        "default": "agent",
+                        "enum": ["ask", "agent"],
+                        "default": "ask",
                     },
                     "background": {
                         "type": "boolean",

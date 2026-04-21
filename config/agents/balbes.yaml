@@ -3,12 +3,44 @@
 
 id: balbes
 
+# Без delegate_to_agent / get_agent_result / cancel_agent_task — оркестратор обрабатывает
+# вложения и сценарии сам; иначе модель тянет coder «на вентилятор».
+# Вернуть делегирование: добавь эти три имени в оба списка ниже.
 # Optional per-mode tool allowlists (override providers.yaml tools_allowlist for this agent).
-# Omit or leave null to use providers.yaml only.
-# tools:
-#   ask: [web_search, workspace_read]
-#   agent: null
-#   dev: null
+_orchestrator_tools: &orchestrator_tools
+  - web_search
+  - fetch_url
+  - execute_command
+  - workspace_read
+  - workspace_write
+  - rename_chat
+  - save_to_memory
+  - recall_from_memory
+  - code_search
+  - index_codebase
+  - list_agent_tasks
+  - read_agent_logs
+  - file_read
+  - file_write
+  - file_patch
+  - manage_todo
+  - read_chat_history
+  - read_cursor_file
+  - list_cursor_files
+  - read_business_chats
+  - get_business_summary
+  - create_draft
+  - list_drafts
+  - get_published_posts
+  - schedule_post
+  - set_business_role
+  - manage_schedule
+  - render_solution
+
+tools:
+  ask: *orchestrator_tools
+  agent: *orchestrator_tools
+  dev: *orchestrator_tools
 
 # HTTP delegation (delegate_to_agent): базовые URL coder/blogger берутся из окружения —
 # `CODER_PORT` / `CODER_SERVICE_URL`, `BLOGGER_SERVICE_PORT` / `BLOGGER_SERVICE_URL`
