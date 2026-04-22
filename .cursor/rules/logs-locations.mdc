@@ -1,0 +1,21 @@
+---
+description: Где лежат логи, история чатов и JSONL агента — чтобы не просить пользователя вставлять всё в чат
+alwaysApply: true
+---
+
+## Перед копипастом логов
+
+- **Сервис** (orchestra / memory / telegram / gateway), **время (UTC/локаль)**, **путь к файлу** — достаточно; полный dump редко нужен.
+- История **переписки** в UI бота = **Redis (Memory)**, не файлы `logs/prod/`.
+- **Вызовы tools** = JSONL в `data/logs/agents/`, не переписка.
+
+## Сводка путей (prod-деплой, корень `balbes/`)
+
+| Что | Где |
+|-----|-----|
+| Логи uvicorn/сервисов | `logs/prod/*.log` |
+| Какие tools вызывал агент | `data/logs/agents/<id>/YYYY-MM-DD.jsonl` |
+| Дамп чатов в файлы | `./scripts/export_chats_for_agent.sh` (нужен `.venv` с `redis`) → `data_for_agent/` |
+| API истории (без скрипта) | `GET /api/v1/history/{user_id}/{chat_id}` на Memory (порт см. .env) |
+
+Полные команды, curl, export: [docs/ru/LOGS.md](docs/ru/LOGS.md). Без venv: `No module named 'redis'` — из корня репо: `.venv/bin/python scripts/export_memory_chats_to_data_for_agent.py` или `pip install -e '.[dev]'` в venv.

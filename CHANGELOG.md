@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Документация логов** — [`docs/ru/LOGS.md`](docs/ru/LOGS.md): куда смотреть `logs/prod`, JSONL tools, Memory/Redis, экспорт чатов. Правило Cursor [`.cursor/rules/logs-locations.mdc`](.cursor/rules/logs-locations.mdc). Скрипт [`scripts/export_chats_for_agent.sh`](scripts/export_chats_for_agent.sh) теперь вызывает `.venv/bin/python` или `uv run`, с понятной ошибкой без venv.
+
 - **Версионирование `schedules.yaml` в приватном memory-репо** — после `save_yaml_for_agent` вызывается тот же commit + debounced push, что и у `workspace_write` ([`services/orchestrator/workspace.py`](services/orchestrator/workspace.py) — `trigger_memory_repo_commit_for_agent`). [`scripts/setup_memory_repo.sh`](scripts/setup_memory_repo.sh) создаёт `.gitignore` с `**/*.md` и `**/*.yaml`. Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/ru/CONFIGURATION.md`](docs/ru/CONFIGURATION.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md), [`docs/en/CONFIGURATION.md`](docs/en/CONFIGURATION.md). Тест: [`tests/unit/test_agent_schedules.py`](tests/unit/test_agent_schedules.py).
 
 ### Fixed

@@ -15,11 +15,14 @@
 ``memory_user_id`` — namespace Redis (например ``blogger_<telegram_id>`` у бизнес-бота,
 числовой id у оркестратора). При коллизии — суффикс ``__2``, ``__3``, ….
 
-Запуск::
+Запуск (нужен пакет ``redis`` — из venv репозитория, **не** голый ``python3``)::
 
-    python3 scripts/export_memory_chats_to_data_for_agent.py
+    cd /path/to/balbes/repo
+    .venv/bin/python scripts/export_memory_chats_to_data_for_agent.py
+    # или: ./scripts/export_chats_for_agent.sh
 
-или ``./scripts/export_chats_for_agent.sh``
+Если venv нет: ``python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'`` (см. корневой ``pyproject.toml``).
+Prod: сначала ``cd ~/projects/balbes`` (или ``dev``) и **тот же** venv, либо ``uv run python scripts/...`` из корня.
 
 Куда писать по умолчанию: ``<корень_деплоя>/data_for_agent/`` (корень репозитория на проде, не корень ФС).
 Явно: ``--output путь`` или ``EXPORT_CHATS_OUTPUT``.

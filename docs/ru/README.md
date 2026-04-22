@@ -14,6 +14,7 @@
 | [EXAMPLES.md](EXAMPLES.md) | Примеры использования |
 | [FAQ.md](FAQ.md) | Частые вопросы |
 | [QUICKSTART.md](QUICKSTART.md) | Быстрый старт (5 минут) |
+| [LOGS.md](LOGS.md) | Где логи сервисов, JSONL tools, как выгрузить чаты из Redis, export скрипт |
 
 ---
 
