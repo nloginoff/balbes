@@ -44,6 +44,89 @@ def _read_workspace_file(name: str) -> str:
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
+def _read_workspace_or_bootstrap(name: str) -> str:
+    """Prefer ``data/agents/blogger/``, else ``bbot_bootstrap/`` in the service package."""
+    for base in (_WORKSPACE, _BBOT_DEFAULTS):
+        p = base / name
+        if p.exists():
+            try:
+                t = p.read_text(encoding="utf-8").strip()
+                if t:
+                    return t
+            except OSError as exc:
+                logger.warning("read %s: %s", p, exc)
+    return ""
+
+
+def _blogger_dev_blog_config() -> dict:
+    """``blogger.dev_blog`` in providers; ``enabled: false`` restores legacy one-shot generation."""
+    root = (get_providers_config() or {}).get("blogger") or {}
+    raw = root.get("dev_blog")
+    if not isinstance(raw, dict):
+        raw = {}
+    if raw.get("enabled") is False:
+        return {"enabled": False}
+    merged: dict = {
+        "enabled": True,
+        "include_bbot_thread": True,
+        "from_hours": 48,
+        "max_posts_per_run": 3,
+        "batch_topics": True,
+        "cursor_files": 2,
+        "dedup_titles_limit": 50,
+    }
+    for k, v in raw.items():
+        if v is not None:
+            merged[k] = v
+    if "source_agent_ids" not in raw:
+        merged["source_agent_ids"] = list(root.get("source_agents") or ["balbes", "coder"])
+    return merged
+
+
+def _dev_agent_ids_for_read(
+    request_agents: list[str] | None, dev_cfg: dict, dev_disabled: bool
+) -> set[str] | None:
+    if dev_disabled or not dev_cfg.get("enabled", True):
+        return None
+    ids = list(dev_cfg.get("source_agent_ids") or [])
+    if len(ids) == 0:
+        return None
+    if request_agents is not None and len(request_agents) > 0:
+        ids = list(request_agents)
+    alias = {"orchestrator": "balbes"}
+    out: set[str] = set()
+    for x in ids:
+        s = (x or "").strip().lower()
+        if not s:
+            continue
+        s = alias.get(s, s)
+        out.add(s)
+    return out or None
+
+
+def _parse_topics_planner_json(raw: str) -> list[dict]:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    topics = data.get("topics")
+    if not isinstance(topics, list):
+        return []
+    out: list[dict] = []
+    for t in topics:
+        if not isinstance(t, dict):
+            continue
+        tid = (t.get("topic_id") or t.get("id") or "").strip()
+        label = (t.get("label") or t.get("title") or "").strip()
+        if tid and label:
+            out.append({"topic_id": tid, "label": label})
+    return out
+
+
 def _load_bbot_system_prompt_merged() -> str:
     """
     Same bootstrap file order as ``AgentWorkspace``; each file: prefer ``data/agents/blogger``,
@@ -184,7 +267,9 @@ class BloggerAgent:
             )
         return self._tool_dispatcher
 
-    async def _call_llm(self, messages: list[dict], model: str | None = None) -> str:
+    async def _call_llm(
+        self, messages: list[dict], model: str | None = None, *, max_tokens: int = 2048
+    ) -> str:
         """Call OpenRouter LLM. Returns text content."""
         http = self._get_http()
         used_model = _normalize_openrouter_model_id(model or self.model)
@@ -195,7 +280,7 @@ class BloggerAgent:
                 json={
                     "model": used_model,
                     "messages": messages,
-                    "max_tokens": 2048,
+                    "max_tokens": max_tokens,
                 },
                 timeout=90.0,
             )
@@ -244,123 +329,273 @@ class BloggerAgent:
             logger.warning("bbot_thread_snippet_for_post: %s", exc)
             return "", []
 
+    async def _gather_post_sources(
+        self,
+        from_ts: datetime,
+        from_hours: int,
+        cursor_files: int,
+        include_bbot: bool,
+        agent_ids: set[str] | None,
+    ) -> tuple[list[str], list[str]]:
+        """Returns (source blocks, source_refs)."""
+        sources: list[str] = []
+        source_refs: list[str] = []
+        if include_bbot:
+            bbot_block, bbot_refs = await self._bbot_thread_snippet_for_post()
+            if bbot_block:
+                sources.append(bbot_block)
+                source_refs.extend(bbot_refs)
+                logger.info("generate_agent_post: added bbot thread snippet, refs=%s", bbot_refs)
+        if self._chat_reader:
+            msgs = await self._chat_reader.read(
+                user_id=str(self.owner_tg_id),
+                from_ts=from_ts,
+                limit=40,
+                agent_ids=agent_ids,
+            )
+            if msgs:
+                chat_text = "\n".join(
+                    f"[{m.get('chat_name', '?')}|{m['role']}]: {m['content'][:250]}"
+                    for m in msgs[:30]
+                )
+                label_hours = f" (последние {from_hours}ч)" if from_hours else ""
+                sources.append(f"=== История чатов{label_hours} ===\n{chat_text}")
+                source_refs.append(f"chat_history:{from_ts.date().isoformat()}")
+                logger.info(
+                    "generate_agent_post: using %d messages from chat history (filtered=%s)",
+                    len(msgs[:30]),
+                    agent_ids,
+                )
+        for cf in self._cursor_reader.read_latest(cursor_files):
+            sources.append(f"=== Cursor: {cf['path']} ===\n{cf['content'][:1500]}")
+            source_refs.append(f"cursor:{cf['path']}")
+        return sources, source_refs
+
+    async def _plan_dev_blog_topics(
+        self,
+        user_material: str,
+        avoid_titles: list[str],
+        max_topics: int,
+        model: str,
+    ) -> list[dict]:
+        avoid_block = ""
+        if avoid_titles:
+            avoid_block = "\n\nУже использованные заголовки (не дублируй тему):\n" + "\n".join(
+                f"- {t[:200]}" for t in avoid_titles[:40]
+            )
+        system = (
+            "Ты планировщик публичных dev-постов про продукт Balbes. "
+            f"По материалам ниже перечисли до {max_topics} разных завершённых или чётко сформулированных тем. "
+            "Пропусти пустой шум. Ответь только JSON, без markdown:\n"
+            '{"topics": [{"topic_id": "kebab-case-id", "label": "короткая метка на русском"}]}'
+        )
+        user = f"{user_material}{avoid_block}"
+        raw = await self._call_llm(_llm_messages(system, user), model=model, max_tokens=1024)
+        if not raw.strip() and _normalize_openrouter_model_id(
+            model
+        ) != _normalize_openrouter_model_id(self.cheap_model):
+            raw = await self._call_llm(
+                _llm_messages(system, user), model=self.cheap_model, max_tokens=1024
+            )
+        topics = _parse_topics_planner_json(raw)
+        return topics[:max_topics] if topics else []
+
+    def _dev_blog_system_prompt(
+        self,
+        identity: str,
+        soul: str,
+        post_dev: str,
+        avoid_titles: str,
+        single_topic: dict | None,
+    ) -> str:
+        topic_block = ""
+        if single_topic:
+            topic_block = (
+                f"\n\nСфокусируйся только на одной линии:\n"
+                f"— topic_id: {single_topic['topic_id']}\n"
+                f"— {single_topic['label']}\n"
+                "Сделай уникальный заголовок; не повторяй уже существующие из списка выше."
+            )
+        return (
+            f"{identity}\n\n{soul}\n\n{post_dev}\n\n"
+            "Ты пишешь пост для публичного Telegram-канала от имени агента Балбес (про разработку Balbes).\n"
+            "Пиши по делу, без выдуманных фактов: опирайся на переданные материалы."
+            f"{avoid_titles}{topic_block}\n\n"
+            "Ответь строго JSON (без обёртки ```, один объект):\n"
+            '{"title": "...", "content_ru": "...", "content_en": "...", "notes": ""}\n'
+            "Поле notes — опционально: кратко, если отдельно нужна служебная пометка; "
+            "для сценария «со слов хозяина» укажи в notes что пост отражает формулировки владельца."
+        )
+
+    async def _write_one_agent_post_json(
+        self,
+        user_prompt: str,
+        base_refs: list[str],
+        topic: dict | None,
+        avoid_list: str,
+        identity: str,
+        soul: str,
+        post_dev: str,
+        model: str,
+    ) -> dict | None:
+        refs = list(base_refs)
+        if topic:
+            refs.append(f"dev_blog:topic:{topic['topic_id']}")
+        system = self._dev_blog_system_prompt(
+            identity, soul, post_dev, avoid_list, single_topic=topic
+        )
+        primary = model or self.model
+        raw = await self._call_llm(_llm_messages(system, user_prompt), model=primary)
+        if not raw.strip() and _normalize_openrouter_model_id(
+            primary
+        ) != _normalize_openrouter_model_id(self.cheap_model):
+            raw = await self._call_llm(_llm_messages(system, user_prompt), model=self.cheap_model)
+        if not raw.strip():
+            return None
+        return self._parse_post_json(raw, refs)
+
     async def generate_agent_post(
         self,
         agents: list[str] | None = None,
         cursor_files: int = 2,
         from_hours: int = 48,
         model: str | None = None,
-    ) -> dict | None:
+    ) -> list[dict]:
         """
-        Generate a new post from owner's chat history and Cursor files.
-        Returns {title, content_ru, content_en, source_refs} or None.
+        Generate one or more agent posts from Memory chats (optionally filtered by agent_id),
+        Cursor exports, and optionally the bbot DM thread.
 
-        Args:
-            agents:       Ignored (kept for API compatibility). History is read
-                          from the owner's Telegram chats via Memory Service.
-            cursor_files: Number of most recent Cursor AI markdown files to include.
-            from_hours:   How far back to read chat history.
+        Returns a list of dicts ``{title, content_ru, content_en, source_refs, notes?}`` — empty
+        if nothing could be generated. When ``blogger.dev_blog.enabled`` is false, behavior
+        matches the legacy single-post path (up to one dict in the list).
         """
-        from_ts = datetime.now(timezone.utc) - timedelta(hours=from_hours)
+        dev_cfg = _blogger_dev_blog_config()
+        dev_disabled = dev_cfg.get("enabled") is False
+        if dev_disabled:
+            eff_cursor, eff_hours = cursor_files, from_hours
+            agent_ids = None
+            include_bbot = True
+            batch = False
+        else:
+            eff_cursor = int(dev_cfg.get("cursor_files", cursor_files))
+            eff_hours = int(dev_cfg.get("from_hours", from_hours))
+            agent_ids = _dev_agent_ids_for_read(agents, dev_cfg, dev_disabled=False)
+            include_bbot = bool(dev_cfg.get("include_bbot_thread", False))
+            batch = bool(dev_cfg.get("batch_topics", True))
+
+        from_ts = datetime.now(timezone.utc) - timedelta(hours=eff_hours)
 
         self._last_post_gen_error = ""
 
-        sources = []
-        source_refs: list[str] = []
-
-        # Same Telegram DM as this bot (bbot_* namespace) — often the only «context» when testing
-        bbot_block, bbot_refs = await self._bbot_thread_snippet_for_post()
-        if bbot_block:
-            sources.append(bbot_block)
-            source_refs.extend(bbot_refs)
-            logger.info("generate_agent_post: added bbot thread snippet, refs=%s", bbot_refs)
-
-        # Owner's chat history (orchestrator / coder — Memory user_id = tg id)
-        # Limit aggressively: 30 messages × 250 chars ≈ 7500 chars to stay within context
-        if self._chat_reader:
-            msgs = await self._chat_reader.read(
-                user_id=str(self.owner_tg_id),
-                from_ts=from_ts,
-                limit=40,
-            )
-            if msgs:
-                # Only assistant responses are informative for post generation
-                # (user messages are short commands, assistant has the real content)
-                chat_text = "\n".join(
-                    f"[{m.get('chat_name', '?')}|{m['role']}]: {m['content'][:250]}"
-                    for m in msgs[:30]
-                )
-                sources.append(f"=== История чатов (последние {from_hours}ч) ===\n{chat_text}")
-                source_refs.append(f"chat_history:{from_ts.date().isoformat()}")
-                logger.info(
-                    "generate_agent_post: using %d messages from chat history", len(msgs[:30])
-                )
-
-        # Cursor files
-        cursor_data = self._cursor_reader.read_latest(cursor_files)
-        for cf in cursor_data:
-            sources.append(f"=== Cursor: {cf['path']} ===\n{cf['content'][:1500]}")
-            source_refs.append(f"cursor:{cf['path']}")
+        sources, source_refs = await self._gather_post_sources(
+            from_ts, eff_hours, eff_cursor, include_bbot, agent_ids
+        )
 
         if not sources:
             logger.info("No source material for agent post")
             self._last_post_gen_error = (
-                "Нет материалов: ни переписки с бизнес-ботом, ни чатов оркестратора, ни Cursor-файлов. "
-                "Проверь MEMORY_SERVICE_URL и TELEGRAM_USER_ID."
+                "Нет материалов: ни переписки с бизнес-ботом (если включено), "
+                "ни чатов по фильтру, ни Cursor-файлов. "
+                "Проверь MEMORY_SERVICE_URL, TELEGRAM_USER_ID и `blogger.dev_blog` / agent_id."
             )
-            return None
+            return []
 
-        identity = _read_workspace_file("IDENTITY.md")
-        soul = _read_workspace_file("SOUL.md")
+        identity = _read_workspace_or_bootstrap("IDENTITY.md")
+        soul = _read_workspace_or_bootstrap("SOUL.md")
+        post_dev = _read_workspace_or_bootstrap("POST_DEV_AGENT.md")
 
-        # Check recent posts for context
-        recent = await self.queue.get_published_posts(limit=5)
-        recent_titles = "\n".join(f"- {p['title']}" for p in recent if p.get("title"))
-        avoid_note = (
-            f"\nНедавно опубликованные темы (не повторяй):\n{recent_titles}"
-            if recent_titles
+        dedup_limit = int(dev_cfg.get("dedup_titles_limit", 50) if not dev_disabled else 50)
+        avoid_titles = await self.queue.get_recent_titles_for_dedup(
+            post_type="agent", limit=dedup_limit
+        )
+        avoid_list = (
+            "\n\nНедавние заголовки в очереди и в канале (не дублируй тему и формулировки):\n"
+            + "\n".join(f"- {t[:220]}" for t in avoid_titles[:30])
+            if avoid_titles
             else ""
         )
 
-        system_prompt = (
-            f"{identity}\n\n{soul}\n\n"
-            "Ты пишешь пост для Telegram-канала от своего имени (агент Балбес).\n"
-            "Выбери одну интересную тему из предоставленных материалов и напиши пост.\n"
-            f"{avoid_note}\n\n"
-            "Ответь строго в формате JSON:\n"
-            '{"title": "...", "content_ru": "...", "content_en": "..."}\n'
-            "Без markdown-блоков, только чистый JSON."
-        )
-
-        user_prompt = "\n\n".join(sources[:5])
-
+        user_material = "\n\n".join(sources[:8])
         primary = model or self.model
-        raw = await self._call_llm(_llm_messages(system_prompt, user_prompt), model=primary)
-        if not raw.strip() and _normalize_openrouter_model_id(
-            primary
-        ) != _normalize_openrouter_model_id(self.cheap_model):
-            logger.warning(
-                "generate_agent_post: primary model empty, retrying with cheap_model=%s",
-                self.cheap_model,
-            )
-            raw = await self._call_llm(
-                _llm_messages(system_prompt, user_prompt), model=self.cheap_model
-            )
+        out_posts: list[dict] = []
 
-        if not raw.strip():
-            self._last_post_gen_error = (
-                "Модель не вернула текст (проверь OPENROUTER_API_KEY, лимиты или модель в /model). "
-                "История чатов с оркестратором при этом прочитана."
-            )
-            return None
+        if dev_disabled or not batch:
+            avoid_for_llm = avoid_list
+            if dev_disabled:
+                recent_pub = await self.queue.get_published_posts(5)
+                pub_lines = "\n".join(f"- {p['title']}" for p in recent_pub if p.get("title"))
+                if pub_lines:
+                    avoid_for_llm = f"\n\nНедавно опубликованные темы (не повторяй):\n{pub_lines}"
+            if dev_disabled and not (post_dev or "").strip():
+                system_prompt = (
+                    f"{identity}\n\n{soul}\n\n"
+                    "Ты пишешь пост для Telegram-канала от своего имени (агент Балбес).\n"
+                    "Выбери одну интересную тему из предоставленных материалов и напиши пост.\n"
+                    f"{avoid_for_llm}\n\n"
+                    "Ответь строго в формате JSON:\n"
+                    '{"title": "...", "content_ru": "...", "content_en": "..."}\n'
+                    "Без markdown-блоков, только чистый JSON."
+                )
+            else:
+                system_prompt = self._dev_blog_system_prompt(
+                    identity, soul, post_dev, avoid_for_llm, single_topic=None
+                )
+            raw = await self._call_llm(_llm_messages(system_prompt, user_material), model=primary)
+            if not raw.strip() and _normalize_openrouter_model_id(
+                primary
+            ) != _normalize_openrouter_model_id(self.cheap_model):
+                raw = await self._call_llm(
+                    _llm_messages(system_prompt, user_material), model=self.cheap_model
+                )
+            if not raw.strip():
+                self._last_post_gen_error = "Модель не вернула текст (проверь OPENROUTER_API_KEY, лимиты или модель в /model)."
+                return []
+            one = self._parse_post_json(raw, source_refs)
+            if not one:
+                self._last_post_gen_error = (
+                    "Модель вернула ответ не в формате JSON. Попробуй ещё раз или смени модель."
+                )
+                return []
+            return [one]
 
-        parsed = self._parse_post_json(raw, source_refs)
-        if not parsed:
-            self._last_post_gen_error = (
-                "Модель вернула ответ не в формате JSON. Попробуй ещё раз или смени модель."
+        max_n = int(dev_cfg.get("max_posts_per_run", 3))
+        topics = await self._plan_dev_blog_topics(user_material, avoid_titles, max_n, primary)
+        if not topics:
+            one = await self._write_one_agent_post_json(
+                user_material,
+                source_refs,
+                None,
+                avoid_list,
+                identity,
+                soul,
+                post_dev,
+                primary,
             )
-            return None
-        return parsed
+            if not one:
+                self._last_post_gen_error = (
+                    "Планировщик не выделил тем, а черновик по полному материалу не удался. "
+                    "Попробуй сменить модель или сузить окно `from_hours`."
+                )
+                return []
+            return [one]
+
+        for t in topics:
+            w = await self._write_one_agent_post_json(
+                user_material,
+                source_refs,
+                t,
+                avoid_list,
+                identity,
+                soul,
+                post_dev,
+                primary,
+            )
+            if w:
+                out_posts.append(w)
+        if not out_posts:
+            self._last_post_gen_error = "Планировщик дал темы, но написать посты не удалось (пустой ответ LLM или битый JSON)."
+            return []
+        return out_posts
 
     async def generate_user_post(
         self,
@@ -404,11 +639,13 @@ class BloggerAgent:
             raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
         try:
             data = json.loads(raw)
+            n = data.get("notes", "")
             return {
                 "title": data.get("title", ""),
                 "content_ru": data.get("content_ru", ""),
                 "content_en": data.get("content_en", ""),
-                "source_refs": source_refs,
+                "source_refs": list(source_refs),
+                "notes": n if isinstance(n, str) else "",
             }
         except json.JSONDecodeError as exc:
             logger.error("Failed to parse post JSON: %s | raw=%s", exc, raw[:200])

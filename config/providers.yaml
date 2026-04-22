@@ -883,6 +883,18 @@ blogger:
   source_agents:
     - balbes
     - coder
+  # Публичные dev-посты про Balbes: чаты Memory по agent_id, дедуп заголовков, пакет тем за прогон.
+  dev_blog:
+    enabled: true
+    # Чаты, из которых брать реплики (agent_id в Memory /list_chats). Пустой список — без фильтра (все чаты).
+    # По умолчанию совпадает с source_agents выше, если не задано.
+    # source_agent_ids: [balbes, coder]
+    include_bbot_thread: false   # true — добавить сниппет текущего чата с бизнес-ботом
+    from_hours: 48
+    max_posts_per_run: 3
+    batch_topics: true            # false — одна статья за вызов (как раньше)
+    cursor_files: 2
+    dedup_titles_limit: 50
   cursor_files_dir: "data/cursor_chats"   # Drop Cursor AI .md exports here
   business:
     summary_hours: 24          # Hours of business messages to include in summary

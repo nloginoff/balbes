@@ -733,8 +733,8 @@ class BusinessBot:
             chat_id = await self.agent.bbot_get_active_chat(owner_id)
             post_model = await self.agent.bbot_get_chat_model(owner_id, chat_id)
 
-            post = await self.agent.generate_agent_post(model=post_model)
-            if not post:
+            posts = await self.agent.generate_agent_post(model=post_model)
+            if not posts:
                 detail = getattr(self.agent, "_last_post_gen_error", "") or ""
                 extra = f"\n\n{detail}" if detail else ""
                 await msg.reply_text(
@@ -745,17 +745,23 @@ class BusinessBot:
                     "— /summary — бизнес-саммари"
                 )
                 return
-            draft_id = await self.agent.create_and_send_draft(post, post_type="agent")
-            if draft_id:
+            post_ids: list[str] = []
+            for p in posts:
+                did = await self.agent.create_and_send_draft(p, post_type="agent")
+                if did:
+                    post_ids.append(did)
+            if not post_ids:
                 await msg.reply_text(
-                    f"✅ Черновик сохранён (pending_approval).\n"
-                    f"ID: {draft_id[:8]} — смотри /drafts\n"
-                    f"Превью с кнопками — в личке (основной или бизнес-бот)."
+                    "Не удалось записать черновик(и) в БД. Проверь PostgreSQL и логи blogger."
                 )
-            else:
-                await msg.reply_text(
-                    "Не удалось записать черновик в БД. Проверь PostgreSQL и логи blogger."
-                )
+                return
+            ids_line = ", ".join(pid[:8] for pid in post_ids)
+            n = len(post_ids)
+            await msg.reply_text(
+                f"✅ Сохранено черновиков: {n} (pending_approval).\n"
+                f"ID: {ids_line} — смотри /drafts\n"
+                f"Превью с кнопками — в личке (основной или бизнес-бот)."
+            )
         except Exception as exc:
             logger.exception("_cmd_generate: %s", exc)
             await msg.reply_text(f"⚠️ Ошибка /generate: {exc!s:.400}")

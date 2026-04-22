@@ -318,6 +318,26 @@ class PostQueue:
         )
         return [dict(r) for r in rows]
 
+    async def get_recent_titles_for_dedup(
+        self,
+        post_type: str = "agent",
+        limit: int = 50,
+    ) -> list[str]:
+        """Recent non-empty titles for dev-blog topic dedup (queue + published, not rejected)."""
+        rows = await self.db.fetch(
+            """
+            SELECT title FROM blog_posts
+            WHERE post_type = $1
+              AND status IN ('published', 'pending_approval', 'approved', 'scheduled')
+              AND COALESCE(NULLIF(trim(title), ''), '') != ''
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            post_type,
+            limit,
+        )
+        return [str(r["title"]) for r in rows]
+
     async def get_channels(self) -> list[dict]:
         """Return all active blog channels."""
         rows = await self.db.fetch(

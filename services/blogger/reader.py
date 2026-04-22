@@ -50,6 +50,7 @@ class ChatReader:
         user_id: str,
         from_ts: datetime | None = None,
         limit: int = 100,
+        agent_ids: set[str] | None = None,
     ) -> list[dict]:
         """
         Fetch recent messages for the owner across all their chats.
@@ -58,10 +59,29 @@ class ChatReader:
             user_id:  Owner's Telegram user_id (string).
             from_ts:  Only return messages newer than this timestamp.
             limit:    Max messages to fetch per chat.
+            agent_ids: If set, only process chats whose ``agent_id`` (from list_chats) is
+                in this set (e.g. ``{'balbes', 'coder'}`` for dev-blog). Case-insensitive.
 
         Returns list of {chat_id, chat_name, role, content, timestamp}.
         """
         chats = await self._list_chats(user_id)
+        if agent_ids is not None and agent_ids:
+            want = {a.strip().lower() for a in agent_ids if a and str(a).strip()}
+            if want:
+                before = len(chats)
+                filtered = []
+                for c in chats:
+                    aid = (c.get("agent_id") or "balbes") or "balbes"
+                    if str(aid).lower() in want:
+                        filtered.append(c)
+                chats = filtered
+                logger.info(
+                    "ChatReader: agent_id filter %s → %d/%d chats for user %s",
+                    want,
+                    len(chats),
+                    before,
+                    user_id,
+                )
         if not chats:
             logger.info("ChatReader: no chats found for user %s", user_id)
             return []

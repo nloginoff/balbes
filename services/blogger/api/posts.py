@@ -141,20 +141,35 @@ async def revise_post(post_id: str, body: ReviseRequest):
 @router.post("/generate")
 async def generate_post(body: GenerateRequest):
     """
-    Manually trigger agent post generation.
+    Manually trigger agent post generation. May create several drafts when
+    ``blogger.dev_blog.batch_topics`` is enabled in config.
     """
-    post = await _agent.generate_agent_post(
+    posts = await _agent.generate_agent_post(
         agents=body.agents,
         cursor_files=body.cursor_files,
         from_hours=body.from_hours,
     )
-    if not post:
+    if not posts:
         raise HTTPException(
             status_code=422, detail="Could not generate post from available material"
         )
 
-    post_id = await _agent.create_and_send_draft(post, post_type="agent")
-    return {"status": "draft_created", "post_id": post_id}
+    post_ids: list[str] = []
+    for p in posts:
+        pid = await _agent.create_and_send_draft(p, post_type="agent")
+        if pid:
+            post_ids.append(pid)
+    if not post_ids:
+        raise HTTPException(
+            status_code=500, detail="Could not save generated drafts to the database"
+        )
+    if len(post_ids) == 1:
+        return {
+            "status": "draft_created",
+            "post_id": post_ids[0],
+            "post_ids": post_ids,
+        }
+    return {"status": "drafts_created", "post_ids": post_ids, "count": len(post_ids)}
 
 
 @router.post("/{post_id}/schedule")

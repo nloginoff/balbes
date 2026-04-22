@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Blogger: dev_blog** — в [`config/providers.yaml`](config/providers.yaml) блок `blogger.dev_blog`: фильтр чатов Memory по `agent_id`, опциональный сниппет чата с бизнес-ботом, дедуп заголовков (очередь + опубликованные), пакетная генерация (`batch_topics` + `max_posts_per_run`) с планировщиком тем и `POST_DEV_AGENT.md` (дефолт — [`services/blogger/bbot_bootstrap/POST_DEV_AGENT.md`](services/blogger/bbot_bootstrap/POST_DEV_AGENT.md)). [`generate_agent_post`](services/blogger/agent.py) и `POST /api/v1/posts/generate` создают **несколько** черновиков; [`services/blogger/api/posts.py`](services/blogger/api/posts.py) отдаёт `post_ids` / `count`.
+
 ### Changed
 - **Blogger: system prompt из workspace** — личка бизнес-бота и `execute_delegate_task` используют тот же порядок bootstrap-файлов, что [`AgentWorkspace`](services/orchestrator/workspace.py): **дефолты** в репо — [`services/blogger/bbot_bootstrap/`](services/blogger/bbot_bootstrap/); по файлам накрывается [`data/agents/blogger/`](data/agents/blogger/) при наличии. Зашитые абзацы убраны из [`services/blogger/agent.py`](services/blogger/agent.py). Перезапуск подхватывает md.
 - **Blogger API `POST .../schedule` и пути с `{post_id}`** — принимается **полный UUID** или **8 hex-символов** как в списках; `publish_at` с суффиксом **`Z`**; при несоответствии статуса и невалидном id — **400** с понятным `detail` (см. [`services/blogger/post_queue.py`](services/blogger/post_queue.py), [`services/blogger/api/posts.py`](services/blogger/api/posts.py)). Описание инструмента **`schedule_post`** в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) обновлено.
