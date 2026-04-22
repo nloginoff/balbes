@@ -1,9 +1,15 @@
 """Smoke tests for deterministic chart/geometry matplotlib renders."""
 
+import math
+
 import pytest
 
 from shared.agent_tools.registry import ToolDispatcher, _summarize_input
-from shared.chart_render import _coerce_axis_step, render_chart_png
+from shared.chart_render import (
+    _break_line_at_vertical_asymptote_guess,
+    _coerce_axis_step,
+    render_chart_png,
+)
 from shared.geometry_render import GeometryRenderError, render_geometry_png
 
 
@@ -128,6 +134,32 @@ def test_render_chart_school_labeled_points():
             {"x": 0, "y": 0, "label": "O"},
             {"x": -1, "y": 0.5, "label": "A"},
         ],
+    }
+    png = render_chart_png(spec)
+    assert len(png) > 200
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_break_line_inserts_nan_at_hyperbola_bridge():
+    xs = [-0.1, 0.1]
+    ys = [6.0 / -0.1, 6.0 / 0.1]
+    ox, oy = _break_line_at_vertical_asymptote_guess(xs, ys)
+    assert any(math.isnan(v) for v in ox) and any(math.isnan(v) for v in oy)
+
+
+def test_break_line_keeps_moderate_slope_through_zero():
+    xs = [-0.1, 0.1]
+    ys = [-0.1, 0.1]
+    ox, oy = _break_line_at_vertical_asymptote_guess(xs, ys)
+    assert not any(math.isnan(v) for v in ox)
+    assert len(ox) == 2
+
+
+def test_render_chart_points_only_school():
+    spec = {
+        "kind": "line",
+        "style": "school",
+        "points": [{"x": 1, "y": 2, "label": "A"}],
     }
     png = render_chart_png(spec)
     assert len(png) > 200

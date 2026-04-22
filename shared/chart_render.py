@@ -91,6 +91,59 @@ def _parse_positive_float(name: str, raw: Any, default: float) -> float:
     return v
 
 
+def _set_ax_limits_from_labeled_points(ax: Any, spec: dict[str, Any]) -> None:
+    """When there is no series, expand limits from `points` only (with margin)."""
+    raw = spec.get("points")
+    if not isinstance(raw, list) or not raw:
+        return
+    xs: list[float] = []
+    ys: list[float] = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        try:
+            xs.append(float(p.get("x")))
+            ys.append(float(p.get("y")))
+        except (TypeError, ValueError):
+            continue
+    if not xs:
+        return
+    pad_x = 0.08 * (max(xs) - min(xs) + 1e-9)
+    pad_y = 0.08 * (max(ys) - min(ys) + 1e-9)
+    ax.set_xlim(min(xs) - pad_x, max(xs) + pad_x)
+    ax.set_ylim(min(ys) - pad_y, max(ys) + pad_y)
+
+
+# Line through vertical asymptote (e.g. 1/x with x spanning 0 in one series): huge slope vs a straight line
+_LINE_ASYMPTOTE_SLOPE_CAP = 400.0
+
+
+def _break_line_at_vertical_asymptote_guess(
+    xs: list[float], ys: list[float]
+) -> tuple[list[float], list[float]]:
+    """
+    Insert NaN to split plot() so matplotlib does not draw a segment through x=0 when y jumps
+    (hyperbola with poorly ordered / wide samples). Lines with moderate slope (g(x)) are kept.
+    """
+    if len(xs) < 2:
+        return list(xs), list(ys)
+    out_x: list[float] = [xs[0]]
+    out_y: list[float] = [ys[0]]
+    for j in range(len(xs) - 1):
+        x0, x1 = xs[j], xs[j + 1]
+        y0, y1 = ys[j], ys[j + 1]
+        dx = x1 - x0
+        if x0 * x1 < 0 and abs(dx) > 1e-15:
+            dy = y1 - y0
+            slope = abs(dy / dx)
+            if slope > _LINE_ASYMPTOTE_SLOPE_CAP:
+                out_x.append(float("nan"))
+                out_y.append(float("nan"))
+        out_x.append(x1)
+        out_y.append(y1)
+    return out_x, out_y
+
+
 def _coerce_axis_step(span: float, base_step: float) -> float:
     """Pick a major tick step >= base_step so the axis has at most MAX_MAJOR_TICKS_PER_AXIS ticks."""
     span = max(abs(span), 1e-9)
@@ -220,7 +273,8 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
     School style (line/scatter): **style: "school"** or **axes_origin: true** — axes through 0, major
     grid with step **grid_step** (default 1). Intersections/vertices: use **points** (markers), not
     a two-point **series** (that draws a segment). For smooth curves, use many samples in x/y; split
-    branches (e.g. hyperbola) into separate series so segments do not connect across asymptotes.
+    branches (e.g. hyperbola) into separate **series** (or the renderer may cut spurious near-vertical
+    segments across the y-axis). **points**-only: markers + grid (no `series` yet) is allowed.
     """
     if not isinstance(spec, dict):
         raise ChartRenderError("spec must be an object")
@@ -244,35 +298,59 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
 
     if kind in ("line", "scatter"):
         series = spec.get("series")
-        if not isinstance(series, list) or not series:
-            raise ChartRenderError("kind line/scatter requires non-empty series array")
-        if len(series) > MAX_SERIES:
-            raise ChartRenderError(f"at most {MAX_SERIES} series")
-        if school:
-            line_scatter_school = True
-        for si, s in enumerate(series):
-            if not isinstance(s, dict):
-                raise ChartRenderError(f"series[{si}] must be an object")
-            lab = str(s.get("label") or f"S{si + 1}")
-            xs = _finite_list(f"series[{si}].x", s.get("x"), MAX_POINTS_PER_SERIES)
-            ys = _finite_list(f"series[{si}].y", s.get("y"), MAX_POINTS_PER_SERIES)
-            if len(xs) != len(ys):
-                raise ChartRenderError(f"series[{si}]: x and y length mismatch")
-            if kind == "line":
-                ax.plot(xs, ys, label=lab, linewidth=2, zorder=3)
-            else:
-                ax.scatter(xs, ys, label=lab, s=36, zorder=3)
-        if len(series) > 1 or (series and str(series[0].get("label") or "").strip()):
-            leg = ax.legend(loc="best", fontsize=9)
-            if leg:
-                leg.set_zorder(5)
-        if school:
-            _ensure_axis_includes_zero(ax, "x")
-            _ensure_axis_includes_zero(ax, "y")
-            ax.axhline(0, color="#333333", linewidth=1.0, zorder=2)
-            ax.axvline(0, color="#333333", linewidth=1.0, zorder=2)
-            _apply_school_grid_and_ticks(ax, spec)
-        _draw_labeled_points(ax, spec)
+        points_raw = spec.get("points")
+        has_points = isinstance(points_raw, list) and len(points_raw) > 0
+        has_series = isinstance(series, list) and len(series) > 0
+
+        if not has_series and not has_points:
+            raise ChartRenderError(
+                "kind line/scatter needs at least one of: non-empty **series** "
+                "[{ label, x, y }, …] (curves) or **points** [{ x, y, label? }…] (markers). "
+                "For 1/x use **two** series (x<0 and x>0) or one series per branch so x does not "
+                "increase through 0, or the renderer splits steep bridges across y-axis automatically."
+            )
+
+        if not has_series and has_points:
+            # Markers + grid only (LLM often calls with points before filling series; avoids error loops)
+            if school:
+                line_scatter_school = True
+            _set_ax_limits_from_labeled_points(ax, spec)
+            if school:
+                _ensure_axis_includes_zero(ax, "x")
+                _ensure_axis_includes_zero(ax, "y")
+                ax.axhline(0, color="#333333", linewidth=1.0, zorder=2)
+                ax.axvline(0, color="#333333", linewidth=1.0, zorder=2)
+                _apply_school_grid_and_ticks(ax, spec)
+            _draw_labeled_points(ax, spec)
+        else:
+            if len(series) > MAX_SERIES:
+                raise ChartRenderError(f"at most {MAX_SERIES} series")
+            if school:
+                line_scatter_school = True
+            for si, s in enumerate(series):
+                if not isinstance(s, dict):
+                    raise ChartRenderError(f"series[{si}] must be an object")
+                lab = str(s.get("label") or f"S{si + 1}")
+                xs = _finite_list(f"series[{si}].x", s.get("x"), MAX_POINTS_PER_SERIES)
+                ys = _finite_list(f"series[{si}].y", s.get("y"), MAX_POINTS_PER_SERIES)
+                if len(xs) != len(ys):
+                    raise ChartRenderError(f"series[{si}]: x and y length mismatch")
+                if kind == "line":
+                    xs_b, ys_b = _break_line_at_vertical_asymptote_guess(xs, ys)
+                    ax.plot(xs_b, ys_b, label=lab, linewidth=2, zorder=3)
+                else:
+                    ax.scatter(xs, ys, label=lab, s=36, zorder=3)
+            if len(series) > 1 or (series and str(series[0].get("label") or "").strip()):
+                leg = ax.legend(loc="best", fontsize=9)
+                if leg:
+                    leg.set_zorder(5)
+            if school:
+                _ensure_axis_includes_zero(ax, "x")
+                _ensure_axis_includes_zero(ax, "y")
+                ax.axhline(0, color="#333333", linewidth=1.0, zorder=2)
+                ax.axvline(0, color="#333333", linewidth=1.0, zorder=2)
+                _apply_school_grid_and_ticks(ax, spec)
+            _draw_labeled_points(ax, spec)
 
     elif kind == "bar":
         categories = spec.get("categories")

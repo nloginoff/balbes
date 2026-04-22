@@ -972,8 +972,9 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                 'both are accepted. **School-style** (line/scatter): **style: "school"** or **axes_origin: true**; '
                 "**grid_step** (default 1) for major grid/tick step; **points** for labeled markers "
                 "(intersections, vertices) — do **not** encode two-point markers as a **series** (that draws a segment). "
-                "For smooth nonlinear plots, use **many** x samples; split separate branches into different **series** "
-                "(e.g. hyperbola so branches do not connect through the gap). Do **not** use `execute_command` + python."
+                "For **1/x** and rationals: use **two** `series` (x<0 and x>0) and dense `x` samples, **or** one series per branch; "
+                "a near-vertical spurious span across x=0 may be auto-split. You may pass **only** `points` (markers) without `series` "
+                "in a pinch. For smooth plots, use **many** `x` samples. Do **not** use `execute_command` + python."
             ),
             "parameters": {
                 "type": "object",
@@ -994,7 +995,10 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     },
                     "series": {
                         "type": "array",
-                        "description": "When using flat args: list of {label, x, y} for line/scatter.",
+                        "description": (
+                            "When using flat args: list of {label, x, y} for line/scatter. "
+                            "If omitted, you may use **points** only (markers + grid)."
+                        ),
                     },
                 },
             },
