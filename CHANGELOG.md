@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`generate_image` и 404 OpenRouter** — если LLM в аргументе `model` подставлял id **чатовой** модели (например `google/gemini-3-flash-preview`), запрос на `chat/completions` с `modalities: image+text` получал **HTTP 404** («No endpoints found that support…»). Теперь `model` из вызова инструмента принимается **только** если id есть в allowlist `image_generation_models` в [`config/providers.yaml`](config/providers.yaml); иначе подставляется выбор пользователя (`/imagemodel`) и дефолт из YAML. См. [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py).
+
 ### Changed
 - **Vision и генерация картинок: все модели из YAML** — в [`config/providers.yaml`](config/providers.yaml) списки **`vision_models.models`** и **`image_generation_models.models`** (плоские); поля **`tier`** и **`price_hint`** — подсказки в подписи кнопок `/vision` и `/imagemodel`. Memory: Redis `vision_model_id:{user_id}`, `image_gen_model_id:{user_id}`; API `GET/PUT /api/v1/users/{id}/vision-model` и `.../image-generation-model` с телом `{"model_id": "openrouter/..."}` (валидация allowlist). Старые эндпоинты `*-tier` сохранены. Оркестратор: поля **`vision_model_id`**, **`image_generation_model_id`** в `POST /api/v1/tasks` и `tool_context` для vision / `generate_image`. Реализация: [`shared/vision_models.py`](shared/vision_models.py), [`shared/image_gen_models.py`](shared/image_gen_models.py), [`services/memory-service/`](services/memory-service/), [`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py). Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md).
 

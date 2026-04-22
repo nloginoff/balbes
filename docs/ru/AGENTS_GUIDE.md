@@ -17,7 +17,7 @@
 ### Схемы и изображения (`render_solution`, `generate_image`)
 
 - **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для «иллюстраций», пейзажей и художественного растра — это **`generate_image`**.
-- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation`.
+- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Параметр `model` в вызове — только id из этого списка; **нельзя** подставлять id чатовой/vision-модели (OpenRouter ответит 404). Без `model` используется выбор пользователя (`/imagemodel`) и `default_model` в YAML.
 - **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — whitelist обычно режет, и это обход вместо инструментов. После отказа — вызывайте **`generate_image`**, не выдумывайте готовый файл. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
 
 ### Архитектура

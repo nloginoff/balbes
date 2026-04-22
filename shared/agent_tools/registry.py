@@ -942,8 +942,9 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "model": {
                         "type": "string",
                         "description": (
-                            "Optional OpenRouter model id (e.g. openrouter/google/gemini-2.5-flash-image). "
-                            "Omit to use the default from config."
+                            "Rarely needed. Only an id from config `image_generation_models` (image output). "
+                            "**Do not** pass the current chat or vision model — they are text/multimodal and "
+                            "will 404 on image generation. Omit this field to use the user's /imagemodel choice."
                         ),
                     },
                     "aspect_ratio": {
@@ -2081,7 +2082,11 @@ class ToolDispatcher:
     async def _do_generate_image(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         """Call OpenRouter image generation API; queue PNG/JPEG in outbound attachments."""
         from shared.config import get_settings
-        from shared.image_gen_models import default_image_gen_tier, resolve_image_gen_model_id
+        from shared.image_gen_models import (
+            default_image_gen_tier,
+            resolve_image_gen_model_id,
+            validate_image_gen_model_id,
+        )
         from shared.image_generation import (
             assistant_text_from_message,
             default_image_config_dict,
@@ -2104,6 +2109,14 @@ class ToolDispatcher:
             return "Error: OpenRouter API key is not set."
 
         model_arg = (args.get("model") or "").strip()
+        # LLMs often copy the chat model id here; text-only / vision chat models do not support
+        # modalities image+text on OpenRouter → HTTP 404 "No endpoints found that support...".
+        if model_arg and not validate_image_gen_model_id(model_arg):
+            logger.warning(
+                "generate_image: ignoring tool `model` not in image_generation_models allowlist: %s",
+                model_arg[:160],
+            )
+            model_arg = ""
         if not model_arg:
             mid_ctx = (str(context.get("image_generation_model_id") or "")).strip()
             if mid_ctx and resolve_image_gen_model_id(mid_ctx):

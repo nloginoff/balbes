@@ -176,3 +176,60 @@ async def test_tool_dispatcher_generate_image_uses_tier_from_context(monkeypatch
     assert client.post.call_count == 1
     _args, kwargs = client.post.call_args
     assert kwargs["json"]["model"] == "mymodel/premium-x"
+
+
+@pytest.mark.asyncio
+async def test_tool_dispatcher_generate_image_ignores_chat_model_in_args(monkeypatch):
+    """LLM often passes the current chat model; those ids are not image-output models on OpenRouter."""
+    tiny = base64.b64encode(b"x").decode("ascii")
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = lambda: {
+        "choices": [
+            {
+                "message": {
+                    "images": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{tiny}"}}
+                    ],
+                }
+            }
+        ],
+    }
+    client = AsyncMock()
+    client.post = AsyncMock(return_value=resp)
+
+    fake_cfg = {
+        "image_generation_models": {
+            "default_tier": "cheap",
+            "default_model": "openrouter/google/gemini-2.5-flash-image",
+            "models": [
+                {
+                    "id": "openrouter/google/gemini-2.5-flash-image",
+                    "display_name": "Img",
+                    "tier": "cheap",
+                },
+            ],
+        }
+    }
+    monkeypatch.setattr("shared.image_gen_models.get_providers_config", lambda: fake_cfg)
+    monkeypatch.setattr("shared.image_generation.get_providers_config", lambda: fake_cfg)
+    monkeypatch.setattr(
+        "shared.config.get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-test",
+            openrouter_service_user="svc",
+            openrouter_http_referer="https://ex",
+            openrouter_app_title="t",
+            openrouter_categories=None,
+        ),
+    )
+
+    td = ToolDispatcher(
+        workspace=None, http_client=client, providers_config={}, activity_logger=None
+    )
+    await td._do_generate_image(
+        {"prompt": "cat", "model": "google/gemini-3-flash-preview"},
+        {"user_id": "u"},
+    )
+    _args, kwargs = client.post.call_args
+    assert kwargs["json"]["model"] == "google/gemini-2.5-flash-image"
