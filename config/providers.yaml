@@ -256,6 +256,7 @@ agents:
       - manage_todo
       - manage_schedule
       - render_solution
+      - generate_image
     features:
       delegation: false
     # Coder uses a capable model by default (good at code); overrides chat model for delegations
@@ -466,6 +467,15 @@ vision_models:
       id: "openrouter/google/gemini-2.5-flash"
       display_name: "👁 Gemini 2.5 Flash (vision)"
       capabilities: [chat, vision]
+
+# OpenRouter image generation (chat/completions + modalities, separate from vision input).
+# See https://openrouter.ai/docs/guides/overview/multimodal/image-generation
+image_generation:
+  default_model: "openrouter/google/gemini-2.5-flash-image"
+  timeout_seconds: 180
+  image_config:
+    aspect_ratio: "4:3"
+    image_size: "1K"
 
 active_models:
   # ── Default chat model (cheap, OpenRouter paid tier) ─────────────────────

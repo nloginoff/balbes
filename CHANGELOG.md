@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Инструмент `generate_image`** — генерация растровых изображений по текстовому промпту через OpenRouter (`POST /chat/completions` с `modalities: ["image", "text"]`), разбор `message.images` (data URL или HTTP URL), выдача в `outbound_attachments` как у `render_solution`. Настройки: [`config/providers.yaml`](config/providers.yaml) → `image_generation` (модель по умолчанию, таймаут, `image_config`). Реализация: [`shared/image_generation.py`](shared/image_generation.py), [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py); allowlist [`config/agents/balbes.yaml`](config/agents/balbes.yaml), coder в `providers.yaml`. Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md). Тесты: [`tests/unit/test_image_generation.py`](tests/unit/test_image_generation.py).
+
 ### Changed
 - **render_solution** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) расширено описание инструмента и параметра `content` (текст + формулы + ASCII/схемы в одном вызове; без лишнего delegate/coder); сообщения об ошибке рендера всегда с типом и непустым телом, с **`logger.error(..., exc_info=True)`** для полной трассировки в логах. Раздел про PNG/схемы: [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md) (копия в private memory-репо) и зеркала в [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md).
 

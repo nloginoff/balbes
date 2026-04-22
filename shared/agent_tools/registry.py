@@ -917,6 +917,47 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": (
+                "Generate a raster image from a text description via OpenRouter (image-generation models). "
+                "Use for illustrations, concept art, and **schematic** geometry diagrams from a natural-language "
+                "description (e.g. triangle ABC, height, labels). For pixel-perfect math typesetting, formulas, "
+                "or multi-page text solutions, prefer **render_solution** instead. Pass one coherent prompt per "
+                "call; do not call in a loop for the same subfigure."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": (
+                            "What to draw: subject, style, and for geometry—points, labels, and relationships "
+                            "(schematic is OK; exact sizes may be off). Use the user's language."
+                        ),
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": (
+                            "Optional OpenRouter model id (e.g. openrouter/google/gemini-2.5-flash-image). "
+                            "Omit to use the default from config."
+                        ),
+                    },
+                    "aspect_ratio": {
+                        "type": "string",
+                        "description": "Optional override, e.g. 1:1, 4:3, 16:9 (see OpenRouter image_config).",
+                    },
+                    "image_size": {
+                        "type": "string",
+                        "description": "Optional override, e.g. 1K, 2K (model-dependent).",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
 ]
 
 
@@ -1092,6 +1133,7 @@ class ToolDispatcher:
         "workspace_read": 40,
         "workspace_write": 20,
         "render_solution": 3,
+        "generate_image": 3,
     }
     _DEFAULT_RATE_LIMIT = 20
 
@@ -1215,6 +1257,9 @@ class ToolDispatcher:
 
             elif tool_name == "render_solution":
                 result = await self._do_render_solution(tool_args)
+
+            elif tool_name == "generate_image":
+                result = await self._do_generate_image(tool_args, context)
 
             # ── Blogger tools (only meaningful when agent_id == "blogger") ──
             elif tool_name == "read_chat_history":
@@ -2017,6 +2062,144 @@ class ToolDispatcher:
             }
         )
 
+    def _append_outbound_image(self, image_bytes: bytes, mime_type: str, caption: str) -> None:
+        import base64
+
+        mt = (mime_type or "image/png").split(";")[0].strip().lower()
+        if not mt.startswith("image/"):
+            mt = "image/png"
+        self._outbound_attachments.append(
+            {
+                "kind": "image",
+                "mime_type": mt,
+                "base64": base64.b64encode(image_bytes).decode("ascii"),
+                "caption": (caption or "")[:1024],
+            }
+        )
+
+    async def _do_generate_image(self, args: dict[str, Any], context: dict[str, Any]) -> str:
+        """Call OpenRouter image generation API; queue PNG/JPEG in outbound attachments."""
+        from shared.config import get_settings
+        from shared.image_generation import (
+            assistant_text_from_message,
+            default_image_config_dict,
+            default_image_model_id,
+            extract_images_from_openrouter_message,
+            image_generation_timeout_seconds,
+            strip_openrouter_prefix,
+        )
+        from shared.openrouter_http import openrouter_json_headers
+
+        prompt = (args.get("prompt") or "").strip()
+        if not prompt:
+            return "Error: prompt is empty."
+
+        if not self.http_client:
+            return "Error: HTTP client not configured for image generation."
+
+        settings = get_settings()
+        if not (settings.openrouter_api_key or "").strip():
+            return "Error: OpenRouter API key is not set."
+
+        model_arg = (args.get("model") or "").strip() or default_image_model_id()
+        model = strip_openrouter_prefix(model_arg)
+
+        ic: dict[str, Any] = default_image_config_dict()
+        if (args.get("aspect_ratio") or "").strip():
+            ic["aspect_ratio"] = str(args["aspect_ratio"]).strip()
+        if (args.get("image_size") or "").strip():
+            ic["image_size"] = str(args["image_size"]).strip()
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "modalities": ["image", "text"],
+        }
+        if ic:
+            payload["image_config"] = ic
+
+        uid = (str(context.get("user_id") or "")).strip()
+        if uid:
+            payload["user"] = uid
+        else:
+            payload["user"] = (settings.openrouter_service_user or "balbes-service").strip()
+
+        timeout = image_generation_timeout_seconds()
+        try:
+            headers = openrouter_json_headers(settings)
+            resp = await self.http_client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=timeout,
+            )
+        except Exception as e:
+            logger.error("generate_image request failed: %s", e, exc_info=True)
+            return f"Ошибка запроса генерации изображения: {type(e).__name__}: {e}"
+
+        try:
+            data = resp.json()
+        except Exception as e:
+            logger.error("generate_image bad JSON: %s", e, exc_info=True)
+            return f"Ошибка генерации изображения: HTTP {resp.status_code}, тело не JSON"
+
+        if resp.status_code != 200:
+            err = data.get("error", data) if isinstance(data, dict) else data
+            logger.error("generate_image HTTP %s: %s", resp.status_code, err)
+            return f"Ошибка OpenRouter (HTTP {resp.status_code}): {err!s}"[:2000]
+
+        usage = data.get("usage") if isinstance(data, dict) else None
+        if usage:
+            logger.info("OpenRouter image generation usage: %s", usage)
+
+        msg: dict[str, Any]
+        try:
+            msg = (data.get("choices") or [{}])[0].get("message") or {}
+        except Exception:
+            msg = {}
+        if not isinstance(msg, dict):
+            return "Модель не вернула сообщение с изображением."
+
+        image_items: list[tuple[bytes, str]] = extract_images_from_openrouter_message(msg)
+        for img in msg.get("images") or []:
+            if not isinstance(img, dict):
+                continue
+            iu = img.get("image_url") or img.get("imageUrl")
+            if not isinstance(iu, dict):
+                continue
+            url = (iu.get("url") or "").strip()
+            if not (url.startswith("http://") or url.startswith("https://")):
+                continue
+            try:
+                r2 = await self.http_client.get(url, timeout=timeout)
+                if r2.status_code != 200:
+                    logger.warning("fetch image url HTTP %s", r2.status_code)
+                    continue
+                ct = (r2.headers.get("content-type") or "image/png").split(";")[0].strip().lower()
+                if not ct.startswith("image/"):
+                    ct = "image/png"
+                image_items.append((r2.content, ct))
+            except Exception as e:
+                logger.warning("fetch image url failed: %s", e)
+
+        if not image_items:
+            extra = assistant_text_from_message(msg)
+            tail = f" Текст модели: {extra[:500]}" if extra else ""
+            return f"Модель не вернула изображение (пусто в images / не data URL).{tail}"[:2000]
+
+        n = len(image_items)
+        extra2 = assistant_text_from_message(msg)
+        for i, (raw, mime) in enumerate(image_items):
+            cap = "Сгенерировано изображение" if n == 1 else f"Сгенерировано ({i + 1}/{n})"
+            if extra2 and i == 0 and len(extra2) < 300:
+                cap = f"{cap}: {extra2}"[:1024]
+            self._append_outbound_image(raw, mime, cap)
+
+        return (
+            f"Создано изображение: {n} шт. (OpenRouter). "
+            f"Оно будет отправлено в чат отдельным сообщением."
+        )
+
     # =========================================================================
     # Blogger tools implementation
     # =========================================================================
@@ -2344,6 +2527,8 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         )
     if tool_name == "render_solution":
         return f"content_len={len(args.get('content') or '')}"
+    if tool_name == "generate_image":
+        return f"prompt_len={len(args.get('prompt') or '')}"
     return str(args)[:80]
 
 

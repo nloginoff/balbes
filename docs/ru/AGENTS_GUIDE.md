@@ -14,9 +14,11 @@
 
 ## OrchestratorAgent
 
-### Схемы и PNG (`render_solution`)
+### Схемы и изображения (`render_solution`, `generate_image`)
 
-Для читаемого вывода с формулами и **текстовыми/ASCII-схемами** используйте **`render_solution`**: весь материал передают **одним** вызовом в `content` (шаги, подписи, box-drawing, формулы в `$...$`). Не вызывайте инструмент десятки раз подряд, не уводите задачу в **coder** ради отдельных Matplotlib-скриптов, если достаточно встроенного рендера, и не пытайтесь рисовать через `execute_command` + `pip`/heredoc. Правила для промпта — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) оркестратора (файл в private memory-репо, см. [`data/agents/`](../../data/agents/)).
+- **`render_solution`** — текст, формулы, ASCII/схемы в **одном** вызове `content` (локальный рендер в PNG). Точная вёрстка формул и многостраничные решения.
+- **`generate_image`** — иллюстрации и **схематичные** геометрические чертежи по **текстовому описанию** через OpenRouter (отдельная image-модель, см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation`). Пропорции и подписи приблизительные; для строгой математики с формулами — `render_solution`.
+- Не уводите задачу в **coder** ради картинок, если хватает этих инструментов; не используйте `execute_command` + `pip`/heredoc для рисования. Правила промпта — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
 
 ### Архитектура
 
@@ -239,6 +241,7 @@ _background_results → result_text (если завершено)
 | `cancel_agent_task` | ❌ | ✅* | Отменить фоновую задачу (*то же) |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
 | `render_solution` | ✅ | ✅ | Текст решения с формулами → одна или несколько PNG; рендер на сетке, затем **обрезка** по рамке текста (без лишнего пустого поля внизу/по краям) и умеренный перенос строк, чтобы не вылезать за ширину. Файлы в `outbound_attachments` |
+| `generate_image` | ✅ | ✅ | Растровая картинка по промпту через OpenRouter (`modalities` image+text); иллюстрации и схематичная геометрия. Модель и `image_config` по умолчанию — в [`config/providers.yaml`](../../config/providers.yaml) → `image_generation` |
 
 **Heartbeat** использует только `workspace_read` (минимальный набор для экономии токенов).
 
@@ -262,6 +265,7 @@ _background_results → result_text (если завершено)
 | `file_read` / `file_write` / `file_patch` | 20–40 |
 | `execute_command` | 30 |
 | `render_solution` | 3 |
+| `generate_image` | 3 |
 | остальные | 20 |
 
 При превышении лимита инструмент возвращает ошибку с просьбой подвести итог.
@@ -352,7 +356,7 @@ _background_results → result_text (если завершено)
 }
 ```
 
-Поле **`outbound_attachments`** присутствует, если агент вызывал инструмент `render_solution` (или делегированный coder вернул вложения — они сливаются в ответ оркестратора). Клиенты вроде Telegram отправляют эти изображения отдельно от текста `output`.
+Поле **`outbound_attachments`** присутствует, если агент вызывал инструмент `render_solution` или `generate_image` (или делегированный coder вернул вложения — они сливаются в ответ оркестратора). Клиенты вроде Telegram отправляют эти изображения отдельно от текста `output`.
 
 ### GET /api/v1/tasks/bg/events
 

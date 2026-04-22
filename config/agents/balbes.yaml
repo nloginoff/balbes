@@ -36,6 +36,7 @@ _orchestrator_tools: &orchestrator_tools
   - set_business_role
   - manage_schedule
   - render_solution
+  - generate_image
 
 tools:
   ask: *orchestrator_tools
