@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`render_chart` / `render_geometry` и плоские аргументы** — если LLM кладёт `kind`/`series`/`mode`/`segments` и т.д. **на верхнем уровне** вызова без вложенного `spec`, оркестратор **собирает spec** по whitelist ([`CHART_SPEC_KEYS`](shared/chart_render.py), [`GEOMETRY_SPEC_KEYS`](shared/geometry_render.py)) в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py). Краткое описание в трейсе (`_summarize_input`) больше не показывает `spec_len=0` при валидном плоском вызове. **Школьный график функции (line/scatter):** `style: "school"` и/или `axes_origin: true` — сетка, оси через ноль, см. [`shared/chart_render.py`](shared/chart_render.py). Тесты: [`tests/unit/test_chart_geometry_render.py`](tests/unit/test_chart_geometry_render.py). Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md), [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md).
+
 ### Added
 - **Инструменты `render_chart` и `render_geometry`** — детерминированные PNG (matplotlib Agg) из поля **`spec`**: графики (`kind`: line, scatter, bar, histogram) в [`shared/chart_render.py`](shared/chart_render.py); чертёж 2D (отрезки, окружности, дуги, подписи точек) и 3D (вершины + рёбра) в [`shared/geometry_render.py`](shared/geometry_render.py). Регистрация в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py), allowlist **balbes** + **coder** ([`config/agents/balbes.yaml`](config/agents/balbes.yaml), [`config/providers.yaml`](config/providers.yaml)); лимиты 5 вызовов/задача. Документация: [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md), [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md). Тесты: [`tests/unit/test_chart_geometry_render.py`](tests/unit/test_chart_geometry_render.py).
 

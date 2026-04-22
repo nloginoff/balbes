@@ -18,6 +18,21 @@ MAX_LABELS = 80
 FIG_W, FIG_H = 8.0, 8.0
 DPI = 120
 
+# Whitelist for flat tool args (registry)
+GEOMETRY_SPEC_KEYS = frozenset(
+    {
+        "mode",
+        "title",
+        "segments",
+        "circles",
+        "arcs",
+        "points",
+        "vertices",
+        "labels",
+        "edges",
+    }
+)
+
 
 class GeometryRenderError(ValueError):
     pass

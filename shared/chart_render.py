@@ -15,9 +15,49 @@ MAX_BINS = 200
 FIG_W, FIG_H = 9.0, 6.0
 DPI = 120
 
+# Whitelist for flat tool args merged into spec (registry)
+CHART_SPEC_KEYS = frozenset(
+    {
+        "kind",
+        "title",
+        "xlabel",
+        "ylabel",
+        "grid",
+        "series",
+        "categories",
+        "values",
+        "bins",
+        "style",
+        "axes_origin",
+    }
+)
+
 
 class ChartRenderError(ValueError):
     pass
+
+
+def _school_coordinate_style(spec: dict[str, Any]) -> bool:
+    st = spec.get("style")
+    if isinstance(st, str) and st.strip().lower() == "school":
+        return True
+    if spec.get("axes_origin") is True:
+        return True
+    return False
+
+
+def _ensure_axis_includes_zero(ax: Any, axis: str) -> None:
+    """Expand xlim/ylim so 0 is visible (with small padding)."""
+    get_lim = ax.get_xlim if axis == "x" else ax.get_ylim
+    set_lim = ax.set_xlim if axis == "x" else ax.set_ylim
+    lo, hi = get_lim()
+    if lo > hi:
+        lo, hi = hi, lo
+    span = max(hi - lo, 1e-9)
+    pad = 0.06 * span
+    new_lo = min(lo, 0.0) - pad * 0.3
+    new_hi = max(hi, 0.0) + pad * 0.3
+    set_lim(new_lo, new_hi)
 
 
 def _finite_list(name: str, raw: Any, max_n: int) -> list[float]:
@@ -46,6 +86,8 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
       - bar: categories: [...], values: [...] OR series: [{ "label", "values" }] with len = len(categories)
       - histogram: values: [...], optional bins (int)
     Optional: title, xlabel, ylabel, grid (bool).
+    School-style function plots: style: "school" or axes_origin: true — axes through 0, light grid
+    (line/scatter only).
     """
     if not isinstance(spec, dict):
         raise ChartRenderError("spec must be an object")
@@ -60,9 +102,12 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
     xlabel = (spec.get("xlabel") or "").strip()
     ylabel = (spec.get("ylabel") or "").strip()
     grid = bool(spec.get("grid", True))
+    school = _school_coordinate_style(spec) and kind in ("line", "scatter")
 
     fig, ax = plt.subplots(figsize=(FIG_W, FIG_H), dpi=DPI, facecolor="white")
     ax.set_facecolor("white")
+    # Line/scatter + school: grid and series z-order so data stays above grid/axes
+    line_scatter_school = False
 
     if kind in ("line", "scatter"):
         series = spec.get("series")
@@ -70,6 +115,9 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
             raise ChartRenderError("kind line/scatter requires non-empty series array")
         if len(series) > MAX_SERIES:
             raise ChartRenderError(f"at most {MAX_SERIES} series")
+        if school:
+            ax.grid(True, alpha=0.35, linestyle="--", linewidth=0.7, zorder=0)
+            line_scatter_school = True
         for si, s in enumerate(series):
             if not isinstance(s, dict):
                 raise ChartRenderError(f"series[{si}] must be an object")
@@ -79,11 +127,18 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
             if len(xs) != len(ys):
                 raise ChartRenderError(f"series[{si}]: x and y length mismatch")
             if kind == "line":
-                ax.plot(xs, ys, label=lab, linewidth=2)
+                ax.plot(xs, ys, label=lab, linewidth=2, zorder=3)
             else:
-                ax.scatter(xs, ys, label=lab, s=36)
+                ax.scatter(xs, ys, label=lab, s=36, zorder=3)
         if len(series) > 1 or (series and str(series[0].get("label") or "").strip()):
-            ax.legend(loc="best", fontsize=9)
+            leg = ax.legend(loc="best", fontsize=9)
+            if leg:
+                leg.set_zorder(5)
+        if school:
+            _ensure_axis_includes_zero(ax, "x")
+            _ensure_axis_includes_zero(ax, "y")
+            ax.axhline(0, color="#333333", linewidth=1.0, zorder=2)
+            ax.axvline(0, color="#333333", linewidth=1.0, zorder=2)
 
     elif kind == "bar":
         categories = spec.get("categories")
@@ -146,7 +201,7 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
         ax.set_xlabel(xlabel, fontsize=10)
     if ylabel:
         ax.set_ylabel(ylabel, fontsize=10)
-    if grid:
+    if grid and not line_scatter_school:
         ax.grid(True, alpha=0.35, linestyle="--")
     fig.tight_layout()
 

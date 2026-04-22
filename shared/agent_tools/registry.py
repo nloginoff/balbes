@@ -968,7 +968,10 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                 "Draw **data charts** as PNG: line, scatter, bar, or histogram from **structured** numeric data. "
                 "Use for analytics, functions as (x,y) points, comparisons — not for freehand geometry art "
                 "(use **render_geometry**) and not for neural illustrations (**generate_image**). "
-                "Pass a single `spec` object. Do **not** use `execute_command` + python/matplotlib."
+                "Pass **`spec`**, **or** the same fields at the **top level** of arguments (kind, series, …) — "
+                "both are accepted. For **function graphs** (school style, axes through origin): set "
+                '**style: "school"** or **axes_origin: true** (line/scatter). Do **not** use '
+                "`execute_command` + python/matplotlib."
             ),
             "parameters": {
                 "type": "object",
@@ -976,14 +979,21 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "spec": {
                         "type": "object",
                         "description": (
-                            "Chart definition: { kind: line|scatter|bar|histogram, title?, xlabel?, ylabel?, "
-                            "grid? }. line/scatter: series: [{ label, x: float[], y: float[] }]. bar: "
-                            "categories: string[] and values: float[] — or series: [{ label, values }] + "
-                            "categories. histogram: values: float[], bins?: int."
+                            "Optional if kind/series (etc.) are at top level. "
+                            "{ kind, title?, xlabel?, ylabel?, grid?, style?, axes_origin? }. "
+                            "line/scatter: series: [{ label, x, y }]. For textbook axes through 0: style: school. "
+                            "bar: categories + values or series + categories. histogram: values, bins?."
                         ),
                     },
+                    "kind": {
+                        "type": "string",
+                        "description": "Top-level alternative to spec.kind: line|scatter|bar|histogram.",
+                    },
+                    "series": {
+                        "type": "array",
+                        "description": "When using flat args: list of {label, x, y} for line/scatter.",
+                    },
                 },
-                "required": ["spec"],
             },
         },
     },
@@ -996,7 +1006,8 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                 "from a **structured** `spec` — deterministic, not AI art. For grades 7–11: plans, pyramids, "
                 "angles, constructions. **Do not** use **generate_image** for precise constructions with "
                 "labeled vertices; do not use `execute_command` + matplotlib. Use **render_solution** only "
-                "for text+formulas+ASCII, not for real circles. One `spec` per call."
+                "for text+formulas+ASCII, not for real circles. Pass **`spec`**, or **top-level** mode+segments/… "
+                "or vertices+edges."
             ),
             "parameters": {
                 "type": "object",
@@ -1004,15 +1015,16 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "spec": {
                         "type": "object",
                         "description": (
-                            "2d: { mode: '2d', title?, segments: [[[x,y],[x,y]]], "
-                            "circles: [{ center, radius, fill? }], "
-                            "arcs: [{ center, radius, theta1, theta2 }] (degrees), "
-                            "points: [{ xy, label }] }. 3d: { mode: '3d', vertices: [[x,y,z]], "
-                            "labels: string[] (optional), edges: [[i,j]] }."
+                            "Optional if fields are at top level. "
+                            "2d: mode, title?, segments, circles, arcs, points. "
+                            "3d: mode, vertices, labels?, edges."
                         ),
                     },
+                    "mode": {
+                        "type": "string",
+                        "description": "Top-level: 2d or 3d if spec is omitted.",
+                    },
                 },
-                "required": ["spec"],
             },
         },
     },
@@ -2117,14 +2129,17 @@ class ToolDispatcher:
         )
 
     @staticmethod
-    def _coerce_spec_arg(
-        args: dict[str, Any], tool_label: str
+    def _parse_tool_spec_value(
+        raw: Any, tool_label: str
     ) -> tuple[dict[str, Any] | None, str | None]:
+        """
+        Parse `spec` field only. (None, None) = key absent or null → caller may use flat args.
+        (dict, None) = use this spec. (None, err) = invalid.
+        """
         import json
 
-        raw = args.get("spec")
         if raw is None:
-            return None, f"Error: {tool_label} требуется поле spec."
+            return None, None
         if isinstance(raw, dict):
             return raw, None
         if isinstance(raw, str):
@@ -2140,10 +2155,68 @@ class ToolDispatcher:
             return parsed, None
         return None, "Error: spec должен быть объектом или JSON-строкой."
 
+    @staticmethod
+    def _coerce_chart_spec(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        from shared.chart_render import CHART_SPEC_KEYS
+
+        if not isinstance(args, dict):
+            return None, "Error: render_chart: аргументы должны быть объектом."
+
+        data, err = ToolDispatcher._parse_tool_spec_value(args.get("spec"), "render_chart")
+        if err:
+            return None, err
+        if data is not None:
+            return data, None
+
+        k = (args.get("kind") or "").strip().lower()
+        if k in ("line", "scatter", "bar", "histogram"):
+            return {x: args[x] for x in CHART_SPEC_KEYS if x in args}, None
+        if isinstance(args.get("series"), list) and len(args.get("series") or []) > 0:
+            out = {x: args[x] for x in CHART_SPEC_KEYS if x in args}
+            if not (str(out.get("kind") or "").strip()):
+                out["kind"] = "line"
+            return out, None
+        if isinstance(args.get("categories"), list) and args.get("values") is not None:
+            return {x: args[x] for x in CHART_SPEC_KEYS if x in args}, None
+        if isinstance(args.get("values"), list) and (
+            k == "histogram" or args.get("bins") is not None
+        ):
+            out = {x: args[x] for x in CHART_SPEC_KEYS if x in args}
+            if not str(out.get("kind") or "").strip():
+                out["kind"] = "histogram"
+            return out, None
+        return None, (
+            "Error: render_chart: укажи вложенный **spec** { kind, … } **или** на верхнем уровне: "
+            "**kind** + **series** / categories+**values** / **values**+**bins** (гистограмма)."
+        )
+
+    @staticmethod
+    def _coerce_geometry_spec(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        from shared.geometry_render import GEOMETRY_SPEC_KEYS
+
+        if not isinstance(args, dict):
+            return None, "Error: render_geometry: аргументы должны быть объектом."
+
+        data, err = ToolDispatcher._parse_tool_spec_value(args.get("spec"), "render_geometry")
+        if err:
+            return None, err
+        if data is not None:
+            return data, None
+
+        mode = (args.get("mode") or "").strip().lower()
+        if mode == "2d" and any(args.get(x) for x in ("segments", "circles", "arcs", "points")):
+            return {k: args[k] for k in GEOMETRY_SPEC_KEYS if k in args}, None
+        if mode == "3d" and args.get("vertices"):
+            return {k: args[k] for k in GEOMETRY_SPEC_KEYS if k in args}, None
+        return None, (
+            "Error: render_geometry: укажи **spec** или **mode**+поля: "
+            "2d — segments/circles/arcs/points; 3d — vertices (+ edges, labels)."
+        )
+
     async def _do_render_chart(self, args: dict[str, Any]) -> str:
         from shared.chart_render import ChartRenderError, render_chart_png
 
-        spec, err = self._coerce_spec_arg(args, "render_chart")
+        spec, err = self._coerce_chart_spec(args)
         if err:
             return err
         assert spec is not None
@@ -2162,7 +2235,7 @@ class ToolDispatcher:
     async def _do_render_geometry(self, args: dict[str, Any]) -> str:
         from shared.geometry_render import GeometryRenderError, render_geometry_png
 
-        spec, err = self._coerce_spec_arg(args, "render_geometry")
+        spec, err = self._coerce_geometry_spec(args)
         if err:
             return err
         assert spec is not None
@@ -2682,14 +2755,20 @@ def _summarize_input(tool_name: str, args: dict) -> str:
     if tool_name == "generate_image":
         return f"prompt_len={len(args.get('prompt') or '')}"
     if tool_name == "render_chart":
-        s = args.get("spec")
-        if isinstance(s, dict):
-            return f"kind={s.get('kind', '?')}"
+        coerced, err = ToolDispatcher._coerce_chart_spec(args if isinstance(args, dict) else {})
+        if coerced is not None:
+            return f"kind={coerced.get('kind', '?')}"
+        if err:
+            return f"invalid={str(err)[:64]}"
+        s = (args or {}).get("spec")
         return f"spec_len={len(str(s or ''))}"
     if tool_name == "render_geometry":
-        s = args.get("spec")
-        if isinstance(s, dict):
-            return f"mode={s.get('mode', '?')}"
+        coerced, err = ToolDispatcher._coerce_geometry_spec(args if isinstance(args, dict) else {})
+        if coerced is not None:
+            return f"mode={coerced.get('mode', '?')}"
+        if err:
+            return f"invalid={str(err)[:64]}"
+        s = (args or {}).get("spec")
         return f"spec_len={len(str(s or ''))}"
     return str(args)[:80]
 
