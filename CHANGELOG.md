@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`list_drafts` (инструмент блогера)** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) после списка ID запрашивается **GET /api/v1/posts/{id}** для каждого поста: в ответе списка нет поля `content`, поэтому владелец в чате видел заголовки без текстов. Описание инструмента обновлено; system prompt бизнес-бота: явно вызывать `list_drafts` для полных RU/EN. [`/help`](services/blogger/business_bot.py): одобрение — в **основном** боте (кнопки у превью), не в бизнес-боте.
+
 ### Changed
 - **Blogger: единый runtime с оркестратором** — приватный чат бизнес-бота и `execute_delegate_task` используют [`ToolDispatcher`](shared/agent_tools/registry.py) + `resolve_tools_for_agent_with_manifest` для агента **`blogger`** (allowlist в [`config/providers.yaml`](config/providers.yaml)); удалён дублирующий inline tool-loop и `_dispatch_conversation_tool` из [`services/blogger/agent.py`](services/blogger/agent.py). Workspace для `workspace_read`/`workspace_write` — [`services/orchestrator/workspace.py`](services/orchestrator/workspace.py) `data/agents/blogger/`.
 

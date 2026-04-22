@@ -5,6 +5,7 @@ Dispatches tool calls to skill implementations; logging via AgentActivityLogger.
 """
 
 import asyncio
+import json
 import logging
 import time
 from pathlib import Path
@@ -728,7 +729,11 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_drafts",
-            "description": "List blog post drafts with optional status filter.",
+            "description": (
+                "List blog post drafts (metadata + full RU/EN body for each, truncated if huge). "
+                "Use this when the owner asks to see draft texts, compare posts, or before discussing approval. "
+                "Status filter: use draft|pending_approval|approved|scheduled|published|rejected, or omit."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2465,6 +2470,20 @@ class ToolDispatcher:
     # Blogger tools implementation
     # =========================================================================
 
+    @staticmethod
+    def _blog_post_bodies_from_api_dict(post: dict) -> tuple[str, str, str]:
+        """title, RU, EN from blogger API single-post JSON (content is JSONB ru/en)."""
+        title = str(post.get("title") or "")
+        raw = post.get("content")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        return title, str(raw.get("ru") or ""), str(raw.get("en") or "")
+
     async def _do_read_chat_history(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         """Read owner's chat history from memory service (all chats, all agents)."""
         from datetime import datetime
@@ -2648,13 +2667,14 @@ class ToolDispatcher:
             return f"Error creating draft: {exc}"
 
     async def _do_list_drafts(self, args: dict[str, Any], context: dict[str, Any]) -> str:
-        """List blog post drafts."""
+        """List blog post drafts with full RU/EN (GET list then GET each post — API list omits content)."""
         status = args.get("status")
         limit = int(args.get("limit") or 20)
         blogger_url = f"http://localhost:{context.get('blogger_service_port', 8105)}"
         params: dict = {"limit": limit}
         if status:
             params["status"] = status
+        max_body = 5000
         try:
             resp = await self.http_client.get(
                 f"{blogger_url}/api/v1/posts/",
@@ -2665,12 +2685,42 @@ class ToolDispatcher:
                 posts = resp.json().get("posts", [])
                 if not posts:
                     return "Нет черновиков."
-                lines = [f"Найдено {len(posts)} постов:"]
+                lines: list[str] = [
+                    f"Найдено {len(posts)} постов (полные тексты RU/EN, до {max_body} симв. на язык):\n"
+                ]
                 for p in posts:
-                    title = p.get("title") or "(без заголовка)"
+                    pid = p.get("id", "") or ""
                     st = p.get("status", "?")
-                    created = p.get("created_at", "")[:10]
-                    lines.append(f"  [{st}] {title} ({created}) — ID: {p.get('id', '?')}")
+                    created = (p.get("created_at", "") or "")[:10]
+                    title0 = p.get("title") or "(без заголовка)"
+                    if not pid:
+                        lines.append(f"---\n[{st}] {title0} ({created})")
+                        continue
+                    try:
+                        r2 = await self.http_client.get(
+                            f"{blogger_url}/api/v1/posts/{pid}",
+                            timeout=20.0,
+                        )
+                        if r2.status_code != 200:
+                            lines.append(
+                                f"---\n[{st}] {title0} — ID: {pid[:8]}… — "
+                                f"(не удалось загрузить тело: HTTP {r2.status_code})"
+                            )
+                            continue
+                        full = r2.json()
+                    except Exception as exc:
+                        lines.append(
+                            f"---\n[{st}] {title0} — ID: {pid[:8]}… — (ошибка загрузки: {exc})"
+                        )
+                        continue
+                    title, ru, en = self._blog_post_bodies_from_api_dict(full)
+                    ru_s = (ru or "")[:max_body] + ("…" if len(ru or "") > max_body else "")
+                    en_s = (en or "")[:max_body] + ("…" if len(en or "") > max_body else "")
+                    lines.append(
+                        f"---\n[{st}] {title} ({created}) — post_type={full.get('post_type', '')} — ID: {pid}\n"
+                        f"RU:\n{ru_s or '(пусто)'}\n\n"
+                        f"EN:\n{en_s or '(пусто)'}"
+                    )
                 return "\n".join(lines)
             return f"Error: HTTP {resp.status_code}"
         except Exception as exc:

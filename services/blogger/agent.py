@@ -982,9 +982,12 @@ class BloggerAgent:
             "Ты общаешься с владельцем проекта в приватном чате бизнес-бота.\n"
             "Отвечай кратко, по делу, на русском. Используй общие инструменты "
             "(create_draft, list_drafts, read_chat_history, get_business_summary, веб).\n"
-            "Черновик — через create_draft с content_ru/content_en; материалы — read_chat_history, "
-            "read_cursor_file, read_business_chats. Команда /generate в боте по-прежнему вызывает "
-            "отдельную генерацию по чатам."
+            "Если просят показать черновики, полные тексты или «что на одобрении» — **обязательно** "
+            "вызови list_drafts: он возвращает полные RU/EN (не придумывай, что «нет такой функции»).\n"
+            "Пользователь может также **/drafts** и **/draft <8_символов_id>** — то же, без LLM. "
+            "Согласование постов: превью с кнопками в **основном** боте (не в бизнес-боте).\n"
+            "Черновик — create_draft; материалы — read_chat_history, read_cursor_file. "
+            "/generate — отдельная генерация по чатам."
         )
 
         chat_id = await self.bbot_get_active_chat(owner_id)
