@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Инструменты `render_solution` / `generate_image` и AGENTS** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) сужено описание: `render_solution` только для набора текста/формул/ASCII, не для иллюстраций; `generate_image` как основной путь для растра, явный **запрет** обхода через `execute_command` + python/PIL. В [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md) и [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) / [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — то же, плюс не придумывать готовый PNG без успешного вызова инструмента. Синхронизировать **AGENTS** с memory-репо на проде.
+
 ### Added
 - **Инструмент `generate_image`** — генерация растровых изображений по текстовому промпту через OpenRouter (`POST /chat/completions` с `modalities: ["image", "text"]`), разбор `message.images` (data URL или HTTP URL), выдача в `outbound_attachments` как у `render_solution`. Настройки: [`config/providers.yaml`](config/providers.yaml) → `image_generation` (модель по умолчанию, таймаут, `image_config`). Реализация: [`shared/image_generation.py`](shared/image_generation.py), [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py); allowlist [`config/agents/balbes.yaml`](config/agents/balbes.yaml), coder в `providers.yaml`. Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md). Тесты: [`tests/unit/test_image_generation.py`](tests/unit/test_image_generation.py).
 

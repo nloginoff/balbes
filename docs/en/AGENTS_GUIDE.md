@@ -61,9 +61,8 @@ Edit `MEMORY.md` to give the agent persistent facts it should always know:
 
 ### Diagrams and images (`render_solution`, `generate_image`)
 
-- **`render_solution`** — text, formulas, ASCII diagrams in **one** `content` call (local PNG pages).
-- **`generate_image`** — raster illustrations and **schematic** geometry from a **text prompt** via OpenRouter (see [`config/providers.yaml`](../../config/providers.yaml) → `image_generation`). Not CAD-accurate; for strict math layout use `render_solution`.
-- Do not delegate to Coder for pictures when these tools suffice; do not use shell `pip` or heredocs to draw. Same rules in `data/agents/orchestrator/AGENTS.md` (memory repo).
+- **`render_solution`** — typeset text, formulas, ASCII/box-drawing in **one** `content` call (local PNG). **Not** for art-style illustrations or landscapes — use **`generate_image`**.
+- **`generate_image`** — default for **any raster image from a description** (illustration, sketch, landscape); OpenRouter [`image_generation`](../../config/providers.yaml). Do **not** use `execute_command` + python/PIL/matplotlib to synthesize images; on whitelist failure call **`generate_image`**, do not invent filenames. See `data/agents/orchestrator/AGENTS.md` (memory repo).
 
 ---
 

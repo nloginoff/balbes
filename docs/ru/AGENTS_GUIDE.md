@@ -16,9 +16,9 @@
 
 ### Схемы и изображения (`render_solution`, `generate_image`)
 
-- **`render_solution`** — текст, формулы, ASCII/схемы в **одном** вызове `content` (локальный рендер в PNG). Точная вёрстка формул и многостраничные решения.
-- **`generate_image`** — иллюстрации и **схематичные** геометрические чертежи по **текстовому описанию** через OpenRouter (отдельная image-модель, см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation`). Пропорции и подписи приблизительные; для строгой математики с формулами — `render_solution`.
-- Не уводите задачу в **coder** ради картинок, если хватает этих инструментов; не используйте `execute_command` + `pip`/heredoc для рисования. Правила промпта — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
+- **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для «иллюстраций», пейзажей и художественного растра — это **`generate_image`**.
+- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation`.
+- **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — whitelist обычно режет, и это обход вместо инструментов. После отказа — вызывайте **`generate_image`**, не выдумывайте готовый файл. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
 
 ### Архитектура
 

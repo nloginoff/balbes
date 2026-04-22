@@ -893,13 +893,12 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "render_solution",
             "description": (
-                "Render a full written answer as one or more fixed-size PNG pages: plain text, Cyrillic, "
-                "step-by-step reasoning, LaTeX-style formulas, and simple ASCII/Unicode diagrams (box-drawing "
-                "characters, labeled lines) in one canvas. Put everything in **one** call — do not split into "
-                "dozens of calls per line or per formula. Use this when the user should read the result as "
-                "rendered pages in chat. Do **not** delegate to the coder to add Python/matplotlib scripts in "
-                "the repo for the same outcome, and do not use shell `pip`/heredoc to draw — this tool is enough. "
-                "You may still send copyable plain text in the normal reply."
+                "Render **typeset** pages as PNG: plain text, Cyrillic, step-by-step reasoning, LaTeX-style "
+                "formulas, and **ASCII line art only** (box-drawing characters, monospace diagram lines). "
+                'This is **not** for photorealistic art, landscapes, "illustrations", or painterly scenes — '
+                "those require **generate_image**. Put everything in **one** call. Do **not** use "
+                "`execute_command` + python/PIL/matplotlib to draw images; do not delegate to the coder for "
+                "matplotlib scripts; use this tool or **generate_image** instead of shell hacks."
             ),
             "parameters": {
                 "type": "object",
@@ -907,9 +906,8 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "content": {
                         "type": "string",
                         "description": (
-                            "Single block of text for one render: title, steps, explanations, formulas in $...$ "
-                            "or LaTeX-like lines, and diagram-like ASCII/Unicode lines if needed. Batch the full "
-                            "answer here instead of looping the tool. Cyrillic is supported."
+                            "One block: steps, explanations, formulas in $...$, optional ASCII/box-drawing lines. "
+                            "Not a prompt for an AI painter — for drawn raster pictures use generate_image."
                         ),
                     },
                 },
@@ -922,11 +920,14 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "generate_image",
             "description": (
-                "Generate a raster image from a text description via OpenRouter (image-generation models). "
-                "Use for illustrations, concept art, and **schematic** geometry diagrams from a natural-language "
-                "description (e.g. triangle ABC, height, labels). For pixel-perfect math typesetting, formulas, "
-                "or multi-page text solutions, prefer **render_solution** instead. Pass one coherent prompt per "
-                "call; do not call in a loop for the same subfigure."
+                "**Primary tool** for any **raster** picture from a description: illustrations, landscapes, "
+                "concept art, portraits, and **schematic** geometry (triangle, labels, heights) when the user "
+                "wants a **drawn** image. Uses OpenRouter image models — do **not** try `execute_command` with "
+                "`python`, PIL, matplotlib, or shell scripts to synthesize images (whitelist will block and it "
+                "is the wrong path). After a failed or unavailable shell attempt, call **this** tool — never "
+                "claim an image was generated unless this tool (or render_solution) actually returned success. "
+                "Use **render_solution** for **typeset** math text and formulas on pages, not for art-style "
+                "pictures. One coherent `prompt` per call."
             ),
             "parameters": {
                 "type": "object",
