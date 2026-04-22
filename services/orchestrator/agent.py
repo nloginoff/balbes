@@ -1443,8 +1443,9 @@ class OrchestratorAgent(BaseAgent):
 
                 # Retriable errors — try next candidate if fallback enabled
                 # 404: model removed from OpenRouter ("No endpoints found") — try next
-                # 400: provider-side / payload quirks; next model often succeeds (do not stop the chain)
-                if response.status_code in (400, 404, 429, 500, 502, 503, 504):
+                # Do NOT retry 400: same user request would switch to MiniMax etc. in stats
+                # (user expects the selected model, not silent cheap fallback).
+                if response.status_code in (404, 429, 500, 502, 503, 504):
                     continue
 
                 # Non-retriable error — stop immediately

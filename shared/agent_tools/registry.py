@@ -2138,29 +2138,36 @@ class ToolDispatcher:
     @staticmethod
     def _parse_tool_spec_value(
         raw: Any, tool_label: str
-    ) -> tuple[dict[str, Any] | None, str | None]:
+    ) -> tuple[dict[str, Any] | None, str | None, bool]:
         """
-        Parse `spec` field only. (None, None) = key absent or null → caller may use flat args.
-        (dict, None) = use this spec. (None, err) = invalid.
+        Parse `spec` field only.
+
+        Returns (data, err, spec_string_json_failed).
+
+        - (None, None, False): key absent / null — merge from flat args.
+        - (dict, None, False): use this spec.
+        - (None, err, False): hard error (wrong type, empty string, JSON not an object).
+        - (None, None, True): `spec` was a string but `json.loads` failed — caller may still
+          merge from top-level tool args (kind, series, …) when the model duplicates data.
         """
         import json
 
         if raw is None:
-            return None, None
+            return None, None, False
         if isinstance(raw, dict):
-            return raw, None
+            return raw, None, False
         if isinstance(raw, str):
             s = raw.strip()
             if not s:
-                return None, f"Error: {tool_label} spec пустой."
+                return None, f"Error: {tool_label} spec пустой.", False
             try:
                 parsed = json.loads(s)
-            except json.JSONDecodeError as e:
-                return None, f"Error: spec не JSON: {e}"
+            except json.JSONDecodeError:
+                return None, None, True
             if not isinstance(parsed, dict):
-                return None, f"Error: {tool_label} spec JSON должен быть объектом."
-            return parsed, None
-        return None, "Error: spec должен быть объектом или JSON-строкой."
+                return None, f"Error: {tool_label} spec JSON должен быть объектом.", False
+            return parsed, None, False
+        return None, "Error: spec должен быть объектом или JSON-строкой.", False
 
     @staticmethod
     def _coerce_chart_spec(args: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
@@ -2169,11 +2176,19 @@ class ToolDispatcher:
         if not isinstance(args, dict):
             return None, "Error: render_chart: аргументы должны быть объектом."
 
-        data, err = ToolDispatcher._parse_tool_spec_value(args.get("spec"), "render_chart")
+        data, err, spec_json_bad = ToolDispatcher._parse_tool_spec_value(
+            args.get("spec"), "render_chart"
+        )
         if err:
             return None, err
         if data is not None:
             return data, None
+        if spec_json_bad:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "render_chart: spec string is not valid JSON; merging top-level fields if present"
+            )
 
         k = (args.get("kind") or "").strip().lower()
         if k in ("line", "scatter", "bar", "histogram"):
@@ -2192,6 +2207,12 @@ class ToolDispatcher:
             if not str(out.get("kind") or "").strip():
                 out["kind"] = "histogram"
             return out, None
+        if spec_json_bad:
+            return None, (
+                "Error: render_chart: **spec** как JSON-строка с **синтаксической ошибкой**; "
+                "модель часто **дублирует** kind/series **наверху** — передай **kind**+**series** **объектом** "
+                "в аргументах или исправь JSON (запятые, кавычки)."
+            )
         return None, (
             "Error: render_chart: укажи вложенный **spec** { kind, … } **или** на верхнем уровне: "
             "**kind** + **series** / categories+**values** / **values**+**bins** (гистограмма)."
@@ -2204,11 +2225,19 @@ class ToolDispatcher:
         if not isinstance(args, dict):
             return None, "Error: render_geometry: аргументы должны быть объектом."
 
-        data, err = ToolDispatcher._parse_tool_spec_value(args.get("spec"), "render_geometry")
+        data, err, spec_json_bad = ToolDispatcher._parse_tool_spec_value(
+            args.get("spec"), "render_geometry"
+        )
         if err:
             return None, err
         if data is not None:
             return data, None
+        if spec_json_bad:
+            import logging
+
+            logging.getLogger(__name__).info(
+                "render_geometry: spec string is not valid JSON; merging top-level fields if present"
+            )
 
         mode = (args.get("mode") or "").strip().lower()
         if mode == "2d" and any(args.get(x) for x in ("segments", "circles", "arcs", "points")):

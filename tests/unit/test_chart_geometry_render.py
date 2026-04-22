@@ -70,6 +70,18 @@ def test_coerce_chart_spec_flat_line_without_spec_key():
     }
 
 
+def test_coerce_chart_spec_broken_spec_json_string_falls_back_to_flat():
+    args = {
+        "kind": "line",
+        "spec": '{"kind": "line", "series": [',  # invalid JSON
+        "series": [{"label": "L", "x": [0, 1], "y": [0, 1]}],
+    }
+    spec, err = ToolDispatcher._coerce_chart_spec(args)
+    assert err is None
+    assert spec["kind"] == "line"
+    assert len(spec["series"]) == 1
+
+
 def test_coerce_chart_spec_nested_spec_wins():
     args = {
         "kind": "bar",
