@@ -59,10 +59,12 @@ Edit `MEMORY.md` to give the agent persistent facts it should always know:
 - Preferred search: Tavily, fallback to Yandex
 ```
 
-### Diagrams and images (`render_solution`, `generate_image`)
+### Diagrams, charts, and images (`render_solution`, `render_chart`, `render_geometry`, `generate_image`)
 
-- **`render_solution`** — typeset text, formulas, ASCII/box-drawing in **one** `content` call (local PNG). **Not** for art-style illustrations or landscapes — use **`generate_image`**.
-- **`generate_image`** — default for **any raster image from a description** (illustration, sketch, landscape); OpenRouter, models from [`config/providers.yaml`](../../config/providers.yaml) → **`image_generation_models`** (with fallback to the legacy `image_generation` block). **Model choice:** optional tool `model` only if the id is in **`image_generation_models`** (image output). **Do not** pass the current chat/vision model — OpenRouter returns 404. If omitted, use the user's **`/imagemodel`** choice and YAML **`default_model`**. Per-model optional **`modalities`** in YAML: image-only models (e.g. Sourceful, Flux) use `["image"]`; default is `["image", "text"]` (see OpenRouter image generation docs). **Do not** use `execute_command` + python/PIL/matplotlib to synthesize images; on whitelist failure call **`generate_image`**, do not invent filenames. See `data/agents/orchestrator/AGENTS.md` (memory repo).
+- **`render_solution`** — typeset text, formulas, ASCII/box-drawing in **one** `content` call (local PNG). **Not** for numeric charts — use **`render_chart`**; not for precise compass-style figures — **`render_geometry`**; not for loose art — **`generate_image`**.
+- **`render_chart`** — deterministic charts from a **`spec`** object: `kind` line | scatter | bar | histogram ([`shared/chart_render.py`](../../shared/chart_render.py)).
+- **`render_geometry`** — deterministic 2D/3D diagrams from a **`spec`**: segments, circles, arcs, labeled points, or 3D vertices+edges ([`shared/geometry_render.py`](../../shared/geometry_render.py)); for school-style geometry when labels matter.
+- **`generate_image`** — neural raster from a **prompt** via OpenRouter; [`config/providers.yaml`](../../config/providers.yaml) → **`image_generation_models`**. Optional `model` only from that list; do not pass chat/vision model ids. **Do not** use `execute_command` + python/PIL/matplotlib for images; use the tools above. See `data/agents/orchestrator/AGENTS.md` (memory repo).
 
 - **Vision / image model choice (Telegram + API):** flat `models` lists in [`config/providers.yaml`](../../config/providers.yaml); `tier` / `price_hint` are price hints on buttons. **Telegram:** `/vision`, `/imagemodel` (callback index). **Orchestrator JSON:** optional `vision_model_id`, `image_generation_model_id` (preferred) or legacy `vision_tier`, `image_generation_tier`. **Memory:** `GET/PUT .../vision-model`, `.../image-generation-model` with `{"model_id": "openrouter/..."}`. Code: [`shared/vision_models.py`](../../shared/vision_models.py), [`shared/image_gen_models.py`](../../shared/image_gen_models.py), [`shared/identity_client.py`](../../shared/identity_client.py).
 
@@ -77,7 +79,7 @@ The Coder is specialized for software development. It receives delegated tasks f
 - Run shell commands from the whitelist (`execute_command`)
 - Execute git, grep, rg, diff, tree, bash scripts
 - Auto-commit file changes to git
-- Call `render_solution` to turn a full written solution (text + math) into fixed-size PNG page(s); the API includes them in `outbound_attachments` (base64), and the Telegram bot sends them as photos alongside the normal text reply
+- Call `render_solution` to turn a full written solution (text + math) into fixed-size PNG page(s); `render_chart` / `render_geometry` for structured plots and figures; the API includes images in `outbound_attachments` (base64), and the Telegram bot sends them as photos alongside the normal text reply
 
 ### Running in background
 

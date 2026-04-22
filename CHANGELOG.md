@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Инструменты `render_chart` и `render_geometry`** — детерминированные PNG (matplotlib Agg) из поля **`spec`**: графики (`kind`: line, scatter, bar, histogram) в [`shared/chart_render.py`](shared/chart_render.py); чертёж 2D (отрезки, окружности, дуги, подписи точек) и 3D (вершины + рёбра) в [`shared/geometry_render.py`](shared/geometry_render.py). Регистрация в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py), allowlist **balbes** + **coder** ([`config/agents/balbes.yaml`](config/agents/balbes.yaml), [`config/providers.yaml`](config/providers.yaml)); лимиты 5 вызовов/задача. Документация: [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md), [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md). Тесты: [`tests/unit/test_chart_geometry_render.py`](tests/unit/test_chart_geometry_render.py).
+
 ### Changed
 - **`image_generation_models` в** [`config/providers.yaml`](config/providers.yaml) — у **ByteDance Seedream 4.5** задано **`modalities: [image]`** (image-only и OpenRouter); **Riverflow V2** перенесён в тир **`premium`** (подсказка цены в `/imagemodel`); в список добавлена **`openrouter/black-forest-labs/flux.2-max`** (`modalities: [image]`, тир **premium**); у **Seedream**, **Riverflow**, **FLUX.2 Max** заданы **`price_hint`** для подписи кнопок **`/imagemodel`**.
 

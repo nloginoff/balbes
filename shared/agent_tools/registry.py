@@ -960,6 +960,62 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "render_chart",
+            "description": (
+                "Draw **data charts** as PNG: line, scatter, bar, or histogram from **structured** numeric data. "
+                "Use for analytics, functions as (x,y) points, comparisons — not for freehand geometry art "
+                "(use **render_geometry**) and not for neural illustrations (**generate_image**). "
+                "Pass a single `spec` object. Do **not** use `execute_command` + python/matplotlib."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spec": {
+                        "type": "object",
+                        "description": (
+                            "Chart definition: { kind: line|scatter|bar|histogram, title?, xlabel?, ylabel?, "
+                            "grid? }. line/scatter: series: [{ label, x: float[], y: float[] }]. bar: "
+                            "categories: string[] and values: float[] — or series: [{ label, values }] + "
+                            "categories. histogram: values: float[], bins?: int."
+                        ),
+                    },
+                },
+                "required": ["spec"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "render_geometry",
+            "description": (
+                "Draw a **textbook-style** geometry figure as PNG (exact lines, circles, arcs, 3D wireframe) "
+                "from a **structured** `spec` — deterministic, not AI art. For grades 7–11: plans, pyramids, "
+                "angles, constructions. **Do not** use **generate_image** for precise constructions with "
+                "labeled vertices; do not use `execute_command` + matplotlib. Use **render_solution** only "
+                "for text+formulas+ASCII, not for real circles. One `spec` per call."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "spec": {
+                        "type": "object",
+                        "description": (
+                            "2d: { mode: '2d', title?, segments: [[[x,y],[x,y]]], "
+                            "circles: [{ center, radius, fill? }], "
+                            "arcs: [{ center, radius, theta1, theta2 }] (degrees), "
+                            "points: [{ xy, label }] }. 3d: { mode: '3d', vertices: [[x,y,z]], "
+                            "labels: string[] (optional), edges: [[i,j]] }."
+                        ),
+                    },
+                },
+                "required": ["spec"],
+            },
+        },
+    },
 ]
 
 
@@ -1136,6 +1192,8 @@ class ToolDispatcher:
         "workspace_write": 20,
         "render_solution": 3,
         "generate_image": 3,
+        "render_chart": 5,
+        "render_geometry": 5,
     }
     _DEFAULT_RATE_LIMIT = 20
 
@@ -1262,6 +1320,12 @@ class ToolDispatcher:
 
             elif tool_name == "generate_image":
                 result = await self._do_generate_image(tool_args, context)
+
+            elif tool_name == "render_chart":
+                result = await self._do_render_chart(tool_args)
+
+            elif tool_name == "render_geometry":
+                result = await self._do_render_geometry(tool_args)
 
             # ── Blogger tools (only meaningful when agent_id == "blogger") ──
             elif tool_name == "read_chat_history":
@@ -2052,6 +2116,68 @@ class ToolDispatcher:
             f"({n} фиксированных страниц). Оно будет отправлено в чат отдельным сообщением."
         )
 
+    @staticmethod
+    def _coerce_spec_arg(
+        args: dict[str, Any], tool_label: str
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        import json
+
+        raw = args.get("spec")
+        if raw is None:
+            return None, f"Error: {tool_label} требуется поле spec."
+        if isinstance(raw, dict):
+            return raw, None
+        if isinstance(raw, str):
+            s = raw.strip()
+            if not s:
+                return None, f"Error: {tool_label} spec пустой."
+            try:
+                parsed = json.loads(s)
+            except json.JSONDecodeError as e:
+                return None, f"Error: spec не JSON: {e}"
+            if not isinstance(parsed, dict):
+                return None, f"Error: {tool_label} spec JSON должен быть объектом."
+            return parsed, None
+        return None, "Error: spec должен быть объектом или JSON-строкой."
+
+    async def _do_render_chart(self, args: dict[str, Any]) -> str:
+        from shared.chart_render import ChartRenderError, render_chart_png
+
+        spec, err = self._coerce_spec_arg(args, "render_chart")
+        if err:
+            return err
+        assert spec is not None
+        try:
+            png = await asyncio.to_thread(render_chart_png, spec)
+        except ChartRenderError as e:
+            logger.warning("render_chart: %s", e)
+            return f"Ошибка графика: {e}"
+        except Exception as e:
+            logger.error("render_chart failed: %s", e, exc_info=True)
+            return _format_render_solution_error(e)
+        k = (spec.get("kind") or "?").strip()
+        self._append_outbound_png(png, f"График ({k})")
+        return "График сформирован; изображение будет отправлено в чат отдельным сообщением."
+
+    async def _do_render_geometry(self, args: dict[str, Any]) -> str:
+        from shared.geometry_render import GeometryRenderError, render_geometry_png
+
+        spec, err = self._coerce_spec_arg(args, "render_geometry")
+        if err:
+            return err
+        assert spec is not None
+        try:
+            png = await asyncio.to_thread(render_geometry_png, spec)
+        except GeometryRenderError as e:
+            logger.warning("render_geometry: %s", e)
+            return f"Ошибка чертежа: {e}"
+        except Exception as e:
+            logger.error("render_geometry failed: %s", e, exc_info=True)
+            return _format_render_solution_error(e)
+        mode = (spec.get("mode") or "2d").strip()
+        self._append_outbound_png(png, f"Чертёж ({mode})")
+        return "Чертёж сформирован; изображение будет отправлено в чат отдельным сообщением."
+
     def _append_outbound_png(self, png_bytes: bytes, caption: str) -> None:
         import base64
 
@@ -2555,6 +2681,16 @@ def _summarize_input(tool_name: str, args: dict) -> str:
         return f"content_len={len(args.get('content') or '')}"
     if tool_name == "generate_image":
         return f"prompt_len={len(args.get('prompt') or '')}"
+    if tool_name == "render_chart":
+        s = args.get("spec")
+        if isinstance(s, dict):
+            return f"kind={s.get('kind', '?')}"
+        return f"spec_len={len(str(s or ''))}"
+    if tool_name == "render_geometry":
+        s = args.get("spec")
+        if isinstance(s, dict):
+            return f"mode={s.get('mode', '?')}"
+        return f"spec_len={len(str(s or ''))}"
     return str(args)[:80]
 
 

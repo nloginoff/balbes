@@ -14,11 +14,13 @@
 
 ## OrchestratorAgent
 
-### Схемы и изображения (`render_solution`, `generate_image`)
+### Схемы, графики и изображения (`render_solution`, `render_chart`, `render_geometry`, `generate_image`)
 
-- **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для «иллюстраций», пейзажей и художественного растра — это **`generate_image`**.
-- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Параметр `model` в вызове — только id из этого списка; **нельзя** подставлять id чатовой/vision-модели (OpenRouter ответит 404). Без `model` используется выбор пользователя (`/imagemodel`) и `default_model` в YAML. У строки модели опционально **`modalities`**: для image-only (Sourceful, Flux и т.д.) — `["image"]`, иначе по умолчанию `["image", "text"]` (см. OpenRouter image generation).
-- **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — whitelist обычно режет, и это обход вместо инструментов. После отказа — вызывайте **`generate_image`**, не выдумывайте готовый файл. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
+- **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для осей/числовых графиков — это **`render_chart`**; не для точного чертежа с окружностью — **`render_geometry`**; не для художественного растра — **`generate_image`**.
+- **`render_chart`** — **детерминированные** графики по числам: `spec` с `kind`: line, scatter, bar, histogram (см. [`shared/chart_render.py`](../../shared/chart_render.py)). Для анализа данных, диаграмм, гистограмм.
+- **`render_geometry`** — **детерминированные** чертежи по структуре: `spec` с `mode`: `2d` (отрезки, окружности, дуги, подписи точек) или `3d` (вершины + рёбра), см. [`shared/geometry_render.py`](../../shared/geometry_render.py). Для геометрии 7–11 в стиле учебника, когда важны подписи и линии; не нейросеть.
+- **`generate_image`** — растровая картинка по **промпту** через OpenRouter, см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Для иллюстраций, когда **`render_geometry`** не подходит (художественная сцена).
+- **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — используйте инструменты выше. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
 
 ### Архитектура
 
@@ -241,6 +243,8 @@ _background_results → result_text (если завершено)
 | `cancel_agent_task` | ❌ | ✅* | Отменить фоновую задачу (*то же) |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
 | `render_solution` | ✅ | ✅ | Текст решения с формулами → одна или несколько PNG; рендер на сетке, затем **обрезка** по рамке текста (без лишнего пустого поля внизу/по краям) и умеренный перенос строк, чтобы не вылезать за ширину. Файлы в `outbound_attachments` |
+| `render_chart` | ✅ | ✅ | Графики line/scatter/bar/histogram из объекта **`spec`** (matplotlib Agg), одна PNG в `outbound_attachments` |
+| `render_geometry` | ✅ | ✅ | Чертёж 2d/3d из объекта **`spec`** (отрезки, круги, дуги или 3d wireframe), одна PNG в `outbound_attachments` |
 | `generate_image` | ✅ | ✅ | Растровая картинка по промпту через OpenRouter; `modalities` из YAML (по умолчанию image+text). Модель и `image_config` — в [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models` |
 
 **Heartbeat** использует только `workspace_read` (минимальный набор для экономии токенов).
@@ -266,6 +270,8 @@ _background_results → result_text (если завершено)
 | `execute_command` | 30 |
 | `render_solution` | 3 |
 | `generate_image` | 3 |
+| `render_chart` | 5 |
+| `render_geometry` | 5 |
 | остальные | 20 |
 
 При превышении лимита инструмент возвращает ошибку с просьбой подвести итог.
