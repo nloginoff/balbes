@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Тиры для генерации картинок (как `/vision`)** — в [`config/providers.yaml`](config/providers.yaml) секция **`image_generation_models`** (дефолтный тир, список `tiers` с `openrouter/...` id). Memory: Redis `image_gen_tier:{user_id}`, `GET/PUT /api/v1/users/{id}/image-generation-tier`; клиент [`shared/identity_client.py`](shared/identity_client.py). Оркестратор: поле **`image_generation_tier`** в `POST /api/v1/tasks`, прокидывается в `tool_context` для `generate_image` ([`services/orchestrator/api/tasks.py`](services/orchestrator/api/tasks.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py)); резолв модели в [`shared/image_gen_models.py`](shared/image_gen_models.py) и [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py). Telegram: **`/imagemodel`**, флаг [`TelegramFeatureFlags.image_gen_command`](shared/agent_manifest.py) ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)). Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md).
+
 ### Changed
 - **Инструменты `render_solution` / `generate_image` и AGENTS** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) сужено описание: `render_solution` только для набора текста/формул/ASCII, не для иллюстраций; `generate_image` как основной путь для растра, явный **запрет** обхода через `execute_command` + python/PIL. В [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md) и [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md) / [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md) — то же, плюс не придумывать готовый PNG без успешного вызова инструмента. Синхронизировать **AGENTS** с memory-репо на проде.
 

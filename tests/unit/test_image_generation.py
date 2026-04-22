@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from shared.agent_tools.registry import ToolDispatcher
+from shared.image_gen_models import default_image_gen_tier, resolve_image_gen_model_id
 from shared.image_generation import (
     decode_data_url,
     extract_images_from_openrouter_message,
@@ -51,6 +52,30 @@ def test_extract_skips_bad_data_url():
     assert items == []
 
 
+def test_resolve_image_gen_model_id_from_fake_yaml(monkeypatch):
+    fake = {
+        "image_generation_models": {
+            "default_tier": "cheap",
+            "tiers": [
+                {
+                    "tier": "cheap",
+                    "id": "openrouter/google/cheap-m",
+                    "display_name": "C",
+                },
+                {
+                    "tier": "premium",
+                    "id": "openrouter/google/prem-m",
+                    "display_name": "P",
+                },
+            ],
+        }
+    }
+    monkeypatch.setattr("shared.image_gen_models.get_providers_config", lambda: fake)
+    assert default_image_gen_tier() == "cheap"
+    assert resolve_image_gen_model_id("premium") == "openrouter/google/prem-m"
+    assert resolve_image_gen_model_id(None) == "openrouter/google/cheap-m"
+
+
 @pytest.mark.asyncio
 async def test_tool_dispatcher_generate_image_outbound(monkeypatch):
     tiny = base64.b64encode(b"x").decode("ascii")
@@ -93,3 +118,61 @@ async def test_tool_dispatcher_generate_image_outbound(monkeypatch):
     assert oa[0]["kind"] == "image"
     assert oa[0]["mime_type"] == "image/png"
     assert client.post.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_tool_dispatcher_generate_image_uses_tier_from_context(monkeypatch):
+    tiny = base64.b64encode(b"x").decode("ascii")
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json = lambda: {
+        "usage": {"total_tokens": 1},
+        "choices": [
+            {
+                "message": {
+                    "content": "Here",
+                    "images": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{tiny}"}}
+                    ],
+                }
+            }
+        ],
+    }
+    client = AsyncMock()
+    client.post = AsyncMock(return_value=resp)
+
+    fake_cfg = {
+        "image_generation_models": {
+            "default_tier": "cheap",
+            "tiers": [
+                {
+                    "tier": "premium",
+                    "id": "openrouter/mymodel/premium-x",
+                    "display_name": "P",
+                },
+            ],
+        }
+    }
+    monkeypatch.setattr("shared.image_gen_models.get_providers_config", lambda: fake_cfg)
+    monkeypatch.setattr("shared.image_generation.get_providers_config", lambda: fake_cfg)
+    monkeypatch.setattr(
+        "shared.config.get_settings",
+        lambda: SimpleNamespace(
+            openrouter_api_key="sk-test",
+            openrouter_service_user="svc",
+            openrouter_http_referer="https://ex",
+            openrouter_app_title="t",
+            openrouter_categories=None,
+        ),
+    )
+
+    td = ToolDispatcher(
+        workspace=None, http_client=client, providers_config={}, activity_logger=None
+    )
+    await td._do_generate_image(
+        {"prompt": "a cat"},
+        {"user_id": "user-uuid", "image_generation_tier": "premium"},
+    )
+    assert client.post.call_count == 1
+    _args, kwargs = client.post.call_args
+    assert kwargs["json"]["model"] == "mymodel/premium-x"

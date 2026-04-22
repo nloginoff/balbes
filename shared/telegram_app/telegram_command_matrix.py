@@ -39,6 +39,12 @@ SLASH_COMMANDS_ORCHESTRATOR: tuple[SlashCommandRow, ...] = (
     SlashCommandRow(
         "vision_command", "vision", "Качество разбора изображений (tier)", "cmd_vision"
     ),
+    SlashCommandRow(
+        "image_gen_command",
+        "imagemodel",
+        "Модель генерации картинок (tier)",
+        "cmd_image_gen",
+    ),
     SlashCommandRow("clear_command", "clear", "Очистить историю чата", "cmd_clear"),
     SlashCommandRow(
         "memory_commands", "remember", "Сохранить в долгосрочную память", "cmd_remember"

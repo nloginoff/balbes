@@ -30,6 +30,10 @@ class TaskCreateRequest(BaseModel):
         default=None,
         description="Override vision tier for this request: cheap | medium | premium",
     )
+    image_generation_tier: str | None = Field(
+        default=None,
+        description="Override image generation tier for generate_image: cheap | medium | premium",
+    )
 
 
 @router.post("")
@@ -61,6 +65,7 @@ async def create_task(req: TaskCreateRequest) -> dict:
                 "bot_id": req.bot_id,
                 "attachments": req.attachments,
                 "vision_tier": req.vision_tier,
+                "image_generation_tier": req.image_generation_tier,
             },
         )
         return result

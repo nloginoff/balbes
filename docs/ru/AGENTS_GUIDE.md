@@ -334,9 +334,12 @@ _background_results → result_text (если завершено)
     {"kind": "image", "data_url": "data:image/jpeg;base64,..."},
     {"kind": "file_text", "filename": "notes.txt", "text": "..."}
   ],
-  "vision_tier": "cheap"
+  "vision_tier": "cheap",
+  "image_generation_tier": "medium"
 }
 ```
+
+Поле **`image_generation_tier`** (`cheap` \| `medium` \| `premium`) — глобальная настройка на пользователя (как `vision` для разбора картинок), не привязана к чату. Модель для инструмента **`generate_image`**: аргумент инструмента `model` (если задан) \> тир из Memory \> `default_tier` в [`config/providers.yaml`](../../config/providers.yaml) → **`image_generation_models`** (с откатом к старому блоку `image_generation`). **Telegram:** команда **`/imagemodel`**. **Memory API:** `GET/PUT /api/v1/users/{id}/image-generation-tier` (тело `{"tier": "cheap"}`), ключ Redis `image_gen_tier:{user_id}`. Реализация: [`shared/image_gen_models.py`](../../shared/image_gen_models.py).
 
 Подробнее про вложения и vision — [`docs/ru/ATTACHMENTS.md`](ATTACHMENTS.md).
 

@@ -62,6 +62,7 @@ class TelegramFeatureFlags:
     status_command: bool = True
     link_command: bool = True
     vision_command: bool = True
+    image_gen_command: bool = True
     blog_callbacks: bool = True
     join_request_auto: bool = True
     clear_command: bool = True

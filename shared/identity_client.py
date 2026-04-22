@@ -275,3 +275,55 @@ async def set_vision_tier(
     finally:
         if own_client:
             await c.aclose()
+
+
+async def get_image_generation_tier(
+    memory_service_url: str,
+    canonical_user_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> str | None:
+    """Return cheap|medium|premium or None if unset (use yaml default_tier)."""
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(
+            f"{base}/api/v1/users/{canonical_user_id}/image-generation-tier",
+        )
+        if resp.status_code != 200:
+            return None
+        t = resp.json().get("tier")
+        return str(t).strip().lower() if t else None
+    except Exception as e:
+        logger.debug("get_image_generation_tier failed: %s", e)
+        return None
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def set_image_generation_tier(
+    memory_service_url: str,
+    canonical_user_id: str,
+    tier: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> bool:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.put(
+            f"{base}/api/v1/users/{canonical_user_id}/image-generation-tier",
+            json={"tier": tier.strip().lower()},
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        logger.warning("set_image_generation_tier failed: %s", e)
+        return False
+    finally:
+        if own_client:
+            await c.aclose()

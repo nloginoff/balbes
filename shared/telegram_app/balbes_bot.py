@@ -61,11 +61,18 @@ from shared.config import get_settings
 from shared.document_extract import extract_text_from_bytes
 from shared.identity_client import (
     create_pairing_code,
+    get_image_generation_tier,
     get_vision_tier,
     redeem_pairing_code,
     resolve_canonical_user_id,
+    set_image_generation_tier,
     set_vision_tier,
     touch_channel_presence,
+)
+from shared.image_gen_models import (
+    default_image_gen_tier,
+    image_gen_tier_display_name,
+    list_image_gen_tiers,
 )
 from shared.outbound.mirror import deliver_agent_text_with_mirror, mirror_agent_text_to_secondaries
 from shared.telegram_app.format_outbound import send_reply_html_with_plain_fallback
@@ -111,6 +118,7 @@ CALLBACK_NEW_CHAT = "new_chat"
 CALLBACK_MODEL_UNAVAIL_YES = "model_unavail:yes:"
 CALLBACK_MODEL_UNAVAIL_NO = "model_unavail:no"
 CALLBACK_VISION_PREFIX = "vision:"
+CALLBACK_IMAGE_GEN_PREFIX = "imgen:"
 
 
 _MD2_ESCAPE_RE = str.maketrans({c: f"\\{c}" for c in r"\_*[]()~`>#+-=|{}.!"})
@@ -902,6 +910,12 @@ class BalbesTelegramBot:
             self.app.add_handler(
                 CallbackQueryHandler(self.cb_vision_tier, pattern=f"^{CALLBACK_VISION_PREFIX}")
             )
+        if tg.image_gen_command:
+            self.app.add_handler(
+                CallbackQueryHandler(
+                    self.cb_image_gen_tier, pattern=f"^{CALLBACK_IMAGE_GEN_PREFIX}"
+                )
+            )
         if tg.agents_switch:
             self.app.add_handler(
                 CallbackQueryHandler(self.cb_agent_selected, pattern=f"^{CALLBACK_AGENT_PREFIX}")
@@ -1476,6 +1490,46 @@ class BalbesTelegramBot:
         await update.message.reply_text(
             "🖼 *Качество разбора изображений* (одинаково для всех чатов):\n"
             f"Сейчас: _{vision_tier_display_name(current)}_",
+            reply_markup=InlineKeyboardMarkup(buttons),
+            parse_mode="Markdown",
+        )
+
+    async def cmd_image_gen(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global image generation model tier (cheap / medium / premium) — Memory per user."""
+        user: User | None = update.effective_user
+        if not user:
+            return
+        mem_uid = await self._memory_user_id(user)
+        current = await get_image_generation_tier(self.memory_url, mem_uid, client=self._get_http())
+        if not current:
+            current = default_image_gen_tier()
+        tiers = list_image_gen_tiers()
+        if not tiers:
+            await update.message.reply_text(
+                "⚠️ Секция `image_generation_models` не настроена в `config/providers.yaml`."
+            )
+            return
+        buttons: list[list[InlineKeyboardButton]] = []
+        for row in tiers:
+            tier = (row.get("tier") or "").strip().lower()
+            if not tier:
+                continue
+            label = str(row.get("display_name") or tier)
+            mark = "✓ " if tier == current else ""
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{mark}{label}",
+                        callback_data=f"{CALLBACK_IMAGE_GEN_PREFIX}{tier}",
+                    )
+                ]
+            )
+        if not buttons:
+            await update.message.reply_text("⚠️ Нет доступных tier в конфиге.")
+            return
+        await update.message.reply_text(
+            "🎨 *Модель генерации картинок* (generate_image, для всех чатов):\n"
+            f"Сейчас: _{image_gen_tier_display_name(current)}_",
             reply_markup=InlineKeyboardMarkup(buttons),
             parse_mode="Markdown",
         )
@@ -2291,6 +2345,31 @@ class BalbesTelegramBot:
         else:
             await query.edit_message_text("❌ Не удалось сохранить настройку (Memory Service).")
 
+    async def cb_image_gen_tier(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user or not query.data:
+            return
+        data = query.data
+        if not data.startswith(CALLBACK_IMAGE_GEN_PREFIX):
+            return
+        tier = data[len(CALLBACK_IMAGE_GEN_PREFIX) :].strip().lower()
+        if not tier:
+            return
+        mem_uid = await self._memory_user_id(user)
+        ok = await set_image_generation_tier(
+            self.memory_url, mem_uid, tier, client=self._get_http()
+        )
+        label = image_gen_tier_display_name(tier)
+        if ok:
+            await query.edit_message_text(
+                f"✅ Модель генерации картинок: *{label}*",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text("❌ Не удалось сохранить настройку (Memory Service).")
+
     async def cb_model_selected(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         await query.answer()
@@ -2743,6 +2822,13 @@ class BalbesTelegramBot:
                     payload["attachments"] = attachments
                 if vision_tier:
                     payload["vision_tier"] = vision_tier
+                # Global tier for generate_image (not tied to vision attachments)
+                _ig_t = await get_image_generation_tier(
+                    self.memory_url, mem_uid, client=self._get_http()
+                )
+                if not _ig_t or _ig_t not in ("cheap", "medium", "premium"):
+                    _ig_t = default_image_gen_tier()
+                payload["image_generation_tier"] = _ig_t
 
                 await self._touch_agent_session(
                     mem_uid,

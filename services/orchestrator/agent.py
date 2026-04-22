@@ -58,7 +58,13 @@ from shared.agent_base import BaseAgent
 from shared.agent_execute_contract import delegation_headers
 from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent_with_manifest
 from shared.config import get_settings
-from shared.identity_client import get_vision_tier as fetch_vision_tier_http
+from shared.identity_client import (
+    get_image_generation_tier as fetch_image_gen_tier_http,
+)
+from shared.identity_client import (
+    get_vision_tier as fetch_vision_tier_http,
+)
+from shared.image_gen_models import default_image_gen_tier
 from shared.openrouter_http import openrouter_json_headers
 from shared.vision_models import (
     default_vision_tier,
@@ -634,6 +640,14 @@ class OrchestratorAgent(BaseAgent):
             # Snapshot background task keys before LLM run to detect new delegations
             _bg_keys_before = set(self._background_tasks.keys())
 
+            img_tier = (ctx.get("image_generation_tier") or "").strip().lower() or None
+            if not img_tier and not is_heartbeat and self.http_client:
+                img_tier = await fetch_image_gen_tier_http(
+                    self.memory_service_url, user_id, client=self.http_client
+                )
+            if not img_tier or img_tier not in ("cheap", "medium", "premium"):
+                img_tier = default_image_gen_tier()
+
             # Run LLM with tool call loop
             response_text, model_used, token_usage = await self._run_llm_with_tools(
                 messages=messages,
@@ -650,6 +664,7 @@ class OrchestratorAgent(BaseAgent):
                     build_heartbeat_tools(resolved_tools) if is_heartbeat else resolved_tools
                 ),
                 between_rounds_delay=between_rounds_delay,
+                image_generation_tier=img_tier,
             )
 
             for k in vision_usage_pre:
@@ -761,6 +776,7 @@ class OrchestratorAgent(BaseAgent):
         override_tools: list[dict] | None = None,
         dispatcher: "ToolDispatcher | None" = None,
         between_rounds_delay: float = 0.0,
+        image_generation_tier: str | None = None,
     ) -> tuple[str, str, dict[str, int]]:
         """
         Call LLM and handle tool calls in a loop until a final text response.
@@ -773,6 +789,7 @@ class OrchestratorAgent(BaseAgent):
         mode: "agent" = all tools; "ask" = safe commands only (whitelist-level)
         override_tools: if set, use exactly these tools instead of mode-based selection
                         (used for heartbeat to pass only workspace_read)
+        image_generation_tier: cheap|medium|premium for ToolDispatcher generate_image (also in tool_context).
         """
         effective_dispatcher = dispatcher or self.tool_dispatcher
         # Attach debug collector to dispatcher so tool events (tool_start/tool_done)
@@ -794,6 +811,8 @@ class OrchestratorAgent(BaseAgent):
             "source": source,
             "mode": mode,
             "model_id": model_id,  # used by delegate_to_agent to preserve model choice
+            "image_generation_tier": image_generation_tier
+            or (default_image_gen_tier() if source != "heartbeat" else None),
         }
         available_tools = override_tools if override_tools is not None else get_tools_for_mode(mode)
 

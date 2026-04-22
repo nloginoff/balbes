@@ -62,7 +62,9 @@ Edit `MEMORY.md` to give the agent persistent facts it should always know:
 ### Diagrams and images (`render_solution`, `generate_image`)
 
 - **`render_solution`** — typeset text, formulas, ASCII/box-drawing in **one** `content` call (local PNG). **Not** for art-style illustrations or landscapes — use **`generate_image`**.
-- **`generate_image`** — default for **any raster image from a description** (illustration, sketch, landscape); OpenRouter [`image_generation`](../../config/providers.yaml). Do **not** use `execute_command` + python/PIL/matplotlib to synthesize images; on whitelist failure call **`generate_image`**, do not invent filenames. See `data/agents/orchestrator/AGENTS.md` (memory repo).
+- **`generate_image`** — default for **any raster image from a description** (illustration, sketch, landscape); OpenRouter, models from [`config/providers.yaml`](../../config/providers.yaml) → **`image_generation_models`** (with fallback to the legacy `image_generation` block). **Model choice:** tool argument `model` (if set) \> per-user **image generation tier** \> YAML `default_tier`. Do **not** use `execute_command` + python/PIL/matplotlib to synthesize images; on whitelist failure call **`generate_image`**, do not invent filenames. See `data/agents/orchestrator/AGENTS.md` (memory repo).
+
+- **Tiers (Telegram + API):** same `cheap` \| `medium` \| `premium` semantics as `/vision`, stored per canonical user. **Telegram:** `/imagemodel`. **Orchestrator JSON:** optional `image_generation_tier` on `POST /api/v1/tasks` (the bot always sends a resolved tier). **Memory:** `GET/PUT /api/v1/users/{id}/image-generation-tier`. Code: [`shared/image_gen_models.py`](../../shared/image_gen_models.py), [`shared/identity_client.py`](../../shared/identity_client.py).
 
 ---
 

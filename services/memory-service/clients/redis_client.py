@@ -1147,3 +1147,23 @@ class RedisClient:
             raise MemoryStorageError("Redis client not connected")
         t = tier.strip().lower()
         await self.client.set(self._vision_tier_key(canonical_user_id), t)
+
+    # =========================================================================
+    # Image generation model tier (per user) — /imagemodel
+    # =========================================================================
+
+    def _image_gen_tier_key(self, canonical_user_id: str) -> str:
+        return f"image_gen_tier:{canonical_user_id}"
+
+    async def get_image_gen_tier(self, canonical_user_id: str) -> str | None:
+        """Return cheap | medium | premium or None if unset (caller uses yaml default)."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        v = await self.client.get(self._image_gen_tier_key(canonical_user_id))
+        return v if v else None
+
+    async def set_image_gen_tier(self, canonical_user_id: str, tier: str) -> None:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        t = tier.strip().lower()
+        await self.client.set(self._image_gen_tier_key(canonical_user_id), t)

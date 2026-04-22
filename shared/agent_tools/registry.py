@@ -2081,6 +2081,7 @@ class ToolDispatcher:
     async def _do_generate_image(self, args: dict[str, Any], context: dict[str, Any]) -> str:
         """Call OpenRouter image generation API; queue PNG/JPEG in outbound attachments."""
         from shared.config import get_settings
+        from shared.image_gen_models import default_image_gen_tier, resolve_image_gen_model_id
         from shared.image_generation import (
             assistant_text_from_message,
             default_image_config_dict,
@@ -2102,7 +2103,12 @@ class ToolDispatcher:
         if not (settings.openrouter_api_key or "").strip():
             return "Error: OpenRouter API key is not set."
 
-        model_arg = (args.get("model") or "").strip() or default_image_model_id()
+        model_arg = (args.get("model") or "").strip()
+        if not model_arg:
+            t = (
+                str(context.get("image_generation_tier") or "")
+            ).strip().lower() or default_image_gen_tier()
+            model_arg = resolve_image_gen_model_id(t) or default_image_model_id()
         model = strip_openrouter_prefix(model_arg)
 
         ic: dict[str, Any] = default_image_config_dict()

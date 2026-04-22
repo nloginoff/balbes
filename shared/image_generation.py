@@ -23,12 +23,28 @@ def image_generation_config() -> dict[str, Any]:
 
 
 def default_image_model_id() -> str:
+    """Prefer `image_generation_models` tiers; else legacy `image_generation.default_model`."""
+    from shared.image_gen_models import (
+        default_image_gen_tier,
+        list_image_gen_tiers,
+        resolve_image_gen_model_id,
+    )
+
+    if list_image_gen_tiers():
+        mid = resolve_image_gen_model_id(default_image_gen_tier())
+        if mid:
+            return mid
     ig = image_generation_config()
     mid = (ig.get("default_model") or "").strip()
     return mid or "openrouter/google/gemini-2.5-flash-image"
 
 
 def image_generation_timeout_seconds() -> float:
+    from shared.image_gen_models import image_gen_models_timeout_seconds
+
+    ovr = image_gen_models_timeout_seconds()
+    if ovr is not None:
+        return ovr
     ig = image_generation_config()
     raw = ig.get("timeout_seconds", 180)
     try:
@@ -38,12 +54,17 @@ def image_generation_timeout_seconds() -> float:
 
 
 def default_image_config_dict() -> dict[str, Any]:
-    """Default OpenRouter `image_config` from YAML (aspect_ratio, image_size, …)."""
+    """Merge legacy `image_generation.image_config` with `image_generation_models.image_config` (latter wins)."""
+    from shared.image_gen_models import default_image_config_from_models
+
+    icm = default_image_config_from_models()
     ig = image_generation_config()
     ic = ig.get("image_config")
-    if not isinstance(ic, dict):
-        return {}
-    return {k: v for k, v in ic.items() if v is not None}
+    legacy: dict[str, Any] = {}
+    if isinstance(ic, dict):
+        legacy = {k: v for k, v in ic.items() if v is not None}
+    merged = {**legacy, **icm}
+    return merged
 
 
 def strip_openrouter_prefix(model_id: str) -> str:
