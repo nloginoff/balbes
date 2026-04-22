@@ -174,7 +174,7 @@ Manual snapshot: [`scripts/backup_memory.sh`](../../scripts/backup_memory.sh).
 
 ## Blogger Agent
 
-The Blogger is a standalone FastAPI service that turns your work into public content. It runs independently from the Orchestrator and is controlled via REST API and Telegram callbacks.
+The Blogger is a standalone FastAPI service that turns your work into public content. It runs independently from the Orchestrator and is controlled via REST API and Telegram callbacks. The **Business Bot private chat** and **HTTP delegate** (`POST /api/v1/agent/execute`) use the same [`ToolDispatcher`](../../shared/agent_tools/registry.py) as the Orchestrator: the tool allowlist is the `agents` entry with **`id: blogger`** in [`config/providers.yaml`](../../config/providers.yaml).
 
 ### What it does
 

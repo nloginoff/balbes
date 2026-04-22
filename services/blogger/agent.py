@@ -16,11 +16,14 @@ from pathlib import Path
 import asyncpg
 import httpx
 
+from shared.agent_manifest import resolve_tools_for_agent_with_manifest
+from shared.agent_tools.registry import ToolDispatcher, build_subagent_tools
 from shared.config import get_settings
 from shared.openrouter_http import openrouter_json_headers
 from shared.telegram_app.memory_namespace import blogger_memory_user_ids_try_order, memory_user_id
+from shared.utils import get_providers_config
 
-from .post_queue import PostQueue, post_content_ru_en
+from .post_queue import PostQueue
 from .publisher import TelegramPublisher
 from .reader import BusinessChatReader, ChatReader, CursorFileReader
 
@@ -94,6 +97,9 @@ class BloggerAgent:
         # business_bot reference (set after construction)
         self.business_bot = None
 
+        # Shared tool dispatcher (same registry as orchestrator; workspace = data/agents/blogger)
+        self._tool_dispatcher: ToolDispatcher | None = None
+
         # Last failure reason for generate_agent_post (for Telegram error messages)
         self._last_post_gen_error: str = ""
 
@@ -107,6 +113,18 @@ class BloggerAgent:
 
     def set_biz_reader(self, reader: BusinessChatReader) -> None:
         self._biz_reader = reader
+
+    def _get_tool_dispatcher(self) -> ToolDispatcher:
+        if self._tool_dispatcher is None:
+            # Orchestrator's AgentWorkspace is the same layout: data/agents/{id}/
+            from services.orchestrator.workspace import AgentWorkspace
+
+            self._tool_dispatcher = ToolDispatcher(
+                workspace=AgentWorkspace("blogger"),
+                http_client=self._get_http(),
+                providers_config=get_providers_config(),
+            )
+        return self._tool_dispatcher
 
     async def _call_llm(self, messages: list[dict], model: str | None = None) -> str:
         """Call OpenRouter LLM. Returns text content."""
@@ -776,175 +794,67 @@ class BloggerAgent:
         self._conversation_model = model
         logger.info("Conversation model set to: %s", model)
 
-    async def handle_owner_message(
+    async def _run_unified_tool_loop(
         self,
+        *,
+        system: str,
+        working: list[dict],
+        model: str,
         owner_id: int,
-        text: str,
+        chat_id: str,
         reply_fn,
-        debug_reply: Callable[[str], Awaitable[None]] | None = None,
+        debug_reply: Callable[[str], Awaitable[None]] | None,
+        debug_on: bool,
+        persist_bbot_assistant: bool,
+        max_rounds: int = 8,
     ) -> None:
         """
-        Handle a free-form message from the owner in private business-bot chat.
-
-        Maintains per-owner conversation history, provides LLM access with
-        a set of blogger tools (list drafts, approve/reject, create post, etc.).
-        Calls reply_fn(text) to send a response back.
+        OpenRouter multi-round loop + shared ToolDispatcher (registry + allowlist
+        for agent id ``blogger`` in providers.yaml), same contract as OrchestratorAgent.
         """
-        # ── system prompt ────────────────────────────────────────────────────
-        identity = _read_workspace_file("IDENTITY.md")
-        soul = _read_workspace_file("SOUL.md")
-        system = (
-            f"{identity}\n\n{soul}\n\n"
-            "Ты общаешься с владельцем проекта в приватном чате.\n"
-            "Отвечай кратко, по делу, на русском языке.\n"
-            "Если нужно — используй доступные инструменты."
-        )
-
-        # ── tool definitions ─────────────────────────────────────────────────
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_drafts",
-                    "description": "Показать список постов в черновиках (статус draft/pending).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "status": {
-                                "type": "string",
-                                "enum": ["draft", "pending", "approved", "published", "rejected"],
-                                "description": "Фильтр по статусу. По умолчанию draft.",
-                            }
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "approve_post",
-                    "description": "Одобрить пост для публикации по его ID.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"post_id": {"type": "string", "description": "UUID поста"}},
-                        "required": ["post_id"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "reject_post",
-                    "description": "Отклонить пост по его ID.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"post_id": {"type": "string", "description": "UUID поста"}},
-                        "required": ["post_id"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "create_post_from_idea",
-                    "description": (
-                        "Сгенерировать и сохранить пост-черновик из идеи/темы от владельца."
-                        " Пост будет отправлен на согласование."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "idea": {
-                                "type": "string",
-                                "description": "Тема или идея для поста (от лица владельца)",
-                            },
-                            "post_type": {
-                                "type": "string",
-                                "enum": ["user", "agent"],
-                                "description": "user — от имени Николая, agent — от имени Балбеса",
-                            },
-                        },
-                        "required": ["idea"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "generate_post_now",
-                    "description": "Немедленно сгенерировать новый пост по последним чатам и файлам.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_business_summary",
-                    "description": "Сгенерировать саммари по бизнес-чатам за последние 24 часа.",
-                    "parameters": {"type": "object", "properties": {}},
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_published_posts",
-                    "description": "Показать последние опубликованные посты.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "limit": {
-                                "type": "integer",
-                                "description": "Количество постов (по умолчанию 5)",
-                            }
-                        },
-                    },
-                },
-            },
-        ]
-
-        # ── chat context from Memory Service ────────────────────────────────
-        chat_id = await self.bbot_get_active_chat(owner_id)
-        model = await self.bbot_get_chat_model(owner_id, chat_id)
-        settings = await self.bbot_get_chat_settings(owner_id, chat_id)
-        debug_on = bool(settings.get("debug", False))
-
-        # save incoming user message to persistent history
-        await self.bbot_save_message(owner_id, chat_id, "user", text)
-
-        # load history (last 40 messages) for context
-        stored = await self.bbot_get_history(owner_id, chat_id)
-        # memory service returns oldest-first; tool messages aren't stored,
-        # so we only have user/assistant roles here
-        history: list[dict] = [
-            {"role": m.get("role", "user"), "content": m.get("content", "")}
-            for m in stored
-            if m.get("role") in ("user", "assistant") and m.get("content")
-        ]
-
-        # ── agentic tool-call loop (max 5 rounds) ────────────────────────────
-        MAX_ROUNDS = 5
-        # working copy for this request (includes in-flight tool messages)
-        working: list[dict] = list(history)
-
         if not (self.api_key or "").strip():
             await reply_fn("⚠️ Не задан OPENROUTER_API_KEY — LLM недоступен.")
             return
 
-        for _round in range(MAX_ROUNDS):
-            # bound context — huge threads break OpenRouter / free models
+        settings = get_settings()
+        resolved = resolve_tools_for_agent_with_manifest("blogger", "agent", get_providers_config())
+        tools = build_subagent_tools(resolved)
+        if not tools:
+            await reply_fn("⚠️ Нет инструментов для агента blogger (проверь config/providers.yaml).")
+            return
+
+        dispatcher = self._get_tool_dispatcher()
+        dispatcher.reset_call_counts()
+
+        http = self._get_http()
+        headers = openrouter_json_headers(settings, api_key=self.api_key)
+        model_id = _normalize_openrouter_model_id(model)
+
+        tool_context: dict = {
+            "user_id": str(owner_id),
+            "chat_id": chat_id,
+            "agent_id": "blogger",
+            "memory_service_url": settings.memory_service_url,
+            "openrouter_api_key": settings.openrouter_api_key,
+            "blogger_service_port": settings.blogger_service_port,
+            "coder_service_port": getattr(settings, "coder_service_port", 8104),
+            "orchestrator_port": settings.orchestrator_port,
+            "mode": "agent",
+            "source": "blogger_service",
+            "model_id": model,
+        }
+
+        for _round in range(max_rounds):
             if len(working) > 28:
                 working = working[-28:]
 
             messages = [{"role": "system", "content": system}] + working
 
-            http = self._get_http()
-            headers = openrouter_json_headers(get_settings(), api_key=self.api_key)
-            model_id = _normalize_openrouter_model_id(model)
-
             if debug_on and debug_reply:
                 await debug_reply(
                     f"⚙️ <b>LLM</b> раунд {_round + 1} → <code>{html.escape(model_id)}</code>"
                 )
+
             payload_tools = {
                 "model": model_id,
                 "messages": messages,
@@ -979,7 +889,6 @@ class BloggerAgent:
                         model_id,
                         detail,
                     )
-                    # second try: many models / keys reject tool_calls on first call
                     resp = await http.post(
                         "https://openrouter.ai/api/v1/chat/completions",
                         headers=headers,
@@ -1011,7 +920,7 @@ class BloggerAgent:
                     await reply_fn("⚠️ Пустой ответ от модели. Попробуй /model и другую модель.")
                     return
             except Exception as exc:
-                logger.exception("handle_owner_message LLM error: %s", exc)
+                logger.exception("blogger unified tool loop LLM error: %s", exc)
                 await reply_fn(f"⚠️ Сеть/LLM: {exc!s:.200}")
                 return
 
@@ -1019,24 +928,22 @@ class BloggerAgent:
             msg = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
 
-            # ── text response ─────────────────────────────────────────────
             if finish_reason != "tool_calls" or not msg.get("tool_calls"):
                 answer = msg.get("content") or ""
                 if answer:
                     working.append({"role": "assistant", "content": answer})
-                    # persist assistant reply
-                    await self.bbot_save_message(owner_id, chat_id, "assistant", answer)
+                    if persist_bbot_assistant:
+                        await self.bbot_save_message(owner_id, chat_id, "assistant", answer)
                     await reply_fn(answer)
                 return
 
-            # ── tool calls (not persisted — only in working context) ──────
             working.append(msg)
 
             for tc in msg.get("tool_calls", []):
                 fn_name = tc.get("function", {}).get("name", "")
                 raw_args = tc.get("function", {}).get("arguments", "{}")
                 try:
-                    args = json.loads(raw_args)
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
                 except Exception:
                     args = {}
 
@@ -1046,9 +953,7 @@ class BloggerAgent:
                         f"🔧 <b>{html.escape(fn_name)}</b> <code>{arg_preview}</code>"
                     )
 
-                tool_result = await self._dispatch_conversation_tool(
-                    fn_name, args, chat_model=model
-                )
+                tool_result = await dispatcher.dispatch(fn_name, args, tool_context)
                 working.append(
                     {
                         "role": "tool",
@@ -1057,122 +962,92 @@ class BloggerAgent:
                     }
                 )
 
-        # fallback if we exhausted rounds
         await reply_fn("Не смог завершить задачу за отведённое количество шагов.")
 
-    async def _dispatch_conversation_tool(
-        self, name: str, args: dict, chat_model: str | None = None
-    ) -> str:
-        """Execute a conversation tool and return string result.
-
-        chat_model — the LLM model currently active in the owner's chat session.
-        Post-generation tools use it so the post is written by the same model
-        the owner has selected for this conversation.
+    async def handle_owner_message(
+        self,
+        owner_id: int,
+        text: str,
+        reply_fn,
+        debug_reply: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
         """
-        post_model = chat_model or self.model
-        try:
-            if name == "list_drafts":
-                status = args.get("status", "draft")
-                posts = await self.queue.list_posts(status=status, limit=10)
-                if not posts:
-                    return f"Нет постов со статусом '{status}'."
-                lines = [f"Посты ({status}), полный текст RU/EN (обрезка при длине):"]
-                for p in posts:
-                    pid = str(p.get("id", ""))
-                    full = await self.queue.get_post(pid)
-                    _title, ru, en = post_content_ru_en(full)
-                    ru_s = (ru or "")[:4000] + ("…" if len(ru or "") > 4000 else "")
-                    en_s = (en or "")[:4000] + ("…" if len(en or "") > 4000 else "")
-                    lines.append(
-                        f"• [{pid[:8]}] {p.get('title', '(без названия)')} "
-                        f"— {p.get('post_type', '')} ({p.get('status', '')})"
-                    )
-                    lines.append(f"  RU:\n{ru_s}\n  EN:\n{en_s}")
-                return "\n".join(lines)
-
-            elif name == "approve_post":
-                post_id = args.get("post_id", "")
-                ok = await self.queue.approve(post_id)
-                return (
-                    f"Пост {post_id[:8]} одобрен."
-                    if ok
-                    else f"Не удалось одобрить пост {post_id[:8]}."
-                )
-
-            elif name == "reject_post":
-                post_id = args.get("post_id", "")
-                ok = await self.queue.reject(post_id)
-                return (
-                    f"Пост {post_id[:8]} отклонён."
-                    if ok
-                    else f"Не удалось отклонить пост {post_id[:8]}."
-                )
-
-            elif name == "create_post_from_idea":
-                idea = args.get("idea", "")
-                post_type = args.get("post_type", "user")
-                system = (
-                    "Ты — AI-блогер Балбес. Напиши пост на основе идеи от владельца.\n"
-                    "Ответь строго в JSON:\n"
-                    '{"title": "...", "content_ru": "...", "content_en": "..."}\n'
-                    "Без markdown-блоков."
-                )
-                raw = await self._call_llm(
-                    _llm_messages(system, f"Идея для поста:\n{idea}"),
-                    model=post_model,
-                )
-                parsed = self._parse_post_json(raw, [f"owner_idea: {idea[:60]}"])
-                if not parsed:
-                    return "Не удалось сгенерировать пост из идеи."
-                parsed["post_type"] = post_type
-                draft_id = await self.create_and_send_draft(parsed, post_type=post_type)
-                return f"Черновик создан и отправлен на согласование. ID: {draft_id[:8] if draft_id else '?'}"
-
-            elif name == "generate_post_now":
-                post = await self.generate_agent_post(model=post_model)
-                if not post:
-                    return "Не нашлось новых материалов для генерации поста."
-                draft_id = await self.create_and_send_draft(post, post_type="agent")
-                return f"Пост сгенерирован и отправлен на согласование. ID: {draft_id[:8] if draft_id else '?'}"
-
-            elif name == "get_business_summary":
-                summary = await self.generate_business_summary()
-                return summary or "Недостаточно бизнес-сообщений для саммари."
-
-            elif name == "get_published_posts":
-                limit = args.get("limit", 5)
-                posts = await self.queue.get_published_posts(limit=limit)
-                if not posts:
-                    return "Нет опубликованных постов."
-                lines = [f"Последние {len(posts)} опубликованных постов:"]
-                for p in posts:
-                    ts = p.get("published_at", "")
-                    lines.append(f"• {p.get('title', '(без названия)')} — {ts}")
-                return "\n".join(lines)
-
-            else:
-                return f"Неизвестный инструмент: {name}"
-
-        except Exception as exc:
-            logger.error("_dispatch_conversation_tool %s error: %s", name, exc)
-            return f"Ошибка при выполнении {name}: {exc}"
-
-    async def execute_delegate_task(self, task: str, user_id: str = "unknown") -> str:
-        """
-        Single LLM response for HTTP delegation from the orchestrator (POST /api/v1/agent/execute).
-        Does not use the business-bot tool loop; answers as the blogger persona from workspace MD.
+        Private business-bot chat: same registry + ToolDispatcher as orchestrator
+        (``tools_allowlist`` for agent ``blogger`` in providers.yaml).
         """
         identity = _read_workspace_file("IDENTITY.md")
         soul = _read_workspace_file("SOUL.md")
         system = (
             f"{identity}\n\n{soul}\n\n"
-            "Задача пришла от главного оркестратора (делегирование). "
-            "Отвечай по существу на русском, в стиле блогера: черновики, посты, каналы, саммари — "
-            "если нужно уточнение, скажи что именно."
+            "Ты общаешься с владельцем проекта в приватном чате бизнес-бота.\n"
+            "Отвечай кратко, по делу, на русском. Используй общие инструменты "
+            "(create_draft, list_drafts, read_chat_history, get_business_summary, веб).\n"
+            "Черновик — через create_draft с content_ru/content_en; материалы — read_chat_history, "
+            "read_cursor_file, read_business_chats. Команда /generate в боте по-прежнему вызывает "
+            "отдельную генерацию по чатам."
         )
-        msgs = _llm_messages(system, task)
-        out = await self._call_llm(msgs, self.model)
-        return (out or "").strip() or "(пустой ответ модели)"
+
+        chat_id = await self.bbot_get_active_chat(owner_id)
+        model = await self.bbot_get_chat_model(owner_id, chat_id)
+        settings = await self.bbot_get_chat_settings(owner_id, chat_id)
+        debug_on = bool(settings.get("debug", False))
+
+        await self.bbot_save_message(owner_id, chat_id, "user", text)
+
+        stored = await self.bbot_get_history(owner_id, chat_id)
+        working: list[dict] = [
+            {"role": m.get("role", "user"), "content": m.get("content", "")}
+            for m in stored
+            if m.get("role") in ("user", "assistant") and m.get("content")
+        ]
+
+        await self._run_unified_tool_loop(
+            system=system,
+            working=working,
+            model=model,
+            owner_id=owner_id,
+            chat_id=chat_id,
+            reply_fn=reply_fn,
+            debug_reply=debug_reply,
+            debug_on=debug_on,
+            persist_bbot_assistant=True,
+        )
+
+    async def execute_delegate_task(self, task: str, user_id: str = "unknown") -> str:
+        """
+        HTTP delegate (POST /api/v1/agent/execute): same tool loop as the business bot.
+        """
+        try:
+            uid = int(str(user_id).strip()) if str(user_id).strip().isdigit() else self.owner_tg_id
+        except (ValueError, TypeError):
+            uid = self.owner_tg_id
+        chat_id = await self.bbot_get_active_chat(uid) or "default"
+        model = await self.bbot_get_chat_model(uid, chat_id)
+        identity = _read_workspace_file("IDENTITY.md")
+        soul = _read_workspace_file("SOUL.md")
+        system = (
+            f"{identity}\n\n{soul}\n\n"
+            "Задача от главного оркестратора (delegate_to_agent / blogger). "
+            "Используй инструменты при необходимости. Отвечай по существу на русском."
+        )
+        working: list[dict] = [{"role": "user", "content": task}]
+        parts: list[str] = []
+
+        async def _collect(t: str) -> None:
+            parts.append(t)
+
+        await self._run_unified_tool_loop(
+            system=system,
+            working=working,
+            model=model,
+            owner_id=uid,
+            chat_id=chat_id,
+            reply_fn=_collect,
+            debug_reply=None,
+            debug_on=False,
+            persist_bbot_assistant=False,
+        )
+        return "\n\n".join(parts).strip() or "(пустой ответ модели)"
 
     async def close(self) -> None:
         if self._http:

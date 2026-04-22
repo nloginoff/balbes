@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Blogger: единый runtime с оркестратором** — приватный чат бизнес-бота и `execute_delegate_task` используют [`ToolDispatcher`](shared/agent_tools/registry.py) + `resolve_tools_for_agent_with_manifest` для агента **`blogger`** (allowlist в [`config/providers.yaml`](config/providers.yaml)); удалён дублирующий inline tool-loop и `_dispatch_conversation_tool` из [`services/blogger/agent.py`](services/blogger/agent.py). Workspace для `workspace_read`/`workspace_write` — [`services/orchestrator/workspace.py`](services/orchestrator/workspace.py) `data/agents/blogger/`.
+
 ### Added
 - **Документация бэклога** — [`docs/ru/TODO.md`](docs/ru/TODO.md): идея «референс-фото + промпт → дорисовка/вариации» (логотип, примеры) для будущей реализации, checklist и ссылки на код.
 

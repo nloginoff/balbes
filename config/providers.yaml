@@ -461,6 +461,35 @@ agents:
         - "file {path}"
         - "stat {path}"
 
+  - id: "blogger"
+    display_name: "Blogger"
+    description: "Черновики постов, каналы, бизнес-контекст (тот же реестр инструментов, что оркестратор)"
+    emoji: "✍️"
+    default_model: "openrouter/moonshotai/kimi-k2.5"
+    fallback_enabled: false
+    token_limits:
+      daily: 50000
+      hourly: 8000
+    # Subset: блог + memory/workspace + веб; без execute_command / delegate / dev-инструментов
+    tools_allowlist:
+      - read_chat_history
+      - read_cursor_file
+      - list_cursor_files
+      - read_business_chats
+      - get_business_summary
+      - create_draft
+      - list_drafts
+      - get_published_posts
+      - schedule_post
+      - set_business_role
+      - workspace_read
+      - workspace_write
+      - save_to_memory
+      - recall_from_memory
+      - web_search
+      - fetch_url
+      - rename_chat
+
 
 # Models available for user selection (shown in /model menu)
 # First entry = default when Memory has no per-chat model_id (see orchestrator _get_model_for_chat).
