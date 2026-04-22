@@ -30,9 +30,17 @@ class TaskCreateRequest(BaseModel):
         default=None,
         description="Override vision tier for this request: cheap | medium | premium",
     )
+    vision_model_id: str | None = Field(
+        default=None,
+        description="Override vision model (openrouter/...); takes precedence over vision_tier",
+    )
     image_generation_tier: str | None = Field(
         default=None,
         description="Override image generation tier for generate_image: cheap | medium | premium",
+    )
+    image_generation_model_id: str | None = Field(
+        default=None,
+        description="Override image generation model id (openrouter/...); takes precedence over tier",
     )
 
 
@@ -65,7 +73,9 @@ async def create_task(req: TaskCreateRequest) -> dict:
                 "bot_id": req.bot_id,
                 "attachments": req.attachments,
                 "vision_tier": req.vision_tier,
+                "vision_model_id": req.vision_model_id,
                 "image_generation_tier": req.image_generation_tier,
+                "image_generation_model_id": req.image_generation_model_id,
             },
         )
         return result

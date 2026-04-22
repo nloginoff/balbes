@@ -277,6 +277,56 @@ async def set_vision_tier(
             await c.aclose()
 
 
+async def get_vision_model_id(
+    memory_service_url: str,
+    canonical_user_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> str | None:
+    """Return openrouter/... vision model id or None."""
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(f"{base}/api/v1/users/{canonical_user_id}/vision-model")
+        if resp.status_code != 200:
+            return None
+        mid = resp.json().get("model_id")
+        return str(mid).strip() if mid else None
+    except Exception as e:
+        logger.debug("get_vision_model_id failed: %s", e)
+        return None
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def set_vision_model_id(
+    memory_service_url: str,
+    canonical_user_id: str,
+    model_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> bool:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.put(
+            f"{base}/api/v1/users/{canonical_user_id}/vision-model",
+            json={"model_id": model_id.strip()},
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        logger.warning("set_vision_model_id failed: %s", e)
+        return False
+    finally:
+        if own_client:
+            await c.aclose()
+
+
 async def get_image_generation_tier(
     memory_service_url: str,
     canonical_user_id: str,
@@ -323,6 +373,56 @@ async def set_image_generation_tier(
         return resp.status_code == 200
     except Exception as e:
         logger.warning("set_image_generation_tier failed: %s", e)
+        return False
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def get_image_generation_model_id(
+    memory_service_url: str,
+    canonical_user_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> str | None:
+    """Return openrouter/... image gen model id or None."""
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.get(f"{base}/api/v1/users/{canonical_user_id}/image-generation-model")
+        if resp.status_code != 200:
+            return None
+        mid = resp.json().get("model_id")
+        return str(mid).strip() if mid else None
+    except Exception as e:
+        logger.debug("get_image_generation_model_id failed: %s", e)
+        return None
+    finally:
+        if own_client:
+            await c.aclose()
+
+
+async def set_image_generation_model_id(
+    memory_service_url: str,
+    canonical_user_id: str,
+    model_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout: float = 10.0,
+) -> bool:
+    base = memory_service_url.rstrip("/")
+    own_client = client is None
+    c = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        resp = await c.put(
+            f"{base}/api/v1/users/{canonical_user_id}/image-generation-model",
+            json={"model_id": model_id.strip()},
+        )
+        return resp.status_code == 200
+    except Exception as e:
+        logger.warning("set_image_generation_model_id failed: %s", e)
         return False
     finally:
         if own_client:

@@ -59,12 +59,22 @@ from shared.agent_execute_contract import delegation_headers
 from shared.agent_manifest import get_delegate_base_url, resolve_tools_for_agent_with_manifest
 from shared.config import get_settings
 from shared.identity_client import (
+    get_image_generation_model_id as fetch_image_gen_model_id_http,
+)
+from shared.identity_client import (
     get_image_generation_tier as fetch_image_gen_tier_http,
+)
+from shared.identity_client import (
+    get_vision_model_id as fetch_vision_model_id_http,
 )
 from shared.identity_client import (
     get_vision_tier as fetch_vision_tier_http,
 )
-from shared.image_gen_models import default_image_gen_tier
+from shared.image_gen_models import (
+    default_image_gen_model_id,
+    default_image_gen_tier,
+    resolve_image_gen_model_id,
+)
 from shared.openrouter_http import openrouter_json_headers
 from shared.vision_models import (
     default_vision_tier,
@@ -568,6 +578,7 @@ class OrchestratorAgent(BaseAgent):
                             attachments=att,
                             user_id=user_id,
                             vision_tier_override=ctx.get("vision_tier"),
+                            vision_model_id_override=ctx.get("vision_model_id"),
                         )
                     except LLMUnavailableError:
                         raise
@@ -640,13 +651,23 @@ class OrchestratorAgent(BaseAgent):
             # Snapshot background task keys before LLM run to detect new delegations
             _bg_keys_before = set(self._background_tasks.keys())
 
-            img_tier = (ctx.get("image_generation_tier") or "").strip().lower() or None
-            if not img_tier and not is_heartbeat and self.http_client:
-                img_tier = await fetch_image_gen_tier_http(
+            raw_img_mid = (ctx.get("image_generation_model_id") or "").strip() or None
+            if not raw_img_mid and not is_heartbeat and self.http_client:
+                raw_img_mid = await fetch_image_gen_model_id_http(
                     self.memory_service_url, user_id, client=self.http_client
                 )
-            if not img_tier or img_tier not in ("cheap", "medium", "premium"):
-                img_tier = default_image_gen_tier()
+            img_tier: str | None = None
+            if raw_img_mid and resolve_image_gen_model_id(raw_img_mid):
+                img_model_id = resolve_image_gen_model_id(raw_img_mid) or raw_img_mid
+            else:
+                img_tier = (ctx.get("image_generation_tier") or "").strip().lower() or None
+                if not img_tier and not is_heartbeat and self.http_client:
+                    img_tier = await fetch_image_gen_tier_http(
+                        self.memory_service_url, user_id, client=self.http_client
+                    )
+                if not img_tier or img_tier not in ("cheap", "medium", "premium"):
+                    img_tier = default_image_gen_tier()
+                img_model_id = resolve_image_gen_model_id(img_tier) or default_image_gen_model_id()
 
             # Run LLM with tool call loop
             response_text, model_used, token_usage = await self._run_llm_with_tools(
@@ -664,6 +685,7 @@ class OrchestratorAgent(BaseAgent):
                     build_heartbeat_tools(resolved_tools) if is_heartbeat else resolved_tools
                 ),
                 between_rounds_delay=between_rounds_delay,
+                image_generation_model_id=img_model_id,
                 image_generation_tier=img_tier,
             )
 
@@ -776,6 +798,7 @@ class OrchestratorAgent(BaseAgent):
         override_tools: list[dict] | None = None,
         dispatcher: "ToolDispatcher | None" = None,
         between_rounds_delay: float = 0.0,
+        image_generation_model_id: str | None = None,
         image_generation_tier: str | None = None,
     ) -> tuple[str, str, dict[str, int]]:
         """
@@ -789,7 +812,8 @@ class OrchestratorAgent(BaseAgent):
         mode: "agent" = all tools; "ask" = safe commands only (whitelist-level)
         override_tools: if set, use exactly these tools instead of mode-based selection
                         (used for heartbeat to pass only workspace_read)
-        image_generation_tier: cheap|medium|premium for ToolDispatcher generate_image (also in tool_context).
+        image_generation_model_id: openrouter/... for generate_image (preferred).
+        image_generation_tier: cheap|medium|premium fallback if model id not set.
         """
         effective_dispatcher = dispatcher or self.tool_dispatcher
         # Attach debug collector to dispatcher so tool events (tool_start/tool_done)
@@ -811,6 +835,7 @@ class OrchestratorAgent(BaseAgent):
             "source": source,
             "mode": mode,
             "model_id": model_id,  # used by delegate_to_agent to preserve model choice
+            "image_generation_model_id": image_generation_model_id,
             "image_generation_tier": image_generation_tier
             or (default_image_gen_tier() if source != "heartbeat" else None),
         }
@@ -1486,6 +1511,7 @@ class OrchestratorAgent(BaseAgent):
         attachments: list[dict[str, Any]],
         user_id: str,
         vision_tier_override: str | None,
+        vision_model_id_override: str | None = None,
     ) -> tuple[str, str, dict[str, int]]:
         """
         Merge file text + optional vision pass into agent description.
@@ -1521,21 +1547,33 @@ class OrchestratorAgent(BaseAgent):
             hist = "\n".join(hist_lines) if hist_lines else base
             return base or "(пустое сообщение)", hist or base, vision_usage
 
-        vision_tier = vision_tier_override
-        if not vision_tier:
-            vision_tier = await fetch_vision_tier_http(
+        vmid = (vision_model_id_override or "").strip() or None
+        if not vmid and self.http_client:
+            vmid = await fetch_vision_model_id_http(
                 self.memory_service_url, user_id, client=self.http_client
             )
-        if not vision_tier:
-            vision_tier = default_vision_tier()
-        vmid = resolve_vision_model_id(vision_tier)
+        vision_tier = vision_tier_override
+        if not vmid:
+            if not vision_tier:
+                vision_tier = await fetch_vision_tier_http(
+                    self.memory_service_url, user_id, client=self.http_client
+                )
+            if not vision_tier:
+                vision_tier = default_vision_tier()
+            vmid = resolve_vision_model_id(vision_tier)
+        else:
+            resolved = resolve_vision_model_id(vmid)
+            if resolved:
+                vmid = resolved
+            if not vision_tier:
+                vision_tier = "custom"
         if not vmid:
             raise RuntimeError("Не настроен vision_models в config/providers.yaml")
         vtext, vu = await self._run_vision_analysis(base, images, vmid, user_id)
         for k in vision_usage:
             vision_usage[k] = vision_usage.get(k, 0) + vu.get(k, 0)
-        agent_text = f"{base}\n\n--- Разбор изображений (vision, tier {vision_tier}) ---\n{vtext}"
-        hist_lines.append(f"[изображения: {len(images)} — vision tier {vision_tier}]")
+        agent_text = f"{base}\n\n--- Разбор изображений (vision, {vmid}) ---\n{vtext}"
+        hist_lines.append(f"[изображения: {len(images)} — vision {vmid}]")
         hist = "\n".join(hist_lines)
         return agent_text, hist, vision_usage
 

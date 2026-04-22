@@ -335,11 +335,13 @@ _background_results → result_text (если завершено)
     {"kind": "file_text", "filename": "notes.txt", "text": "..."}
   ],
   "vision_tier": "cheap",
-  "image_generation_tier": "medium"
+  "vision_model_id": "openrouter/google/gemini-2.5-flash",
+  "image_generation_tier": "medium",
+  "image_generation_model_id": "openrouter/google/gemini-2.5-flash-image"
 }
 ```
 
-Поле **`image_generation_tier`** (`cheap` \| `medium` \| `premium`) — глобальная настройка на пользователя (как `vision` для разбора картинок), не привязана к чату. Модель для инструмента **`generate_image`**: аргумент инструмента `model` (если задан) \> тир из Memory \> `default_tier` в [`config/providers.yaml`](../../config/providers.yaml) → **`image_generation_models`** (с откатом к старому блоку `image_generation`). **Telegram:** команда **`/imagemodel`**. **Memory API:** `GET/PUT /api/v1/users/{id}/image-generation-tier` (тело `{"tier": "cheap"}`), ключ Redis `image_gen_tier:{user_id}`. Реализация: [`shared/image_gen_models.py`](../../shared/image_gen_models.py).
+Поля **`vision_model_id`** и **`image_generation_model_id`** — полный id модели из allowlist в [`config/providers.yaml`](../../config/providers.yaml) (`vision_models` / `image_generation_models`), приоритетнее **`vision_tier`** / **`image_generation_tier`**. Тиры (`cheap` \| `medium` \| `premium`) в YAML остаются **подсказками по цене** для кнопок; список моделей — плоский (`models:`). **Memory:** `GET/PUT .../vision-model`, `.../image-generation-model` (тело `{"model_id": "openrouter/..."}`); старые эндпоинты `*-tier` поддерживаются. **Telegram:** **`/vision`**, **`/imagemodel`**. Реализация: [`shared/vision_models.py`](../../shared/vision_models.py), [`shared/image_gen_models.py`](../../shared/image_gen_models.py).
 
 Подробнее про вложения и vision — [`docs/ru/ATTACHMENTS.md`](ATTACHMENTS.md).
 

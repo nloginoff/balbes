@@ -2105,10 +2105,14 @@ class ToolDispatcher:
 
         model_arg = (args.get("model") or "").strip()
         if not model_arg:
-            t = (
-                str(context.get("image_generation_tier") or "")
-            ).strip().lower() or default_image_gen_tier()
-            model_arg = resolve_image_gen_model_id(t) or default_image_model_id()
+            mid_ctx = (str(context.get("image_generation_model_id") or "")).strip()
+            if mid_ctx and resolve_image_gen_model_id(mid_ctx):
+                model_arg = resolve_image_gen_model_id(mid_ctx) or mid_ctx
+            else:
+                t = (
+                    str(context.get("image_generation_tier") or "")
+                ).strip().lower() or default_image_gen_tier()
+                model_arg = resolve_image_gen_model_id(t) or default_image_model_id()
         model = strip_openrouter_prefix(model_arg)
 
         ic: dict[str, Any] = default_image_config_dict()

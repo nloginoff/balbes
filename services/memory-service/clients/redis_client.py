@@ -1148,6 +1148,21 @@ class RedisClient:
         t = tier.strip().lower()
         await self.client.set(self._vision_tier_key(canonical_user_id), t)
 
+    def _vision_model_id_key(self, canonical_user_id: str) -> str:
+        return f"vision_model_id:{canonical_user_id}"
+
+    async def get_vision_model_id(self, canonical_user_id: str) -> str | None:
+        """Full openrouter/... id or None."""
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        v = await self.client.get(self._vision_model_id_key(canonical_user_id))
+        return v if v else None
+
+    async def set_vision_model_id(self, canonical_user_id: str, model_id: str) -> None:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        await self.client.set(self._vision_model_id_key(canonical_user_id), model_id.strip())
+
     # =========================================================================
     # Image generation model tier (per user) — /imagemodel
     # =========================================================================
@@ -1167,3 +1182,17 @@ class RedisClient:
             raise MemoryStorageError("Redis client not connected")
         t = tier.strip().lower()
         await self.client.set(self._image_gen_tier_key(canonical_user_id), t)
+
+    def _image_gen_model_id_key(self, canonical_user_id: str) -> str:
+        return f"image_gen_model_id:{canonical_user_id}"
+
+    async def get_image_gen_model_id(self, canonical_user_id: str) -> str | None:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        v = await self.client.get(self._image_gen_model_id_key(canonical_user_id))
+        return v if v else None
+
+    async def set_image_gen_model_id(self, canonical_user_id: str, model_id: str) -> None:
+        if not self.client:
+            raise MemoryStorageError("Redis client not connected")
+        await self.client.set(self._image_gen_model_id_key(canonical_user_id), model_id.strip())

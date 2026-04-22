@@ -23,17 +23,11 @@ def image_generation_config() -> dict[str, Any]:
 
 
 def default_image_model_id() -> str:
-    """Prefer `image_generation_models` tiers; else legacy `image_generation.default_model`."""
-    from shared.image_gen_models import (
-        default_image_gen_tier,
-        list_image_gen_tiers,
-        resolve_image_gen_model_id,
-    )
+    """Prefer `image_generation_models` default_model / first row; else legacy block."""
+    from shared.image_gen_models import default_image_gen_model_id, list_image_gen_tiers
 
     if list_image_gen_tiers():
-        mid = resolve_image_gen_model_id(default_image_gen_tier())
-        if mid:
-            return mid
+        return default_image_gen_model_id()
     ig = image_generation_config()
     mid = (ig.get("default_model") or "").strip()
     return mid or "openrouter/google/gemini-2.5-flash-image"

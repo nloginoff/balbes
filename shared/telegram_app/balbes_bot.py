@@ -62,18 +62,27 @@ from shared.config import get_settings
 from shared.document_extract import extract_text_from_bytes
 from shared.identity_client import (
     create_pairing_code,
+    get_image_generation_model_id,
     get_image_generation_tier,
+    get_vision_model_id,
     get_vision_tier,
     redeem_pairing_code,
     resolve_canonical_user_id,
+    set_image_generation_model_id,
     set_image_generation_tier,
+    set_vision_model_id,
     set_vision_tier,
     touch_channel_presence,
 )
 from shared.image_gen_models import (
+    default_image_gen_model_id,
     default_image_gen_tier,
+    format_image_gen_row_caption,
+    image_gen_model_id_display_name,
     image_gen_tier_display_name,
-    list_image_gen_tiers,
+    list_image_gen_models,
+    resolve_image_gen_model_id,
+    same_image_gen_model_id,
 )
 from shared.outbound.mirror import deliver_agent_text_with_mirror, mirror_agent_text_to_secondaries
 from shared.telegram_app.format_outbound import send_reply_html_with_plain_fallback
@@ -82,7 +91,16 @@ from shared.telegram_app.telegram_command_matrix import (
     register_slash_command_handlers,
 )
 from shared.user_media import image_to_data_url_jpeg
-from shared.vision_models import default_vision_tier, list_vision_tiers, vision_tier_display_name
+from shared.vision_models import (
+    default_vision_model_id,
+    default_vision_tier,
+    format_vision_row_caption,
+    list_vision_models,
+    resolve_vision_model_id,
+    same_vision_model_id,
+    vision_model_id_display_name,
+    vision_tier_display_name,
+)
 
 settings = get_settings()
 logger = logging.getLogger("orchestrator.telegram")
@@ -1456,79 +1474,88 @@ class BalbesTelegramBot:
         )
 
     async def cmd_vision(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Global vision tier (cheap / medium / premium) — stored in Memory per user."""
+        """Global vision model — stored in Memory per user; tier/price_hint in yaml as hints."""
         user: User | None = update.effective_user
         if not user:
             return
         mem_uid = await self._memory_user_id(user)
-        current = await get_vision_tier(self.memory_url, mem_uid, client=self._get_http())
-        if not current:
-            current = default_vision_tier()
-        tiers = list_vision_tiers()
-        if not tiers:
+        cur_mid = await get_vision_model_id(self.memory_url, mem_uid, client=self._get_http())
+        if not cur_mid:
+            t = await get_vision_tier(self.memory_url, mem_uid, client=self._get_http())
+            if not t:
+                t = default_vision_tier()
+            cur_mid = resolve_vision_model_id(t) or default_vision_model_id()
+        models = list_vision_models()
+        if not models:
             await update.message.reply_text(
                 "⚠️ Секция `vision_models` не настроена в `config/providers.yaml`."
             )
             return
         buttons: list[list[InlineKeyboardButton]] = []
-        for row in tiers:
-            tier = (row.get("tier") or "").strip().lower()
-            if not tier:
+        for i, row in enumerate(models):
+            mid = (row.get("id") or "").strip()
+            if not mid:
                 continue
-            label = str(row.get("display_name") or tier)
-            mark = "✓ " if tier == current else ""
+            label = format_vision_row_caption(row, max_len=58)
+            mark = "✓ " if same_vision_model_id(mid, cur_mid) else ""
             buttons.append(
                 [
                     InlineKeyboardButton(
                         f"{mark}{label}",
-                        callback_data=f"{CALLBACK_VISION_PREFIX}{tier}",
+                        callback_data=f"{CALLBACK_VISION_PREFIX}{i}",
                     )
                 ]
             )
         if not buttons:
-            await update.message.reply_text("⚠️ Нет доступных tier в конфиге.")
+            await update.message.reply_text("⚠️ Нет моделей в конфиге vision_models.")
             return
+        cur_label = html.escape(vision_model_id_display_name(cur_mid))
         await update.message.reply_text(
-            "🖼 *Качество разбора изображений* (одинаково для всех чатов):\n"
-            f"Сейчас: _{vision_tier_display_name(current)}_",
+            "🖼 <b>Модель разбора изображений</b> (vision, для всех чатов)\n"
+            f"Сейчас: <i>{cur_label}</i>",
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     async def cmd_image_gen(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Global image generation model tier (cheap / medium / premium) — Memory per user."""
+        """Global image generation model — Memory; tier/price_hint in yaml as hints."""
         user: User | None = update.effective_user
         if not user:
             return
         mem_uid = await self._memory_user_id(user)
-        current = await get_image_generation_tier(self.memory_url, mem_uid, client=self._get_http())
-        if not current:
-            current = default_image_gen_tier()
-        tiers = list_image_gen_tiers()
-        if not tiers:
+        cur_mid = await get_image_generation_model_id(
+            self.memory_url, mem_uid, client=self._get_http()
+        )
+        if not cur_mid:
+            t = await get_image_generation_tier(self.memory_url, mem_uid, client=self._get_http())
+            if not t or t not in ("cheap", "medium", "premium"):
+                t = default_image_gen_tier()
+            cur_mid = resolve_image_gen_model_id(t) or default_image_gen_model_id()
+        models = list_image_gen_models()
+        if not models:
             await update.message.reply_text(
                 "⚠️ Секция `image_generation_models` не настроена в `config/providers.yaml`."
             )
             return
         buttons: list[list[InlineKeyboardButton]] = []
-        for row in tiers:
-            tier = (row.get("tier") or "").strip().lower()
-            if not tier:
+        for i, row in enumerate(models):
+            mid = (row.get("id") or "").strip()
+            if not mid:
                 continue
-            label = str(row.get("display_name") or tier)
-            mark = "✓ " if tier == current else ""
+            label = format_image_gen_row_caption(row, max_len=58)
+            mark = "✓ " if same_image_gen_model_id(mid, cur_mid) else ""
             buttons.append(
                 [
                     InlineKeyboardButton(
                         f"{mark}{label}",
-                        callback_data=f"{CALLBACK_IMAGE_GEN_PREFIX}{tier}",
+                        callback_data=f"{CALLBACK_IMAGE_GEN_PREFIX}{i}",
                     )
                 ]
             )
         if not buttons:
-            await update.message.reply_text("⚠️ Нет доступных tier в конфиге.")
+            await update.message.reply_text("⚠️ Нет моделей в конфиге image_generation_models.")
             return
-        cur_label = html.escape(image_gen_tier_display_name(current))
+        cur_label = html.escape(image_gen_model_id_display_name(cur_mid))
         await update.message.reply_text(
             "🎨 <b>Модель генерации картинок</b> (generate_image, для всех чатов)\n"
             f"Сейчас: <i>{cur_label}</i>",
@@ -2333,16 +2360,30 @@ class BalbesTelegramBot:
         data = query.data
         if not data.startswith(CALLBACK_VISION_PREFIX):
             return
-        tier = data[len(CALLBACK_VISION_PREFIX) :].strip().lower()
-        if not tier:
-            return
+        suffix = data[len(CALLBACK_VISION_PREFIX) :].strip()
         mem_uid = await self._memory_user_id(user)
-        ok = await set_vision_tier(self.memory_url, mem_uid, tier, client=self._get_http())
-        label = vision_tier_display_name(tier)
+        models = list_vision_models()
+        ok = False
+        model_id: str | None = None
+        if suffix.isdigit():
+            i = int(suffix)
+            if 0 <= i < len(models):
+                model_id = (models[i].get("id") or "").strip()
+                if model_id:
+                    ok = await set_vision_model_id(
+                        self.memory_url, mem_uid, model_id, client=self._get_http()
+                    )
+        elif suffix in ("cheap", "medium", "premium"):
+            ok = await set_vision_tier(self.memory_url, mem_uid, suffix, client=self._get_http())
+            if ok:
+                model_id = resolve_vision_model_id(suffix) or None
+        label = (
+            vision_model_id_display_name(model_id) if model_id else vision_tier_display_name(suffix)
+        )
         if ok:
             await query.edit_message_text(
-                f"✅ Разбор изображений: *{label}*",
-                parse_mode="Markdown",
+                f"✅ Разбор изображений: {html.escape(label)}",
+                parse_mode="HTML",
             )
         else:
             await query.edit_message_text("❌ Не удалось сохранить настройку (Memory Service).")
@@ -2356,18 +2397,34 @@ class BalbesTelegramBot:
         data = query.data
         if not data.startswith(CALLBACK_IMAGE_GEN_PREFIX):
             return
-        tier = data[len(CALLBACK_IMAGE_GEN_PREFIX) :].strip().lower()
-        if not tier:
-            return
+        suffix = data[len(CALLBACK_IMAGE_GEN_PREFIX) :].strip()
         mem_uid = await self._memory_user_id(user)
-        ok = await set_image_generation_tier(
-            self.memory_url, mem_uid, tier, client=self._get_http()
+        models = list_image_gen_models()
+        ok = False
+        model_id: str | None = None
+        if suffix.isdigit():
+            i = int(suffix)
+            if 0 <= i < len(models):
+                model_id = (models[i].get("id") or "").strip()
+                if model_id:
+                    ok = await set_image_generation_model_id(
+                        self.memory_url, mem_uid, model_id, client=self._get_http()
+                    )
+        elif suffix in ("cheap", "medium", "premium"):
+            ok = await set_image_generation_tier(
+                self.memory_url, mem_uid, suffix, client=self._get_http()
+            )
+            if ok:
+                model_id = resolve_image_gen_model_id(suffix) or None
+        label = (
+            image_gen_model_id_display_name(model_id)
+            if model_id
+            else image_gen_tier_display_name(suffix)
         )
-        label = image_gen_tier_display_name(tier)
         if ok:
             await query.edit_message_text(
-                f"✅ Модель генерации картинок: *{label}*",
-                parse_mode="Markdown",
+                f"✅ Модель генерации: {html.escape(label)}",
+                parse_mode="HTML",
             )
         else:
             await query.edit_message_text("❌ Не удалось сохранить настройку (Memory Service).")
@@ -2824,13 +2881,28 @@ class BalbesTelegramBot:
                     payload["attachments"] = attachments
                 if vision_tier:
                     payload["vision_tier"] = vision_tier
-                # Global tier for generate_image (not tied to vision attachments)
-                _ig_t = await get_image_generation_tier(
+                _v_mid = await get_vision_model_id(
                     self.memory_url, mem_uid, client=self._get_http()
                 )
-                if not _ig_t or _ig_t not in ("cheap", "medium", "premium"):
-                    _ig_t = default_image_gen_tier()
-                payload["image_generation_tier"] = _ig_t
+                if not _v_mid:
+                    _vt = await get_vision_tier(self.memory_url, mem_uid, client=self._get_http())
+                    if not _vt:
+                        _vt = default_vision_tier()
+                    _v_mid = resolve_vision_model_id(_vt) or default_vision_model_id()
+                if _v_mid:
+                    payload["vision_model_id"] = _v_mid
+                _im_mid = await get_image_generation_model_id(
+                    self.memory_url, mem_uid, client=self._get_http()
+                )
+                if not _im_mid:
+                    _igt = await get_image_generation_tier(
+                        self.memory_url, mem_uid, client=self._get_http()
+                    )
+                    if not _igt or _igt not in ("cheap", "medium", "premium"):
+                        _igt = default_image_gen_tier()
+                    _im_mid = resolve_image_gen_model_id(_igt) or default_image_gen_model_id()
+                if _im_mid:
+                    payload["image_generation_model_id"] = _im_mid
 
                 await self._touch_agent_session(
                     mem_uid,

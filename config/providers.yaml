@@ -449,47 +449,58 @@ agents:
 # Models available for user selection (shown in /model menu)
 # First entry = default when Memory has no per-chat model_id (see orchestrator _get_model_for_chat).
 # Sorted by tier after the default: free → cheap → medium → premium
-# Vision models for image analysis (global per user via /vision). Separate from chat model.
+# Vision: глобально на UUID через /vision. Поле `tier` + `price_hint` — подсказки (кнопки в боте).
+# Можно задать `models` (плоский список) или устар. `tiers` (тот же формат строк).
 vision_models:
   default_tier: cheap
+  default_model: "openrouter/google/gemini-2.0-flash-001"
   # Longer than chat: multimodal uploads + upstream latency (504 if too low).
   timeout_seconds: 300
-  tiers:
-    - tier: cheap
-      id: "openrouter/google/gemini-2.0-flash-001"
-      display_name: "👁 Gemini 2.0 Flash (vision, дёшево)"
-      capabilities: [chat, vision]
-    - tier: premium
-      id: "openrouter/openai/gpt-4o"
-      display_name: "👁 GPT-4o (vision)"
-      capabilities: [chat, vision]
-    - tier: medium
-      id: "openrouter/google/gemini-2.5-flash"
-      display_name: "👁 Gemini 2.5 Flash (vision)"
-      capabilities: [chat, vision]
+  models:
+    - id: "openrouter/google/gemini-2.0-flash-001"
+      display_name: "👁 Gemini 2.0 Flash"
+      tier: cheap
+    - id: "openrouter/google/gemini-2.5-flash"
+      display_name: "👁 Gemini 2.5 Flash"
+      tier: medium
+    - id: "openrouter/openai/gpt-4o"
+      display_name: "👁 GPT-4o"
+      tier: premium
+      price_hint: "дороже"
 
 # OpenRouter image generation (chat/completions + modalities, separate from vision input).
 # See https://openrouter.ai/docs/guides/overview/multimodal/image-generation
 # Image models: https://openrouter.ai/collections/image-models
-# Per-user tier via /imagemodel (Memory), same tier names as /vision: cheap | medium | premium.
+# /imagemodel: плоский список; tier / price_hint — подсказка по цене.
 image_generation_models:
   default_tier: cheap
+  default_model: "openrouter/google/gemini-2.5-flash-image"
   timeout_seconds: 180
   image_config:
     aspect_ratio: "4:3"
     image_size: "1K"
-  tiers:
-    - tier: cheap
-      id: "openrouter/google/gemini-2.5-flash-image"
-      display_name: "🖼 Gemini 2.5 Flash Image (быстро, дёшево)"
-    - tier: medium
-      id: "openrouter/black-forest-labs/flux.2-flex"
-      display_name: "🖼 FLUX.2 Flex (текст, детали, сцены)"
-    - tier: premium
-      id: "openrouter/black-forest-labs/flux.2-max"
-      display_name: "🖼 FLUX.2 Max (топ по качеству)"
+  models:
+    - id: "openrouter/bytedance-seed/seedream-4.5"
+      display_name: "🖼 ByteDance Seedream 4.5"
+      tier: cheap
+    - id: "openrouter/sourceful/riverflow-v2-pro"
+      display_name: "🖼 Riverflow V2"
+      tier: cheap
+    - id: "openrouter/openai/gpt-5-image-mini"
+      display_name: "🖼 GPT-5 Image Mini"
+      tier: cheap
+    - id: "openrouter/google/gemini-2.5-flash-image"
+      display_name: "🖼 Gemini 2.5 Flash Image"
+      tier: medium
+    - id: "openrouter/google/gemini-3.1-flash-image-preview"
+      display_name: "🖼 Gemini 3.1 Flash Image (preview)"
+      tier: medium
+    - id: "openrouter/google/gemini-3-pro-image-preview"
+      display_name: "🖼 Gemini 3 Pro Image (preview)"
+      tier: premium
+      price_hint: "дорого"
 
-# Legacy single default (used only if image_generation_models.tiers is empty or resolve fails).
+# Legacy single default (used only if image_generation_models has no list or resolve fails).
 image_generation:
   default_model: "openrouter/google/gemini-2.5-flash-image"
   timeout_seconds: 180
