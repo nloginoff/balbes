@@ -470,6 +470,7 @@ vision_models:
 
 # OpenRouter image generation (chat/completions + modalities, separate from vision input).
 # See https://openrouter.ai/docs/guides/overview/multimodal/image-generation
+# Image models: https://openrouter.ai/collections/image-models
 # Per-user tier via /imagemodel (Memory), same tier names as /vision: cheap | medium | premium.
 image_generation_models:
   default_tier: cheap
@@ -480,13 +481,13 @@ image_generation_models:
   tiers:
     - tier: cheap
       id: "openrouter/google/gemini-2.5-flash-image"
-      display_name: "🖼 Gemini 2.5 Flash Image"
+      display_name: "🖼 Gemini 2.5 Flash Image (быстро, дёшево)"
     - tier: medium
-      id: "openrouter/google/gemini-3-pro-image-preview"
-      display_name: "🖼 Gemini 3 Pro Image (preview)"
+      id: "openrouter/black-forest-labs/flux.2-flex"
+      display_name: "🖼 FLUX.2 Flex (текст, детали, сцены)"
     - tier: premium
-      id: "openrouter/black-forest-labs/flux.2-pro"
-      display_name: "🖼 Flux 2 Pro"
+      id: "openrouter/black-forest-labs/flux.2-max"
+      display_name: "🖼 FLUX.2 Max (топ по качеству)"
 
 # Legacy single default (used only if image_generation_models.tiers is empty or resolve fails).
 image_generation:

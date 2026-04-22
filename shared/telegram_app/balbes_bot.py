@@ -26,6 +26,7 @@ vision quality tier stored in Memory.
 import asyncio
 import base64
 import contextlib
+import html
 import io
 import logging
 import re
@@ -1527,11 +1528,12 @@ class BalbesTelegramBot:
         if not buttons:
             await update.message.reply_text("⚠️ Нет доступных tier в конфиге.")
             return
+        cur_label = html.escape(image_gen_tier_display_name(current))
         await update.message.reply_text(
-            "🎨 *Модель генерации картинок* (generate_image, для всех чатов):\n"
-            f"Сейчас: _{image_gen_tier_display_name(current)}_",
+            "🎨 <b>Модель генерации картинок</b> (generate_image, для всех чатов)\n"
+            f"Сейчас: <i>{cur_label}</i>",
             reply_markup=InlineKeyboardMarkup(buttons),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
 
     async def cmd_agents(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

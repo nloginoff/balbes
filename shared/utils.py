@@ -541,26 +541,52 @@ _providers_config_cache: dict[str, Any] = {}
 def get_providers_config() -> dict[str, Any]:
     """Load and cache config/providers.yaml from the project root.
 
-    Searches upward from this file's location to find the project root
-    (directory containing config/providers.yaml). Result is cached in-process.
+    Prefer the same project root as `shared.config.find_project_root()` (e.g. bot runs
+    with cwd under services/orchestrator). Fall back to walking upward from this file.
+    Result is cached in-process.
     """
     global _providers_config_cache
     if _providers_config_cache:
         return _providers_config_cache
 
+    import logging
+
     import yaml
 
-    # Walk up from shared/ to find project root
-    candidate = Path(__file__).parent
-    for _ in range(4):
+    from shared.config import find_project_root
+
+    log = logging.getLogger(__name__)
+    root = find_project_root()
+    primary = root / "config" / "providers.yaml"
+    if primary.exists():
+        try:
+            with primary.open(encoding="utf-8") as f:
+                _providers_config_cache = yaml.safe_load(f) or {}
+        except Exception as e:
+            log.warning("get_providers_config: failed to read %s: %s", primary, e)
+            _providers_config_cache = {}
+        return _providers_config_cache
+
+    # Fallback: search upward (supports unusual layouts, monorepos)
+    candidate = Path(__file__).resolve().parent
+    for _ in range(12):
         cfg_path = candidate / "config" / "providers.yaml"
         if cfg_path.exists():
             try:
                 with cfg_path.open(encoding="utf-8") as f:
                     _providers_config_cache = yaml.safe_load(f) or {}
-            except Exception:
+            except Exception as e:
+                log.warning("get_providers_config: failed to read %s: %s", cfg_path, e)
                 _providers_config_cache = {}
             return _providers_config_cache
-        candidate = candidate.parent
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
 
+    log.warning(
+        "get_providers_config: config/providers.yaml not found (tried %s and parents of %s)",
+        primary,
+        Path(__file__),
+    )
     return {}

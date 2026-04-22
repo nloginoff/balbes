@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/imagemodel` и `list_image_gen_tiers()`** — [`shared/utils.py`](shared/utils.py) `get_providers_config()` сначала читает `config/providers.yaml` от **корня проекта** ([`find_project_root()`](shared/config.py)), с запасным обходом вверх (до 12 уровней) и `warning` в лог, если файла нет. Ответ бота: **HTML** вместо Markdown для подписи текущего тира (скобки/подчёркивания в названиях моделей не ломают Telegram).
+- **`image_generation_models` в** [`config/providers.yaml`](config/providers.yaml) — тиры **medium** / **premium** переведены на **FLUX.2 Flex** и **FLUX.2 Max** (OpenRouter image collection); **cheap** — **Gemini 2.5 Flash Image** (как дешёвый дефолт). Подобрать другие id можно на [image-models](https://openrouter.ai/collections/image-models).
+
 ### Added
 - **Тиры для генерации картинок (как `/vision`)** — в [`config/providers.yaml`](config/providers.yaml) секция **`image_generation_models`** (дефолтный тир, список `tiers` с `openrouter/...` id). Memory: Redis `image_gen_tier:{user_id}`, `GET/PUT /api/v1/users/{id}/image-generation-tier`; клиент [`shared/identity_client.py`](shared/identity_client.py). Оркестратор: поле **`image_generation_tier`** в `POST /api/v1/tasks`, прокидывается в `tool_context` для `generate_image` ([`services/orchestrator/api/tasks.py`](services/orchestrator/api/tasks.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py)); резолв модели в [`shared/image_gen_models.py`](shared/image_gen_models.py) и [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py). Telegram: **`/imagemodel`**, флаг [`TelegramFeatureFlags.image_gen_command`](shared/agent_manifest.py) ([`shared/telegram_app/balbes_bot.py`](shared/telegram_app/balbes_bot.py)). Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md).
 
