@@ -9,6 +9,7 @@ Also handles evening check-in interviews and business summaries.
 import html
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -794,6 +795,33 @@ class BloggerAgent:
         self._conversation_model = model
         logger.info("Conversation model set to: %s", model)
 
+    def _bbot_trace_enabled(self, memory_debug_flag: bool) -> bool:
+        """Per-chat /debug, env BLOGGER_TELEGRAM_DEBUG_TRACE, or blogger.telegram_debug_trace in YAML."""
+        if memory_debug_flag:
+            return True
+        try:
+            if get_settings().blogger_telegram_debug_trace:
+                return True
+        except Exception:
+            pass
+        try:
+            cfg = get_providers_config() or {}
+            return bool((cfg.get("blogger") or {}).get("telegram_debug_trace", False))
+        except Exception:
+            return False
+
+    async def _bbot_trace_line(
+        self,
+        debug_reply: Callable[[str], Awaitable[None]] | None,
+        line: str,
+    ) -> None:
+        """Trace to Telegram (``debug_reply``) or to logs if reply is None (e.g. HTTP delegate)."""
+        if debug_reply is not None:
+            await debug_reply(line)
+        else:
+            plain = re.sub(r"<[^>]+>", " ", line)
+            logger.info("bbot trace: %s", plain[:3000])
+
     async def _run_unified_tool_loop(
         self,
         *,
@@ -844,15 +872,27 @@ class BloggerAgent:
             "model_id": model,
         }
 
+        trace = bool(debug_on)
+        if trace:
+            await self._bbot_trace_line(
+                debug_reply,
+                f"🧩 <b>bbot trace on</b> · tools={len(tools)} · <code>agent_id=blogger</code>",
+            )
+            logger.info(
+                "blogger bbot trace: tools=%d owner_id=%s chat_id=%s", len(tools), owner_id, chat_id
+            )
+
         for _round in range(max_rounds):
             if len(working) > 28:
                 working = working[-28:]
 
             messages = [{"role": "system", "content": system}] + working
 
-            if debug_on and debug_reply:
-                await debug_reply(
-                    f"⚙️ <b>LLM</b> раунд {_round + 1} → <code>{html.escape(model_id)}</code>"
+            if trace:
+                await self._bbot_trace_line(
+                    debug_reply,
+                    f"⚙️ <b>LLM</b> раунд {_round + 1}/{max_rounds} → "
+                    f"<code>{html.escape(model_id)}</code> · msg={len(messages)}",
                 )
 
             payload_tools = {
@@ -870,6 +910,7 @@ class BloggerAgent:
                 "temperature": 0.7,
             }
 
+            retried_without_tools = False
             try:
                 resp = await http.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -889,6 +930,12 @@ class BloggerAgent:
                         model_id,
                         detail,
                     )
+                    if trace:
+                        await self._bbot_trace_line(
+                            debug_reply,
+                            f"↩️ <b>retry</b> без tools (первый ответ HTTP {resp.status_code})",
+                        )
+                    retried_without_tools = True
                     resp = await http.post(
                         "https://openrouter.ai/api/v1/chat/completions",
                         headers=headers,
@@ -924,9 +971,42 @@ class BloggerAgent:
                 await reply_fn(f"⚠️ Сеть/LLM: {exc!s:.200}")
                 return
 
+            if trace:
+                usage = data.get("usage") or {}
+                if isinstance(usage, dict) and any(
+                    usage.get(k) for k in ("prompt_tokens", "completion_tokens", "total_tokens")
+                ):
+                    pt = usage.get("prompt_tokens", "?")
+                    ct = usage.get("completion_tokens", "?")
+                    tt = usage.get("total_tokens", "?")
+                    await self._bbot_trace_line(
+                        debug_reply,
+                        f"📊 <b>usage</b> prompt={pt} completion={ct} total={tt}",
+                    )
+                else:
+                    await self._bbot_trace_line(
+                        debug_reply,
+                        "📊 <b>usage</b> (нет в ответе)",
+                    )
+
             choice = data.get("choices", [{}])[0]
             msg = choice.get("message", {})
             finish_reason = choice.get("finish_reason", "stop")
+
+            if trace:
+                n_tc = len(msg.get("tool_calls") or [])
+                await self._bbot_trace_line(
+                    debug_reply,
+                    f"✳️ <b>finish</b> <code>{html.escape(str(finish_reason))}</code> · "
+                    f"tool_calls={n_tc}"
+                    + (f" · plain_retry={retried_without_tools}" if retried_without_tools else ""),
+                )
+                logger.info(
+                    "blogger bbot round %s finish=%s tool_calls=%s",
+                    _round + 1,
+                    finish_reason,
+                    n_tc,
+                )
 
             if finish_reason != "tool_calls" or not msg.get("tool_calls"):
                 answer = msg.get("content") or ""
@@ -947,13 +1027,29 @@ class BloggerAgent:
                 except Exception:
                     args = {}
 
-                if debug_on and debug_reply:
-                    arg_preview = html.escape(json.dumps(args, ensure_ascii=False)[:400])
-                    await debug_reply(
-                        f"🔧 <b>{html.escape(fn_name)}</b> <code>{arg_preview}</code>"
+                if trace:
+                    arg_preview = html.escape(json.dumps(args, ensure_ascii=False)[:600])
+                    await self._bbot_trace_line(
+                        debug_reply,
+                        f"🔧 <b>{html.escape(fn_name)}</b> <code>{arg_preview}</code>",
                     )
 
                 tool_result = await dispatcher.dispatch(fn_name, args, tool_context)
+                if trace:
+                    tr = str(tool_result)
+                    max_prev = 2000
+                    if len(tr) > max_prev:
+                        tr = tr[:max_prev] + "…"
+                    safe = html.escape(tr, quote=True)
+                    await self._bbot_trace_line(
+                        debug_reply,
+                        f"📤 <b>→ {html.escape(fn_name)}</b>\n<pre>{safe}</pre>",
+                    )
+                    logger.info(
+                        "blogger bbot tool_done name=%s result_len=%s",
+                        fn_name,
+                        len(str(tool_result)),
+                    )
                 working.append(
                     {
                         "role": "tool",
@@ -993,7 +1089,7 @@ class BloggerAgent:
         chat_id = await self.bbot_get_active_chat(owner_id)
         model = await self.bbot_get_chat_model(owner_id, chat_id)
         settings = await self.bbot_get_chat_settings(owner_id, chat_id)
-        debug_on = bool(settings.get("debug", False))
+        debug_on = self._bbot_trace_enabled(bool(settings.get("debug", False)))
 
         await self.bbot_save_message(owner_id, chat_id, "user", text)
 
@@ -1047,7 +1143,7 @@ class BloggerAgent:
             chat_id=chat_id,
             reply_fn=_collect,
             debug_reply=None,
-            debug_on=False,
+            debug_on=self._bbot_trace_enabled(False),
             persist_bbot_assistant=False,
         )
         return "\n\n".join(parts).strip() or "(пустой ответ модели)"

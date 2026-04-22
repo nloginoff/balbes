@@ -252,7 +252,9 @@ class BusinessBot:
             await update.message.reply_text(
                 "🔍 *Debug включён*\n"
                 "— голос: этапы скачивание → Whisper → постобработка\n"
-                "— текст: раунды LLM и вызовы инструментов\n\n"
+                "— текст: раунды LLM и вызовы инструментов (аргументы, ответы tools)\n\n"
+                "Без /debug: можно принудительно с env `BLOGGER_TELEGRAM_DEBUG_TRACE=1` "
+                "или `blogger.telegram\\_debug\\_trace: true` в `config/providers.yaml`.\n\n"
                 "Отключить: /debug",
                 parse_mode="Markdown",
             )

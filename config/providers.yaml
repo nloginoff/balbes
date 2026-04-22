@@ -887,3 +887,5 @@ blogger:
   business:
     summary_hours: 24          # Hours of business messages to include in summary
     min_messages_for_summary: 10  # Minimum messages before generating summary
+  # If true: same as BLOGGER_TELEGRAM_DEBUG_TRACE — всегда показывать в чате трасс LLM/tools
+  telegram_debug_trace: false

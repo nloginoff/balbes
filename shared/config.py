@@ -483,6 +483,16 @@ class Settings(BaseSettings):
     blogger_channel_personal: str | None = Field(
         default=None, description="Telegram channel ID for personal blog posts"
     )
+    blogger_telegram_debug_trace: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "BLOGGER_TELEGRAM_DEBUG_TRACE", "blogger_telegram_debug_trace"
+        ),
+        description=(
+            "If true, business bot shows LLM rounds, tool args and result previews in Telegram "
+            "without toggling /debug (for development)"
+        ),
+    )
 
     # =============================================================================
     # Optional
