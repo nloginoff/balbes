@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Чат: gpt-oss-120b, gpt-5.4-nano** — в [`config/providers.yaml`](config/providers.yaml) в **`providers.openrouter.models`** и в списке **`active_models`** (кнопки `/model`) добавлены **openai/gpt-oss-120b** (cheap) и **openai/gpt-5.4-nano** (medium).
+
 ### Changed
 - **`render_chart` (гипербола и пустой series)** — для **line** при отрезке между соседними точками со **сменой знака x** через 0 и **очень большим** |Δy/Δx| вставляется разрыв (`nan`), чтобы не рисовался «мост» через асимптоту **1/x**. Разрешён вызов только с **`points`** (без `series`), чтобы не зацикливать ошибку «empty series». См. [`shared/chart_render.py`](shared/chart_render.py).
 
