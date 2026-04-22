@@ -785,7 +785,10 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                 "properties": {
                     "post_id": {
                         "type": "string",
-                        "description": "UUID of the approved post.",
+                        "description": (
+                            "Post id: full UUID or the same 8-character prefix as in list_drafts "
+                            "and /draft. Post must already be in approved state."
+                        ),
                     },
                     "publish_at": {
                         "type": "string",

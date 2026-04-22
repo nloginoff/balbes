@@ -18,6 +18,16 @@ logger = logging.getLogger("blogger.api.posts")
 router = APIRouter(prefix="/api/v1/posts", tags=["posts"])
 
 
+def _parse_publish_at_iso(value: str):
+    """Parse ISO 8601; accepts trailing ``Z`` (Python fromisoformat may not)."""
+    from datetime import datetime
+
+    t = (value or "").strip()
+    if t.endswith("Z"):
+        t = t[:-1] + "+00:00"
+    return datetime.fromisoformat(t)
+
+
 # These are set by main.py after service startup
 _queue = None
 _agent = None
@@ -53,6 +63,14 @@ class ScheduleRequest(BaseModel):
     publish_at: str  # ISO datetime string
 
 
+async def _require_resolved_post_id(raw: str) -> str:
+    """Map path segment to full post UUID; 400 on invalid or ambiguous id."""
+    resolved, err = await _queue.resolve_post_id(raw)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return resolved
+
+
 # =========================================================================
 # Endpoints
 # =========================================================================
@@ -68,7 +86,8 @@ async def list_posts(status: str | None = None, limit: int = 20):
 @router.get("/{post_id}")
 async def get_post(post_id: str):
     """Get a single post by ID."""
-    post = await _queue.get_post(post_id)
+    rid = await _require_resolved_post_id(post_id)
+    post = await _queue.get_post(rid)
     if not post:
         raise HTTPException(status_code=404, detail="Post not found")
     return _serialize_post(post)
@@ -80,29 +99,31 @@ async def approve_post(post_id: str):
     Approve a pending post — moves it to the publish queue.
     Called by telegram_bot callback handler.
     """
-    ok = await _queue.approve(post_id)
+    rid = await _require_resolved_post_id(post_id)
+    ok = await _queue.approve(rid)
     if not ok:
         raise HTTPException(
             status_code=400, detail="Post not found or not in pending_approval state"
         )
 
     # For agent posts: assign to appropriate channels automatically
-    post = await _queue.get_post(post_id)
+    post = await _queue.get_post(rid)
     if post and not post.get("channel_id"):
-        await _assign_channels(post_id, post.get("post_type", "agent"))
+        await _assign_channels(rid, post.get("post_type", "agent"))
 
-    logger.info("Post %s approved", post_id)
-    return {"status": "approved", "post_id": post_id}
+    logger.info("Post %s approved", rid)
+    return {"status": "approved", "post_id": rid}
 
 
 @router.post("/{post_id}/reject")
 async def reject_post(post_id: str):
     """Reject a pending post."""
-    ok = await _queue.reject(post_id)
+    rid = await _require_resolved_post_id(post_id)
+    ok = await _queue.reject(rid)
     if not ok:
         raise HTTPException(status_code=400, detail="Post not found")
-    logger.info("Post %s rejected", post_id)
-    return {"status": "rejected", "post_id": post_id}
+    logger.info("Post %s rejected", rid)
+    return {"status": "rejected", "post_id": rid}
 
 
 @router.post("/{post_id}/revise")
@@ -111,9 +132,10 @@ async def revise_post(post_id: str, body: ReviseRequest):
     Trigger post revision by the agent.
     Called when owner clicks 'Edit' and then sends instructions.
     """
+    rid = await _require_resolved_post_id(post_id)
     owner_id = body.owner_chat_id or _agent.owner_tg_id
-    await _agent.handle_edit_instruction(owner_id, post_id, body.instruction)
-    return {"status": "revision_started", "post_id": post_id}
+    await _agent.handle_edit_instruction(owner_id, rid, body.instruction)
+    return {"status": "revision_started", "post_id": rid}
 
 
 @router.post("/generate")
@@ -138,17 +160,19 @@ async def generate_post(body: GenerateRequest):
 @router.post("/{post_id}/schedule")
 async def schedule_post(post_id: str, body: ScheduleRequest):
     """Schedule an approved post for publishing at a specific time."""
-    from datetime import datetime
-
+    rid = await _require_resolved_post_id(post_id)
     try:
-        publish_at = datetime.fromisoformat(body.publish_at)
+        publish_at = _parse_publish_at_iso(body.publish_at)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid publish_at datetime format")
+        raise HTTPException(status_code=400, detail="Invalid publish_at datetime format") from None
 
-    ok = await _queue.schedule(post_id, publish_at)
+    ok = await _queue.schedule(rid, publish_at)
     if not ok:
-        raise HTTPException(status_code=400, detail="Post not found or not approved")
-    return {"status": "scheduled", "post_id": post_id, "publish_at": body.publish_at}
+        raise HTTPException(
+            status_code=400,
+            detail="Post not found or not in approved state; approve the post first",
+        )
+    return {"status": "scheduled", "post_id": rid, "publish_at": body.publish_at}
 
 
 # =========================================================================
@@ -159,9 +183,10 @@ async def schedule_post(post_id: str, body: ScheduleRequest):
 @router.post("/edit-mode/{post_id}")
 async def set_edit_mode(post_id: str, owner_chat_id: int):
     """Set business_bot into edit-waiting mode for a specific post."""
+    rid = await _require_resolved_post_id(post_id)
     if _business_bot:
-        _business_bot.set_waiting_edit(owner_chat_id, post_id)
-    return {"status": "waiting_edit", "post_id": post_id}
+        _business_bot.set_waiting_edit(owner_chat_id, rid)
+    return {"status": "waiting_edit", "post_id": rid}
 
 
 @router.post("/create")

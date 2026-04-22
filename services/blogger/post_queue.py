@@ -7,6 +7,7 @@ Enforces a daily publishing quota (default: 3 posts/day).
 
 import json
 import logging
+import re
 import uuid
 from datetime import datetime
 
@@ -73,6 +74,43 @@ class PostQueue:
         )
         logger.info("Created draft post %s (type=%s)", post_id, post_type)
         return post_id
+
+    async def resolve_post_id(self, post_id: str) -> tuple[str | None, str | None]:
+        """
+        Normalize path param to the full UUID string used in ``blog_posts``.
+
+        Accepts full UUID or the first 8 hex characters (as in /draft listings).
+        Returns ``(resolved_id, None)`` or ``(None, error_message)`` for HTTP 400.
+        """
+        raw = (post_id or "").strip()
+        if not raw:
+            return None, "post_id is empty"
+        if len(raw) == 8 and re.fullmatch(r"[0-9a-fA-F]{8}", raw):
+            pfx = raw.lower()
+            rows = await self.db.fetch(
+                """
+                SELECT id FROM blog_posts
+                WHERE LOWER(id::text) LIKE $1 || '%'
+                LIMIT 3
+                """,
+                pfx,
+            )
+            if not rows:
+                return None, "Post not found for this id prefix"
+            if len(rows) > 1:
+                return (
+                    None,
+                    "Ambiguous id prefix: several posts match; use the full post_id from list_drafts",
+                )
+            return str(rows[0]["id"]), None
+        try:
+            uid = uuid.UUID(raw)
+        except (ValueError, TypeError):
+            return None, "post_id must be a full UUID or an 8-character hex id prefix"
+        row = await self.db.fetchrow("SELECT id FROM blog_posts WHERE id = $1", uid)
+        if not row:
+            return None, "Post not found"
+        return str(row["id"]), None
 
     async def get_post(self, post_id: str) -> dict | None:
         """Fetch a single post by ID."""

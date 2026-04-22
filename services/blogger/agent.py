@@ -32,6 +32,8 @@ logger = logging.getLogger("blogger.agent")
 
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
 _WORKSPACE = _PROJECT_ROOT / "data" / "agents" / "blogger"
+# Shipped defaults (git-tracked). ``data/agents/blogger/`` (often memory sub-repo) overrides per file.
+_BBOT_DEFAULTS = Path(__file__).parent / "bbot_bootstrap"
 
 _DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.5"
 _CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct"
@@ -40,6 +42,44 @@ _CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct"
 def _read_workspace_file(name: str) -> str:
     p = _WORKSPACE / name
     return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+def _load_bbot_system_prompt_merged() -> str:
+    """
+    Same bootstrap file order as ``AgentWorkspace``; each file: prefer ``data/agents/blogger``,
+    else ``bbot_bootstrap/`` in the service package.
+    """
+    from services.orchestrator.workspace import BOOTSTRAP_FILES, MAX_FILE_CHARS, MAX_TOTAL_CHARS
+
+    parts: list[str] = []
+    total_chars = 0
+    for filename in BOOTSTRAP_FILES:
+        text = ""
+        for base in (_WORKSPACE, _BBOT_DEFAULTS):
+            path = base / filename
+            if not path.exists():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                logger.warning("bbot bootstrap: %s: %s", path, exc)
+                text = ""
+            if text:
+                break
+        if not text:
+            continue
+        if len(text) > MAX_FILE_CHARS:
+            text = text[:MAX_FILE_CHARS] + "\n\n[... truncated ...]"
+        if total_chars + len(text) > MAX_TOTAL_CHARS:
+            logger.warning("bbot bootstrap: total char cap, stopping at %s", filename)
+            break
+        parts.append(text)
+        total_chars += len(text)
+    if parts:
+        return "\n\n---\n\n".join(parts)
+    from services.orchestrator.workspace import AgentWorkspace
+
+    return AgentWorkspace("blogger").load().system_prompt
 
 
 def _llm_messages(system: str, user: str) -> list[dict]:
@@ -100,6 +140,8 @@ class BloggerAgent:
 
         # Shared tool dispatcher (same registry as orchestrator; workspace = data/agents/blogger)
         self._tool_dispatcher: ToolDispatcher | None = None
+        self._blogger_agent_workspace: object | None = None
+        self._bbot_system_prompt_cache: str | None = None
 
         # Last failure reason for generate_agent_post (for Telegram error messages)
         self._last_post_gen_error: str = ""
@@ -115,13 +157,28 @@ class BloggerAgent:
     def set_biz_reader(self, reader: BusinessChatReader) -> None:
         self._biz_reader = reader
 
-    def _get_tool_dispatcher(self) -> ToolDispatcher:
-        if self._tool_dispatcher is None:
-            # Orchestrator's AgentWorkspace is the same layout: data/agents/{id}/
+    def _blogger_workspace(self):
+        """Single ``data/agents/blogger`` workspace (tools + LLM system prompt)."""
+        if self._blogger_agent_workspace is None:
             from services.orchestrator.workspace import AgentWorkspace
 
+            self._blogger_agent_workspace = AgentWorkspace("blogger")
+        return self._blogger_agent_workspace
+
+    def _get_bbot_system_prompt(self) -> str:
+        """
+        Bootstrap like ``AgentWorkspace``; ``data/agents/blogger`` overrides shipped
+        ``services/blogger/bbot_bootstrap`` per file. Cached per process; restart to reload.
+        """
+        if self._bbot_system_prompt_cache is not None:
+            return self._bbot_system_prompt_cache
+        self._bbot_system_prompt_cache = _load_bbot_system_prompt_merged()
+        return self._bbot_system_prompt_cache
+
+    def _get_tool_dispatcher(self) -> ToolDispatcher:
+        if self._tool_dispatcher is None:
             self._tool_dispatcher = ToolDispatcher(
-                workspace=AgentWorkspace("blogger"),
+                workspace=self._blogger_workspace(),
                 http_client=self._get_http(),
                 providers_config=get_providers_config(),
             )
@@ -1071,20 +1128,7 @@ class BloggerAgent:
         Private business-bot chat: same registry + ToolDispatcher as orchestrator
         (``tools_allowlist`` for agent ``blogger`` in providers.yaml).
         """
-        identity = _read_workspace_file("IDENTITY.md")
-        soul = _read_workspace_file("SOUL.md")
-        system = (
-            f"{identity}\n\n{soul}\n\n"
-            "Ты общаешься с владельцем проекта в приватном чате бизнес-бота.\n"
-            "Отвечай кратко, по делу, на русском. Используй общие инструменты "
-            "(create_draft, list_drafts, read_chat_history, get_business_summary, веб).\n"
-            "Если просят показать черновики, полные тексты или «что на одобрении» — **обязательно** "
-            "вызови list_drafts: он возвращает полные RU/EN (не придумывай, что «нет такой функции»).\n"
-            "Пользователь может также **/drafts** и **/draft <8_символов_id>** — то же, без LLM. "
-            "Согласование постов: превью с кнопками в **основном** боте (не в бизнес-боте).\n"
-            "Черновик — create_draft; материалы — read_chat_history, read_cursor_file. "
-            "/generate — отдельная генерация по чатам."
-        )
+        system = self._get_bbot_system_prompt()
 
         chat_id = await self.bbot_get_active_chat(owner_id)
         model = await self.bbot_get_chat_model(owner_id, chat_id)
@@ -1122,13 +1166,7 @@ class BloggerAgent:
             uid = self.owner_tg_id
         chat_id = await self.bbot_get_active_chat(uid) or "default"
         model = await self.bbot_get_chat_model(uid, chat_id)
-        identity = _read_workspace_file("IDENTITY.md")
-        soul = _read_workspace_file("SOUL.md")
-        system = (
-            f"{identity}\n\n{soul}\n\n"
-            "Задача от главного оркестратора (delegate_to_agent / blogger). "
-            "Используй инструменты при необходимости. Отвечай по существу на русском."
-        )
+        system = self._get_bbot_system_prompt()
         working: list[dict] = [{"role": "user", "content": task}]
         parts: list[str] = []
 

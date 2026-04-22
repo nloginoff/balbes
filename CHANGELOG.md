@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Blogger: system prompt из workspace** — личка бизнес-бота и `execute_delegate_task` используют тот же порядок bootstrap-файлов, что [`AgentWorkspace`](services/orchestrator/workspace.py): **дефолты** в репо — [`services/blogger/bbot_bootstrap/`](services/blogger/bbot_bootstrap/); по файлам накрывается [`data/agents/blogger/`](data/agents/blogger/) при наличии. Зашитые абзацы убраны из [`services/blogger/agent.py`](services/blogger/agent.py). Перезапуск подхватывает md.
+- **Blogger API `POST .../schedule` и пути с `{post_id}`** — принимается **полный UUID** или **8 hex-символов** как в списках; `publish_at` с суффиксом **`Z`**; при несоответствии статуса и невалидном id — **400** с понятным `detail` (см. [`services/blogger/post_queue.py`](services/blogger/post_queue.py), [`services/blogger/api/posts.py`](services/blogger/api/posts.py)). Описание инструмента **`schedule_post`** в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) обновлено.
+
 ### Fixed
 - **`list_drafts` (инструмент блогера)** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) после списка ID запрашивается **GET /api/v1/posts/{id}** для каждого поста: в ответе списка нет поля `content`, поэтому владелец в чате видел заголовки без текстов. Описание инструмента обновлено; system prompt бизнес-бота: явно вызывать `list_drafts` для полных RU/EN. [`/help`](services/blogger/business_bot.py): одобрение — в **основном** боте (кнопки у превью), не в бизнес-боте.
 

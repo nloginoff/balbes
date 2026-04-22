@@ -75,8 +75,9 @@ data/
 !data/redis/.gitkeep
 !data/rabbitmq/.gitkeep
 !data/qdrant/.gitkeep
-# Agent workspace files live in the PRIVATE memory repo (balbes-memory).
+# Agent workspace files live in the PRIVATE memory repo (balbes-memory), often `data/agents/`.
 # See: bash scripts/setup_memory_repo.sh git@github.com:nloginoff/balbes-memory.git
+# Shipped defaults for blogger LLM bootstrap: services/blogger/bbot_bootstrap/*.md
 
 # Logs
 *.log

@@ -174,7 +174,7 @@ Manual snapshot: [`scripts/backup_memory.sh`](../../scripts/backup_memory.sh).
 
 ## Blogger Agent
 
-The Blogger is a standalone FastAPI service that turns your work into public content. It runs independently from the Orchestrator and is controlled via REST API and Telegram callbacks. The **Business Bot private chat** and **HTTP delegate** (`POST /api/v1/agent/execute`) use the same [`ToolDispatcher`](../../shared/agent_tools/registry.py) as the Orchestrator: the tool allowlist is the `agents` entry with **`id: blogger`** in [`config/providers.yaml`](../../config/providers.yaml).
+The Blogger is a standalone FastAPI service that turns your work into public content. It runs independently from the Orchestrator and is controlled via REST API and Telegram callbacks. The **Business Bot private chat** and **HTTP delegate** (`POST /api/v1/agent/execute`) use the same [`ToolDispatcher`](../../shared/agent_tools/registry.py) as the Orchestrator: the tool allowlist is the `agents` entry with **`id: blogger`** in [`config/providers.yaml`](../../config/providers.yaml). The **system prompt** for those two entry points uses the same bootstrap file order as [`AgentWorkspace`](../../services/orchestrator/workspace.py). Shipped defaults live under [`services/blogger/bbot_bootstrap/`](../../services/blogger/bbot_bootstrap/); files in `data/agents/blogger/` override per filename when present (not from hardcoded Python strings).
 
 ### What it does
 
@@ -189,13 +189,16 @@ The Blogger is a standalone FastAPI service that turns your work into public con
 
 ### Workspace
 
+Shipped defaults (versioned): `services/blogger/bbot_bootstrap/{IDENTITY,SOUL,AGENTS}.md` (optional USER, TOOLS, MEMORY, HEARTBEAT if you add them). Per-deployment overrides: same filenames under `data/agents/blogger/`.
+
 ```
-data/agents/blogger/
-├── IDENTITY.md         ← Blogger persona ("Балбес" for public, "Nikolai" for personal)
-├── SOUL.md             ← Writing style, post structure, topics, prohibitions
-├── INTERVIEW_PROMPTS.md ← Evening check-in question templates
-├── MEMORY.md           ← Accumulated project and business context
-└── config.yaml         ← LLM model, token limits
+data/agents/blogger/   (overrides; often from private memory clone)
+├── IDENTITY.md
+├── SOUL.md
+├── AGENTS.md
+├── INTERVIEW_PROMPTS.md
+├── MEMORY.md
+└── config.yaml
 ```
 
 ### Business Bot (silent observer)
