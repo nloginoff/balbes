@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Документация бэклога** — [`docs/ru/TODO.md`](docs/ru/TODO.md): идея «референс-фото + промпт → дорисовка/вариации» (логотип, примеры) для будущей реализации, checklist и ссылки на код.
+
+### Added
 - **Чат: gpt-oss-120b, gpt-5.4-nano** — в [`config/providers.yaml`](config/providers.yaml) в **`providers.openrouter.models`** и в списке **`active_models`** (кнопки `/model`) добавлены **openai/gpt-oss-120b** (cheap) и **openai/gpt-5.4-nano** (medium).
 
 ### Changed
