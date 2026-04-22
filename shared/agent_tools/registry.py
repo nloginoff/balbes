@@ -2084,6 +2084,7 @@ class ToolDispatcher:
         from shared.config import get_settings
         from shared.image_gen_models import (
             default_image_gen_tier,
+            modalities_for_image_gen_model_id,
             resolve_image_gen_model_id,
             validate_image_gen_model_id,
         )
@@ -2127,6 +2128,7 @@ class ToolDispatcher:
                 ).strip().lower() or default_image_gen_tier()
                 model_arg = resolve_image_gen_model_id(t) or default_image_model_id()
         model = strip_openrouter_prefix(model_arg)
+        modalities = modalities_for_image_gen_model_id(model_arg)
 
         ic: dict[str, Any] = default_image_config_dict()
         if (args.get("aspect_ratio") or "").strip():
@@ -2137,7 +2139,7 @@ class ToolDispatcher:
         payload: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "modalities": ["image", "text"],
+            "modalities": modalities,
         }
         if ic:
             payload["image_config"] = ic

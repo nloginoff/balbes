@@ -7,6 +7,8 @@ from typing import Any
 from shared.utils import get_providers_config
 
 _VALID_TIERS = frozenset({"cheap", "medium", "premium"})
+# OpenRouter: Gemini-style models use image+text; image-only (Sourceful, BFL/Flux) use ["image"].
+_DEFAULT_OUTPUT_MODALITIES: list[str] = ["image", "text"]
 
 
 def image_gen_models_config() -> dict[str, Any]:
@@ -53,6 +55,37 @@ def default_image_gen_model_id() -> str:
         if m:
             return _normalize_id(m)
     return "openrouter/google/gemini-2.5-flash-image"
+
+
+def modalities_for_image_gen_model_id(model_id: str) -> list[str]:
+    """
+    Return OpenRouter `modalities` for chat/completions image generation.
+    Per-row `modalities` in YAML, else `["image", "text"]` (see OpenRouter docs).
+    """
+    if not (model_id or "").strip():
+        return list(_DEFAULT_OUTPUT_MODALITIES)
+    want = _normalize_id(model_id)
+    for row in list_image_gen_models():
+        if _normalize_id((row.get("id") or "").strip()) != want:
+            continue
+        raw = row.get("modalities")
+        if not isinstance(raw, list) or not raw:
+            return list(_DEFAULT_OUTPUT_MODALITIES)
+        out: list[str] = []
+        for x in raw:
+            s = str(x).strip().lower()
+            if s in ("image", "text"):
+                out.append(s)
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for m in out:
+            if m not in seen:
+                seen.add(m)
+                deduped.append(m)
+        if "image" not in deduped:
+            return list(_DEFAULT_OUTPUT_MODALITIES)
+        return deduped
+    return list(_DEFAULT_OUTPUT_MODALITIES)
 
 
 def validate_image_gen_model_id(model_id: str) -> bool:

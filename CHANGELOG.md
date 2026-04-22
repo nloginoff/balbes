@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`sourceful/riverflow-v2-pro` и 404 (OpenRouter)** — id модели верный, но **image-only** моделям (Sourceful, BFL/Flux) нужен `modalities: ["image"]`, а не `["image", "text"]` ([доки OpenRouter](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)). В [`config/providers.yaml`](config/providers.yaml) у строки в **`image_generation_models.models`** опционально поле **`modalities`**; в запросе используется [`modalities_for_image_gen_model_id()`](shared/image_gen_models.py) в [`_do_generate_image`](shared/agent_tools/registry.py) (по умолчанию `["image", "text"]` для Gemini-стиля).
 - **`generate_image` и 404 OpenRouter** — если LLM в аргументе `model` подставлял id **чатовой** модели (например `google/gemini-3-flash-preview`), запрос на `chat/completions` с `modalities: image+text` получал **HTTP 404** («No endpoints found that support…»). Теперь `model` из вызова инструмента принимается **только** если id есть в allowlist `image_generation_models` в [`config/providers.yaml`](config/providers.yaml); иначе подставляется выбор пользователя (`/imagemodel`) и дефолт из YAML. См. [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py).
 
 ### Changed

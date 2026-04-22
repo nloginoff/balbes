@@ -17,7 +17,7 @@
 ### Схемы и изображения (`render_solution`, `generate_image`)
 
 - **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для «иллюстраций», пейзажей и художественного растра — это **`generate_image`**.
-- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Параметр `model` в вызове — только id из этого списка; **нельзя** подставлять id чатовой/vision-модели (OpenRouter ответит 404). Без `model` используется выбор пользователя (`/imagemodel`) и `default_model` в YAML.
+- **`generate_image`** — основной путь для **любой растровой картинки по описанию** (иллюстрация, схема «как нарисовано», пейзаж), см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Параметр `model` в вызове — только id из этого списка; **нельзя** подставлять id чатовой/vision-модели (OpenRouter ответит 404). Без `model` используется выбор пользователя (`/imagemodel`) и `default_model` в YAML. У строки модели опционально **`modalities`**: для image-only (Sourceful, Flux и т.д.) — `["image"]`, иначе по умолчанию `["image", "text"]` (см. OpenRouter image generation).
 - **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — whitelist обычно режет, и это обход вместо инструментов. После отказа — вызывайте **`generate_image`**, не выдумывайте готовый файл. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
 
 ### Архитектура
@@ -241,7 +241,7 @@ _background_results → result_text (если завершено)
 | `cancel_agent_task` | ❌ | ✅* | Отменить фоновую задачу (*то же) |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
 | `render_solution` | ✅ | ✅ | Текст решения с формулами → одна или несколько PNG; рендер на сетке, затем **обрезка** по рамке текста (без лишнего пустого поля внизу/по краям) и умеренный перенос строк, чтобы не вылезать за ширину. Файлы в `outbound_attachments` |
-| `generate_image` | ✅ | ✅ | Растровая картинка по промпту через OpenRouter (`modalities` image+text); иллюстрации и схематичная геометрия. Модель и `image_config` по умолчанию — в [`config/providers.yaml`](../../config/providers.yaml) → `image_generation` |
+| `generate_image` | ✅ | ✅ | Растровая картинка по промпту через OpenRouter; `modalities` из YAML (по умолчанию image+text). Модель и `image_config` — в [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models` |
 
 **Heartbeat** использует только `workspace_read` (минимальный набор для экономии токенов).
 
