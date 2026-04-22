@@ -17,6 +17,16 @@ _FILE_READ_MAX_CHARS = 30_000
 
 logger = logging.getLogger("shared.agent_tools")
 
+
+def _format_render_solution_error(exc: BaseException) -> str:
+    """Return a non-empty Russian error line for tool result and logs (JSONL)."""
+    name = type(exc).__name__
+    body = (str(exc) or "").strip()
+    if not body:
+        body = repr(exc)
+    return f"Ошибка рендера: {name}: {body}"
+
+
 # ---------------------------------------------------------------------------
 # Tool schemas (OpenAI function-calling format)
 # ---------------------------------------------------------------------------
@@ -883,10 +893,13 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
         "function": {
             "name": "render_solution",
             "description": (
-                "Render a complete written solution (text + formulas) as one or more fixed-size PNG "
-                "pages for comfortable reading in chat. Pass the entire solution in one call — do not "
-                "split into many tool calls per formula. Use when the user needs readable math in "
-                "messengers; plain copyable text can still be given in the normal assistant reply."
+                "Render a full written answer as one or more fixed-size PNG pages: plain text, Cyrillic, "
+                "step-by-step reasoning, LaTeX-style formulas, and simple ASCII/Unicode diagrams (box-drawing "
+                "characters, labeled lines) in one canvas. Put everything in **one** call — do not split into "
+                "dozens of calls per line or per formula. Use this when the user should read the result as "
+                "rendered pages in chat. Do **not** delegate to the coder to add Python/matplotlib scripts in "
+                "the repo for the same outcome, and do not use shell `pip`/heredoc to draw — this tool is enough. "
+                "You may still send copyable plain text in the normal reply."
             ),
             "parameters": {
                 "type": "object",
@@ -894,8 +907,9 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "content": {
                         "type": "string",
                         "description": (
-                            "Full solution text: steps, explanations, and LaTeX-style formulas "
-                            "($...$ or lines with \\frac, ^, _). Cyrillic and plain text are supported."
+                            "Single block of text for one render: title, steps, explanations, formulas in $...$ "
+                            "or LaTeX-like lines, and diagram-like ASCII/Unicode lines if needed. Batch the full "
+                            "answer here instead of looping the tool. Cyrillic is supported."
                         ),
                     },
                 },
@@ -1975,11 +1989,9 @@ class ToolDispatcher:
 
         try:
             pages = await asyncio.to_thread(render_solution_pages, content)
-        except ValueError as e:
-            return f"Ошибка рендера: {e}"
         except Exception as e:
-            logger.warning("render_solution failed: %s", e, exc_info=True)
-            return f"Ошибка рендера: {type(e).__name__}: {e}"
+            logger.error("render_solution failed: %s", e, exc_info=True)
+            return _format_render_solution_error(e)
 
         if not pages:
             return "Рендер не дал изображений."

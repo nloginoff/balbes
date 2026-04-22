@@ -14,6 +14,10 @@
 
 ## OrchestratorAgent
 
+### Схемы и PNG (`render_solution`)
+
+Для читаемого вывода с формулами и **текстовыми/ASCII-схемами** используйте **`render_solution`**: весь материал передают **одним** вызовом в `content` (шаги, подписи, box-drawing, формулы в `$...$`). Не вызывайте инструмент десятки раз подряд, не уводите задачу в **coder** ради отдельных Matplotlib-скриптов, если достаточно встроенного рендера, и не пытайтесь рисовать через `execute_command` + `pip`/heredoc. Правила для промпта — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) оркестратора (файл в private memory-репо, см. [`data/agents/`](../../data/agents/)).
+
 ### Архитектура
 
 `OrchestratorAgent` реализован в [`services/orchestrator/agent.py`](../../services/orchestrator/agent.py), наследует [`BaseAgent`](../../shared/agent_base.py) и координирует инструменты, память и задачи.

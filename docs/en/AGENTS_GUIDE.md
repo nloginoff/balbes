@@ -59,6 +59,10 @@ Edit `MEMORY.md` to give the agent persistent facts it should always know:
 - Preferred search: Tavily, fallback to Yandex
 ```
 
+### Diagrams and PNG (`render_solution`)
+
+For math, explanations, and **text or ASCII-style diagrams** as images, use **`render_solution`**: pass **one** `content` string with the full material (steps, labels, box-drawing lines, `$...$` math). Do not call the tool in a tight loop, do not delegate to Coder just to add matplotlib scripts when the built-in renderer is enough, and do not use shell `pip` or heredocs to draw. Match the same rules in `data/agents/orchestrator/AGENTS.md` (private memory clone under `data/agents/`).
+
 ---
 
 ## Coder Agent

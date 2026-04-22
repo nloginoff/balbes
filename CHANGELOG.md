@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **render_solution** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) расширено описание инструмента и параметра `content` (текст + формулы + ASCII/схемы в одном вызове; без лишнего delegate/coder); сообщения об ошибке рендера всегда с типом и непустым телом, с **`logger.error(..., exc_info=True)`** для полной трассировки в логах. Раздел про PNG/схемы: [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md) (копия в private memory-репо) и зеркала в [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md).
+
 ### Added
 - **Документация логов** — [`docs/ru/LOGS.md`](docs/ru/LOGS.md): куда смотреть `logs/prod`, JSONL tools, Memory/Redis, экспорт чатов. Правило Cursor [`.cursor/rules/logs-locations.mdc`](.cursor/rules/logs-locations.mdc). Скрипт [`scripts/export_chats_for_agent.sh`](scripts/export_chats_for_agent.sh) теперь вызывает `.venv/bin/python` или `uv run`, с понятной ошибкой без venv.
 
