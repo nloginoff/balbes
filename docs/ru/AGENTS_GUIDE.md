@@ -17,7 +17,7 @@
 ### Схемы, графики и изображения (`render_solution`, `render_chart`, `render_geometry`, `generate_image`)
 
 - **`render_solution`** — **наборный** текст, формулы, ASCII/box-drawing в **одном** `content` (локальный PNG). Не для осей/числовых графиков — это **`render_chart`**; не для точного чертежа с окружностью — **`render_geometry`**; не для художественного растра — **`generate_image`**.
-- **`render_chart`** — **детерминированные** графики по числам: можно передать **вложенный объект `spec`** *или* те же поля **на верхнем уровне** (`kind`, `series`, `title`, …). `kind`: line, scatter, bar, histogram. Для графиков функций **line**/**scatter** в «школьных» осях: `style: "school"` и/или `axes_origin: true` (сетка, оси через 0), см. [`shared/chart_render.py`](../../shared/chart_render.py).
+- **`render_chart`** — **детерминированные** графики по числам: **`spec`** *или* поля **наверху** (`kind`, `series`, `title`, …). В **line**/**scatter** для «школьного» графика: `style: "school"` / `axes_origin: true`, **`grid_step`** (по умолчанию 1) — шаг **основной** сетки/подписей; ключевые точки (пересечения, вершины) — массив **`points`:** `{ x, y, label?, color? }`, а **не** отдельный `series` из двух точек (так получится **отрезок**). Плавные кривые: много выборок по `x`/`y`; ветки гиперболы и т.п. — **разные** `series`, чтобы линия не тянулась через разрыв. См. [`shared/chart_render.py`](../../shared/chart_render.py).
 - **`render_geometry`** — **детерминированные** чертежи: **`spec`** *или* поля на верхнем уровне (`mode`, `segments`, `vertices`, …). `mode`: `2d` (отрезки, окружности, дуги, подписи точек) или `3d` (вершины + рёбра), см. [`shared/geometry_render.py`](../../shared/geometry_render.py). Для геометрии 7–11 в стиле учебника, когда важны подписи и линии; не нейросеть.
 - **`generate_image`** — растровая картинка по **промпту** через OpenRouter, см. [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models`. Для иллюстраций, когда **`render_geometry`** не подходит (художественная сцена).
 - **Запрещено** генерировать картинки через `execute_command` + `python`/`PIL`/`matplotlib` — используйте инструменты выше. Правила — в [`AGENTS.md`](../../data/agents/orchestrator/AGENTS.md) (memory-репо).
@@ -243,7 +243,7 @@ _background_results → result_text (если завершено)
 | `cancel_agent_task` | ❌ | ✅* | Отменить фоновую задачу (*то же) |
 | `list_agent_tasks` | ✅ | ✅ | Реестр всех задач |
 | `render_solution` | ✅ | ✅ | Текст решения с формулами → одна или несколько PNG; рендер на сетке, затем **обрезка** по рамке текста (без лишнего пустого поля внизу/по краям) и умеренный перенос строк, чтобы не вылезать за ширину. Файлы в `outbound_attachments` |
-| `render_chart` | ✅ | ✅ | Графики line/scatter/bar/histogram: **`spec`** или те же поля **наверху**; для line/scatter — `style: "school"` / `axes_origin` (matplotlib Agg), одна PNG в `outbound_attachments` |
+| `render_chart` | ✅ | ✅ | line/scatter/bar/histogram: **`spec`** / поля **наверху**; школьный: `style: "school"`, `grid_step`, `points` (маркеры). matplotlib Agg, одна PNG в `outbound_attachments` |
 | `render_geometry` | ✅ | ✅ | Чертёж 2d/3d: **`spec`** или поля **наверху** (отрезки, круги, дуги или 3d wireframe), одна PNG в `outbound_attachments` |
 | `generate_image` | ✅ | ✅ | Растровая картинка по промпту через OpenRouter; `modalities` из YAML (по умолчанию image+text). Модель и `image_config` — в [`config/providers.yaml`](../../config/providers.yaml) → `image_generation_models` |
 

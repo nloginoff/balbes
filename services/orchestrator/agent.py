@@ -1433,11 +1433,18 @@ class OrchestratorAgent(BaseAgent):
 
                 # Extract the actual error message from the API response
                 last_error = self._extract_api_error(response, candidate)
-                logger.warning(f"LLM error on {candidate}: {last_error}")
+                body_preview = (response.text or "")[:800]
+                logger.warning(
+                    "LLM error on %s: %s (body: %s)",
+                    candidate,
+                    last_error,
+                    body_preview or "(empty)",
+                )
 
                 # Retriable errors — try next candidate if fallback enabled
                 # 404: model removed from OpenRouter ("No endpoints found") — try next
-                if response.status_code in (404, 429, 500, 502, 503, 504):
+                # 400: provider-side / payload quirks; next model often succeeds (do not stop the chain)
+                if response.status_code in (400, 404, 429, 500, 502, 503, 504):
                     continue
 
                 # Non-retriable error — stop immediately

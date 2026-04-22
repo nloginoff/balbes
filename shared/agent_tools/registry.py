@@ -969,9 +969,11 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                 "Use for analytics, functions as (x,y) points, comparisons — not for freehand geometry art "
                 "(use **render_geometry**) and not for neural illustrations (**generate_image**). "
                 "Pass **`spec`**, **or** the same fields at the **top level** of arguments (kind, series, …) — "
-                "both are accepted. For **function graphs** (school style, axes through origin): set "
-                '**style: "school"** or **axes_origin: true** (line/scatter). Do **not** use '
-                "`execute_command` + python/matplotlib."
+                'both are accepted. **School-style** (line/scatter): **style: "school"** or **axes_origin: true**; '
+                "**grid_step** (default 1) for major grid/tick step; **points** for labeled markers "
+                "(intersections, vertices) — do **not** encode two-point markers as a **series** (that draws a segment). "
+                "For smooth nonlinear plots, use **many** x samples; split separate branches into different **series** "
+                "(e.g. hyperbola so branches do not connect through the gap). Do **not** use `execute_command` + python."
             ),
             "parameters": {
                 "type": "object",
@@ -980,9 +982,10 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                         "type": "object",
                         "description": (
                             "Optional if kind/series (etc.) are at top level. "
-                            "{ kind, title?, xlabel?, ylabel?, grid?, style?, axes_origin? }. "
-                            "line/scatter: series: [{ label, x, y }]. For textbook axes through 0: style: school. "
-                            "bar: categories + values or series + categories. histogram: values, bins?."
+                            "{ kind, title?, xlabel?, ylabel?, grid?, style?, axes_origin?, grid_step?, points? }. "
+                            "line/scatter: series: [{ label, x, y }]; points: [{ x, y, label?, color? }] for markers. "
+                            "School: style: school, grid_step default 1. bar: categories + values or series + categories. "
+                            "histogram: values, bins?."
                         ),
                     },
                     "kind": {

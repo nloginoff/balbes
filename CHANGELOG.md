@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`render_chart` (школьный режим и точки)** — при `style: "school"` / `axes_origin` для line/scatter основные **деления сетки и тиков** задаются шагом **`grid_step`** (по умолчанию **1**), с ограничением плотности тиков (длинный диапазон → более крупный шаг). Отдельно поле **`points`**: `{ x, y, label?, color? }` — маркеры с подписями, не «двухточечный series»-отрезок. **Оркестратор + OpenRouter:** при ошибке `chat/completions` в лог пишется превью тела ответа; **HTTP 400** при переборе кандидатов вызывает переход к **следующей модели** (как 404/5xx), чтобы чаще не обрывать цепочку из‑за сбоев провайдера. См. [`shared/chart_render.py`](shared/chart_render.py), [`services/orchestrator/agent.py`](services/orchestrator/agent.py).
+
+### Changed
 - **`render_chart` / `render_geometry` и плоские аргументы** — если LLM кладёт `kind`/`series`/`mode`/`segments` и т.д. **на верхнем уровне** вызова без вложенного `spec`, оркестратор **собирает spec** по whitelist ([`CHART_SPEC_KEYS`](shared/chart_render.py), [`GEOMETRY_SPEC_KEYS`](shared/geometry_render.py)) в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py). Краткое описание в трейсе (`_summarize_input`) больше не показывает `spec_len=0` при валидном плоском вызове. **Школьный график функции (line/scatter):** `style: "school"` и/или `axes_origin: true` — сетка, оси через ноль, см. [`shared/chart_render.py`](shared/chart_render.py). Тесты: [`tests/unit/test_chart_geometry_render.py`](tests/unit/test_chart_geometry_render.py). Документация: [`docs/ru/AGENTS_GUIDE.md`](docs/ru/AGENTS_GUIDE.md), [`docs/en/AGENTS_GUIDE.md`](docs/en/AGENTS_GUIDE.md), [`data/agents/orchestrator/AGENTS.md`](data/agents/orchestrator/AGENTS.md).
 
 ### Added

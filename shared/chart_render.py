@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 MAX_POINTS_PER_SERIES = 8_000
 MAX_SERIES = 12
 MAX_BINS = 200
+MAX_CHART_LABELED_POINTS = 32
+MAX_MAJOR_TICKS_PER_AXIS = 40
 FIG_W, FIG_H = 9.0, 6.0
 DPI = 120
 
@@ -29,6 +31,8 @@ CHART_SPEC_KEYS = frozenset(
         "bins",
         "style",
         "axes_origin",
+        "grid_step",
+        "points",
     }
 )
 
@@ -41,9 +45,7 @@ def _school_coordinate_style(spec: dict[str, Any]) -> bool:
     st = spec.get("style")
     if isinstance(st, str) and st.strip().lower() == "school":
         return True
-    if spec.get("axes_origin") is True:
-        return True
-    return False
+    return spec.get("axes_origin") is True
 
 
 def _ensure_axis_includes_zero(ax: Any, axis: str) -> None:
@@ -77,6 +79,135 @@ def _finite_list(name: str, raw: Any, max_n: int) -> list[float]:
     return out
 
 
+def _parse_positive_float(name: str, raw: Any, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        v = float(raw)
+    except (TypeError, ValueError) as e:
+        raise ChartRenderError(f"{name} must be a positive number") from e
+    if not math.isfinite(v) or v <= 0:
+        raise ChartRenderError(f"{name} must be a positive finite number")
+    return v
+
+
+def _coerce_axis_step(span: float, base_step: float) -> float:
+    """Pick a major tick step >= base_step so the axis has at most MAX_MAJOR_TICKS_PER_AXIS ticks."""
+    span = max(abs(span), 1e-9)
+    step = max(base_step, 1e-9)
+    while span / step > MAX_MAJOR_TICKS_PER_AXIS + 1e-6:
+        if step < 1.5:
+            step = 2.0
+        elif step < 3.5:
+            step = 5.0
+        elif step < 7.5:
+            step = 10.0
+        else:
+            step *= 2.0
+    return step
+
+
+def _apply_school_grid_and_ticks(ax: Any, spec: dict[str, Any]) -> None:
+    """
+    After limits are set from data (and zero included), force major ticks on a fixed step
+    so the grid matches 'школьная' unit cells instead of matplotlib AutoLocator (2, 5, ...).
+    """
+    from matplotlib.ticker import MultipleLocator, NullLocator
+
+    base = _parse_positive_float("grid_step", spec.get("grid_step"), 1.0)
+
+    xlo, xhi = ax.get_xlim()
+    if xlo > xhi:
+        xlo, xhi = xhi, xlo
+    ylo, yhi = ax.get_ylim()
+    if ylo > yhi:
+        ylo, yhi = yhi, ylo
+
+    xstep = _coerce_axis_step(xhi - xlo, base)
+    ystep = _coerce_axis_step(yhi - ylo, base)
+
+    ax.xaxis.set_major_locator(MultipleLocator(xstep))
+    ax.yaxis.set_major_locator(MultipleLocator(ystep))
+
+    # Finer minor grid inside each major cell when major step is 1
+    if abs(xstep - 1.0) < 1e-6:
+        ax.xaxis.set_minor_locator(MultipleLocator(0.2))
+    else:
+        ax.xaxis.set_minor_locator(NullLocator())
+
+    if abs(ystep - 1.0) < 1e-6:
+        ax.yaxis.set_minor_locator(MultipleLocator(0.2))
+    else:
+        ax.yaxis.set_minor_locator(NullLocator())
+
+    ax.grid(True, which="major", alpha=0.35, linestyle="--", linewidth=0.7, zorder=0)
+    ax.grid(
+        True,
+        which="minor",
+        alpha=0.15,
+        linestyle=":",
+        linewidth=0.45,
+        zorder=0,
+    )
+    ax.tick_params(axis="both", which="major", labelsize=8)
+
+
+def _draw_labeled_points(ax: Any, spec: dict[str, Any]) -> None:
+    """Markers + text for intersections, vertices — not line segments between two coords."""
+    raw = spec.get("points")
+    if raw is None:
+        return
+    if not isinstance(raw, list):
+        raise ChartRenderError("points must be a list")
+    if len(raw) > MAX_CHART_LABELED_POINTS:
+        raise ChartRenderError(f"points: at most {MAX_CHART_LABELED_POINTS} items")
+
+    import matplotlib.pyplot as plt
+
+    cmap = plt.get_cmap("tab10")
+    colors = [cmap(i % 10) for i in range(10)]
+
+    for i, p in enumerate(raw):
+        if not isinstance(p, dict):
+            raise ChartRenderError(f"points[{i}] must be an object")
+        try:
+            px = float(p.get("x"))
+            py = float(p.get("y"))
+        except (TypeError, ValueError) as e:
+            raise ChartRenderError(f"points[{i}].x and .y must be numbers") from e
+        if not math.isfinite(px) or not math.isfinite(py):
+            raise ChartRenderError(f"points[{i}]: coordinates must be finite")
+        col = p.get("color")
+        if isinstance(col, str) and col.strip():
+            mcol: str | None = col.strip()
+        else:
+            mcol = colors[i % len(colors)]
+        lab = p.get("label")
+        label = str(lab).strip() if lab is not None else ""
+        ax.plot(
+            [px],
+            [py],
+            marker="o",
+            ms=7,
+            mew=1.0,
+            mec="#333333",
+            color=mcol,
+            linestyle="None",
+            zorder=4,
+            clip_on=True,
+        )
+        if label:
+            ax.annotate(
+                label,
+                (px, py),
+                xytext=(5, 5),
+                textcoords="offset points",
+                fontsize=8,
+                zorder=4,
+                bbox={"boxstyle": "round,pad=0.15", "fc": "white", "ec": "#cccccc", "alpha": 0.92},
+            )
+
+
 def render_chart_png(spec: dict[str, Any]) -> bytes:
     """
     Build a PNG from `spec`.
@@ -86,8 +217,10 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
       - bar: categories: [...], values: [...] OR series: [{ "label", "values" }] with len = len(categories)
       - histogram: values: [...], optional bins (int)
     Optional: title, xlabel, ylabel, grid (bool).
-    School-style function plots: style: "school" or axes_origin: true — axes through 0, light grid
-    (line/scatter only).
+    School style (line/scatter): **style: "school"** or **axes_origin: true** — axes through 0, major
+    grid with step **grid_step** (default 1). Intersections/vertices: use **points** (markers), not
+    a two-point **series** (that draws a segment). For smooth curves, use many samples in x/y; split
+    branches (e.g. hyperbola) into separate series so segments do not connect across asymptotes.
     """
     if not isinstance(spec, dict):
         raise ChartRenderError("spec must be an object")
@@ -116,7 +249,6 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
         if len(series) > MAX_SERIES:
             raise ChartRenderError(f"at most {MAX_SERIES} series")
         if school:
-            ax.grid(True, alpha=0.35, linestyle="--", linewidth=0.7, zorder=0)
             line_scatter_school = True
         for si, s in enumerate(series):
             if not isinstance(s, dict):
@@ -139,6 +271,8 @@ def render_chart_png(spec: dict[str, Any]) -> bytes:
             _ensure_axis_includes_zero(ax, "y")
             ax.axhline(0, color="#333333", linewidth=1.0, zorder=2)
             ax.axvline(0, color="#333333", linewidth=1.0, zorder=2)
+            _apply_school_grid_and_ticks(ax, spec)
+        _draw_labeled_points(ax, spec)
 
     elif kind == "bar":
         categories = spec.get("categories")

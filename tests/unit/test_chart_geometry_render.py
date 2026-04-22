@@ -3,7 +3,7 @@
 import pytest
 
 from shared.agent_tools.registry import ToolDispatcher, _summarize_input
-from shared.chart_render import render_chart_png
+from shared.chart_render import _coerce_axis_step, render_chart_png
 from shared.geometry_render import GeometryRenderError, render_geometry_png
 
 
@@ -106,6 +106,28 @@ def test_render_chart_line_school_style_png():
         "kind": "line",
         "style": "school",
         "series": [{"label": "y", "x": [-1, 0, 1], "y": [-1, 0, 1]}],
+    }
+    png = render_chart_png(spec)
+    assert len(png) > 200
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_coerce_axis_step_caps_tick_density():
+    assert _coerce_axis_step(20.0, 1.0) == 1.0
+    assert _coerce_axis_step(100.0, 1.0) > 1.0
+    assert _coerce_axis_step(100.0, 1.0) == 5.0
+
+
+def test_render_chart_school_labeled_points():
+    spec = {
+        "kind": "line",
+        "style": "school",
+        "grid_step": 1,
+        "series": [{"label": "f", "x": [-2, 2], "y": [-1, 1]}],
+        "points": [
+            {"x": 0, "y": 0, "label": "O"},
+            {"x": -1, "y": 0.5, "label": "A"},
+        ],
     }
     png = render_chart_png(spec)
     assert len(png) > 200
