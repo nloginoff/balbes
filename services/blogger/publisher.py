@@ -34,9 +34,10 @@ def _split_text(text: str, limit: int = _MAX_MESSAGE_LEN) -> list[str]:
 
 class TelegramPublisher:
     """
-    Publishes posts to Telegram channels and sends approval previews via DM.
-    Uses the main TELEGRAM_BOT_TOKEN (must be channel admin).
-    For check-in DMs uses BUSINESS_BOT_TOKEN.
+    Publishes posts to Telegram channels and sends draft approval previews via DM.
+    Channel posts use the main TELEGRAM_BOT_TOKEN (bot must be channel admin).
+    When BUSINESS_BOT_TOKEN is set, draft previews with approve/edit/reject buttons
+    go through the business bot; otherwise the main bot is used.
     """
 
     def __init__(
@@ -48,6 +49,11 @@ class TelegramPublisher:
         self.main_token = main_bot_token
         self.business_token = business_bot_token
         self.http = http
+
+    @property
+    def approvals_use_business_bot(self) -> bool:
+        """If True, draft approval DMs and inline buttons are sent via business bot; else main bot."""
+        return bool(self.business_token)
 
     async def _send(
         self,

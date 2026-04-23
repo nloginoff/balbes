@@ -54,6 +54,8 @@ tools:
 #   blogger: http://127.0.0.1:18105
 
 # Telegram UI (оркестратор): см. shared.agent_manifest.TelegramFeatureFlags — всё true по умолчанию.
-# telegram:
+# Одобрение черновиков блогера — в бизнес-боте (blog_ callback), не дублируем в основном боте.
+telegram:
+  blog_callbacks: false
 #   voice: true
 #   agents_switch: true

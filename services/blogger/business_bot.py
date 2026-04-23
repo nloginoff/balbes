@@ -135,6 +135,9 @@ class BusinessBot:
 
         register_slash_command_handlers(app, tg, self, role="blogger", owner_filter=owner)
 
+        # Blog draft inline buttons (same callback_data as blogger publisher: blog_approve:/edit:/reject:)
+        app.add_handler(CallbackQueryHandler(self._cb_blog_approval, pattern="^blog_"))
+
         if tg.model_switch:
             app.add_handler(CallbackQueryHandler(self._cb_model_selected, pattern="^bbot_model:"))
         if tg.multi_chat:
@@ -215,8 +218,8 @@ class BusinessBot:
             "/draft \\[id\\] — один черновик по первым 8 символам UUID\n"
             "/published — опубликованные\n"
             "/queue — очередь на публикацию\n"
-            "✅/❌ *Одобрение:* превью с кнопками приходит в *основной* бот (Balbes), "
-            "не в этом чате — открой диалог с основным ботом и нажми кнопки.\n\n"
+            "✅/❌ *Одобрение:* превью черновика с кнопками (Опубликовать / Исправить / Отклонить) "
+            "приходит *в этот чат* с бизнес-ботом — нажимай здесь.\n\n"
             "🤖 *Модель*\n"
             "/model — выбрать LLM для текущего чата\n\n"
             "💬 *Чаты*\n"
@@ -618,6 +621,61 @@ class BusinessBot:
         label = next((lbl for mid, lbl in self._get_models() if mid == model_id), model_id)
         await query.edit_message_text(f"✅ Модель чата: *{label}*", parse_mode="Markdown")
 
+    async def _cb_blog_approval(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle blog_approve / blog_reject / blog_edit from draft preview (this bot only, not Balbes)."""
+        query = update.callback_query
+        await query.answer()
+        user = update.effective_user
+        if not user or user.id != self.owner_tg_id:
+            return
+        if not self._http:
+            await query.edit_message_text("❌ Внутренняя ошибка: нет HTTP-клиента к blogger API.")
+            return
+        data = query.data or ""
+        parts = data.split(":", 1)
+        if len(parts) != 2:
+            return
+        action, post_id = parts[0], parts[1]
+        blogger_url = f"http://127.0.0.1:{get_settings().blogger_service_port}"
+
+        try:
+            if action == "blog_approve":
+                resp = await self._http.post(
+                    f"{blogger_url}/api/v1/posts/{post_id}/approve", timeout=10.0
+                )
+                if resp.status_code == 200:
+                    await query.edit_message_text(
+                        f"✅ Пост одобрен и добавлен в очередь публикации.\n`{post_id}`",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Ошибка: {resp.status_code}")
+            elif action == "blog_reject":
+                resp = await self._http.post(
+                    f"{blogger_url}/api/v1/posts/{post_id}/reject", timeout=10.0
+                )
+                if resp.status_code == 200:
+                    await query.edit_message_text(
+                        f"❌ Пост отклонён.\n`{post_id}`", parse_mode="Markdown"
+                    )
+                else:
+                    await query.edit_message_text(f"❌ Ошибка: {resp.status_code}")
+            elif action == "blog_edit":
+                try:
+                    await self._http.post(
+                        f"{blogger_url}/api/v1/posts/edit-mode/{post_id}",
+                        params={"owner_chat_id": user.id},
+                        timeout=10.0,
+                    )
+                except Exception:
+                    pass
+                await query.edit_message_text(
+                    f"✏️ Напиши в чат, что исправить в посте, и агент перепишет его.\n`{post_id}`",
+                    parse_mode="Markdown",
+                )
+        except Exception as exc:
+            await query.edit_message_text(f"❌ Ошибка связи с blogger: {exc!s:.400}")
+
     async def _cmd_drafts(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """List drafts with full RU/EN body (split across messages if long)."""
         msg = update.effective_message
@@ -766,7 +824,7 @@ class BusinessBot:
             await msg.reply_text(
                 f"✅ Сохранено черновиков: {n} (pending_approval).\n"
                 f"ID: {ids_line} — смотри /drafts\n"
-                f"Превью с кнопками — в личке (основной или бизнес-бот)."
+                f"Превью с кнопками — в этом чате ниже (одобрение здесь же)."
             )
         except Exception as exc:
             logger.exception("_cmd_generate: %s", exc)

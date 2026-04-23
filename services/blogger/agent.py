@@ -755,13 +755,8 @@ class BloggerAgent:
             title=post.get("title", ""),
         )
 
-        # Determine channel label and whether to use business bot
-        if post_type == "user":
-            channel_label = "личный блог"
-            use_biz_bot = True
-        else:
-            channel_label = "RU-канал + EN-канал"
-            use_biz_bot = False
+        channel_label = "личный блог" if post_type == "user" else "RU-канал + EN-канал"
+        use_biz_bot = self.publisher.approvals_use_business_bot
 
         channels = await self.queue.get_channels()
         if not channels:
@@ -971,9 +966,11 @@ class BloggerAgent:
             title=revised.get("title", ""),
         )
 
-        use_biz = post.get("post_type") == "user"
+        use_biz = self.publisher.approvals_use_business_bot
         msg_id = post.get("approval_message_id")
-        channel_label = "личный блог" if use_biz else "RU-канал + EN-канал"
+        channel_label = (
+            "личный блог" if post.get("post_type") == "user" else "RU-канал + EN-канал"
+        )
 
         if msg_id:
             await self.publisher.update_approval_message(
