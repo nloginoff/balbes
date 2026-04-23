@@ -1,8 +1,9 @@
 """
 Telegram channel publisher for blog posts.
 
-Sends posts to configured Telegram channels using the main bot token
-(the same bot must be added as admin to all channels).
+Sends posts to configured Telegram channels using the **business** (Blogger) bot token
+when set; that bot should be admin in the target channels. Falls back to the main
+orchestrator bot token only if no business token is configured.
 """
 
 import logging
@@ -35,9 +36,9 @@ def _split_text(text: str, limit: int = _MAX_MESSAGE_LEN) -> list[str]:
 class TelegramPublisher:
     """
     Publishes posts to Telegram channels and sends draft approval previews via DM.
-    Channel posts use the main TELEGRAM_BOT_TOKEN (bot must be channel admin).
-    When BUSINESS_BOT_TOKEN is set, draft previews with approve/edit/reject buttons
-    go through the business bot; otherwise the main bot is used.
+    Channel posting uses BUSINESS_BOT_TOKEN when set (that bot must be channel admin);
+    otherwise TELEGRAM_BOT_TOKEN (main) as fallback. Draft previews follow
+    ``approvals_use_business_bot`` (business first when token present).
     """
 
     def __init__(
@@ -54,6 +55,18 @@ class TelegramPublisher:
     def approvals_use_business_bot(self) -> bool:
         """If True, draft approval DMs and inline buttons are sent via business bot; else main bot."""
         return bool(self.business_token)
+
+    def _channel_post_token(self) -> str:
+        """Token for ``sendMessage`` to blog channels: business bot first, else main (with warning)."""
+        if self.business_token:
+            return self.business_token
+        if self.main_token:
+            logger.warning(
+                "publish_to_channel: BUSINESS_BOT_TOKEN not set, using main TELEGRAM_BOT_TOKEN; "
+                "add the business bot to channels in production."
+            )
+            return self.main_token
+        return ""
 
     async def _send(
         self,
@@ -121,14 +134,18 @@ class TelegramPublisher:
 
     async def publish_to_channel(self, channel_id: str, text: str) -> bool:
         """
-        Publish text to a Telegram channel.
+        Publish text to a Telegram channel (business/blogger bot if configured).
         Splits long messages automatically.
         Returns True on success.
         """
+        token = self._channel_post_token()
+        if not token:
+            logger.error("publish_to_channel: no Telegram bot token configured")
+            return False
         chunks = _split_text(text)
         success = True
         for chunk in chunks:
-            result = await self._send(self.main_token, channel_id, chunk)
+            result = await self._send(token, channel_id, chunk)
             if result is None:
                 success = False
         return success

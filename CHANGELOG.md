@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Blogger: публикация в канал** — [`TelegramPublisher.publish_to_channel`](services/blogger/publisher.py) шлёт посты **токеном бизнес-бота** (`BUSINESS_BOT_TOKEN`), задан main только без него; в лог — предупреждение при fallback.
+
 ### Added
 - **Blogger: dev_blog** — в [`config/providers.yaml`](config/providers.yaml) блок `blogger.dev_blog`: фильтр чатов Memory по `agent_id`, опциональный сниппет чата с бизнес-ботом, дедуп заголовков (очередь + опубликованные), пакетная генерация (`batch_topics` + `max_posts_per_run`) с планировщиком тем и `POST_DEV_AGENT.md` (дефолт — [`services/blogger/bbot_bootstrap/POST_DEV_AGENT.md`](services/blogger/bbot_bootstrap/POST_DEV_AGENT.md)). [`generate_agent_post`](services/blogger/agent.py) и `POST /api/v1/posts/generate` создают **несколько** черновиков; [`services/blogger/api/posts.py`](services/blogger/api/posts.py) отдаёт `post_ids` / `count`.
 

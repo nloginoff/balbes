@@ -185,6 +185,7 @@ The Blogger is a standalone FastAPI service that turns your work into public con
 - **Monitors** business Telegram groups silently — anonymizes messages, stores them, generates daily summaries
 - **Evening check-in** at 20:00 — sends questions to the owner, processes the reply, creates a personal post draft
 - **Manages** a publishing queue — 1–3 posts per day, respects daily quota
+- **Channel publishing** — after approval, posts are sent to channels using the **Business Bot** token (`BUSINESS_BOT_TOKEN`); the same bot should be an admin in those channels. If that env var is missing, the service falls back to the main `TELEGRAM_BOT_TOKEN` (log warning).
 - **Approval workflow** — every post goes through ✅ Approve / ✏️ Edit / ❌ Reject before publishing
 
 ### Workspace
