@@ -490,13 +490,25 @@ class BloggerAgent:
         sources, source_refs = await self._gather_post_sources(
             from_ts, eff_hours, eff_cursor, include_bbot, agent_ids
         )
+        if (
+            not sources
+            and not dev_disabled
+            and not include_bbot
+        ):
+            logger.info(
+                "generate_agent_post: no sources with include_bbot_thread=false, retrying with bbot thread"
+            )
+            sources, source_refs = await self._gather_post_sources(
+                from_ts, eff_hours, eff_cursor, True, agent_ids
+            )
 
         if not sources:
             logger.info("No source material for agent post")
             self._last_post_gen_error = (
-                "Нет материалов: ни переписки с бизнес-ботом (если включено), "
-                "ни чатов по фильтру, ни Cursor-файлов. "
-                "Проверь MEMORY_SERVICE_URL, TELEGRAM_USER_ID и `blogger.dev_blog` / agent_id."
+                "Нет материалов: ни переписки с бизнес-ботом, ни чатов Memory (по фильтру dev_blog), "
+                "ни Cursor-файлов. Проверь MEMORY_SERVICE_URL и TELEGRAM_USER_ID. "
+                "Если пишешь только в этом боте — убедись, что в чате есть реплики, или включи "
+                "`blogger.dev_blog.include_bbot_thread: true`, или ослабь фильтр `source_agent_ids`."
             )
             return []
 

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Blogger API `POST .../schedule` и пути с `{post_id}`** — принимается **полный UUID** или **8 hex-символов** как в списках; `publish_at` с суффиксом **`Z`**; при несоответствии статуса и невалидном id — **400** с понятным `detail` (см. [`services/blogger/post_queue.py`](services/blogger/post_queue.py), [`services/blogger/api/posts.py`](services/blogger/api/posts.py)). Описание инструмента **`schedule_post`** в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) обновлено.
 
 ### Fixed
+- **Бизнес-бот `/model` без кнопок** — список LLM берётся через [`get_providers_config()`](shared/utils.py) (тот же поиск `config/providers.yaml`, что у оркестратора), а не из пути «три уровня от `business_bot.py`»; при пустом `active_models` в чат уходит пояснение вместо сообщения без inline-клавиатуры. [`services/blogger/business_bot.py`](services/blogger/business_bot.py)
+- **`/generate` без материалов в личке** — при `blogger.dev_blog.include_bbot_thread: false` и пустых отфильтрованных чатах Memory выполняется **вторая попытка** с включённым сниппетом чата с бизнес-ботом. [`services/blogger/agent.py`](services/blogger/agent.py)
 - **`list_drafts` (инструмент блогера)** — в [`shared/agent_tools/registry.py`](shared/agent_tools/registry.py) после списка ID запрашивается **GET /api/v1/posts/{id}** для каждого поста: в ответе списка нет поля `content`, поэтому владелец в чате видел заголовки без текстов. Описание инструмента обновлено; system prompt бизнес-бота: явно вызывать `list_drafts` для полных RU/EN. [`/help`](services/blogger/business_bot.py): одобрение — в **основном** боте (кнопки у превью), не в бизнес-боте.
 
 ### Changed

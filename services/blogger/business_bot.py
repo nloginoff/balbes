@@ -15,12 +15,10 @@ SECURITY:
 
 import logging
 from html import escape
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import asyncpg
 import httpx
-import yaml
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, User
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -46,23 +44,25 @@ from shared.telegram_app.telegram_command_matrix import (
 )
 from shared.telegram_app.text import split_long_text
 from shared.telegram_app.voice import business_bot_handle_voice
+from shared.utils import get_providers_config
 
 from .anonymizer import AnonymizationEngine
 from .post_queue import post_content_ru_en
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
-
 
 def _load_active_models() -> list[dict]:
-    """Load active_models from config/providers.yaml (same list as orchestrator)."""
-    cfg_path = _PROJECT_ROOT / "config" / "providers.yaml"
+    """Load active_models from config (same resolution as orchestrator / get_providers_config)."""
+    logger_mod = logging.getLogger("blogger.business_bot")
     try:
-        with cfg_path.open(encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        return data.get("active_models", [])
+        data = get_providers_config() or {}
+        out = data.get("active_models") or []
+        if not out:
+            logger_mod.warning(
+                "active_models is empty or config missing (get_providers_config); /model will have no buttons"
+            )
+        return out
     except Exception as exc:
-        logger_mod = logging.getLogger("blogger.business_bot")
-        logger_mod.warning("Could not load active_models from providers.yaml: %s", exc)
+        logger_mod.warning("Could not load active_models: %s", exc)
         return []
 
 
@@ -587,6 +587,12 @@ class BusinessBot:
             "openrouter/"
         )
         models = self._get_models()
+        if not models:
+            await update.message.reply_text(
+                "Список моделей пуст: не найден блок `active_models` в `config/providers.yaml` "
+                "(тот же файл, что подхватывает оркестратор). Проверь деплой конфига и логи блогера."
+            )
+            return
         buttons = [
             [
                 InlineKeyboardButton(
