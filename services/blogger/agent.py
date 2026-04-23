@@ -37,6 +37,28 @@ _BBOT_DEFAULTS = Path(__file__).parent / "bbot_bootstrap"
 
 _DEFAULT_MODEL = "openrouter/moonshotai/kimi-k2.5"
 _CHEAP_MODEL = "openrouter/meta-llama/llama-3.3-70b-instruct"
+# Batch dev-blog writers repeat the same sources per topic — cap input so the model still has room for RU+EN JSON.
+_DEV_BLOG_WRITER_INPUT_MAX = 12000
+
+
+def _clip_dev_blog_material(text: str, max_chars: int = _DEV_BLOG_WRITER_INPUT_MAX) -> str:
+    t = (text or "").strip()
+    if len(t) <= max_chars:
+        return t
+    return (
+        t[:max_chars]
+        + "\n\n[… исходный материал обрезан по длине; опирайся на то, что выше …]"
+    )
+
+
+def _json_object_slice(s: str) -> str:
+    """Best-effort extract of a single JSON object from model output (prose before/after)."""
+    s = (s or "").strip()
+    i = s.find("{")
+    j = s.rfind("}")
+    if i == -1 or j <= i:
+        return ""
+    return s[i : j + 1]
 
 
 def _read_workspace_file(name: str) -> str:
@@ -438,6 +460,7 @@ class BloggerAgent:
         post_dev: str,
         model: str,
     ) -> dict | None:
+        up = _clip_dev_blog_material(user_prompt)
         refs = list(base_refs)
         if topic:
             refs.append(f"dev_blog:topic:{topic['topic_id']}")
@@ -445,14 +468,34 @@ class BloggerAgent:
             identity, soul, post_dev, avoid_list, single_topic=topic
         )
         primary = model or self.model
-        raw = await self._call_llm(_llm_messages(system, user_prompt), model=primary)
-        if not raw.strip() and _normalize_openrouter_model_id(
-            primary
-        ) != _normalize_openrouter_model_id(self.cheap_model):
-            raw = await self._call_llm(_llm_messages(system, user_prompt), model=self.cheap_model)
-        if not raw.strip():
+        cheap = self.cheap_model
+        use_max = 4096
+        pn = _normalize_openrouter_model_id
+
+        async def do_call(m: str) -> str:
+            return await self._call_llm(
+                _llm_messages(system, up), model=m, max_tokens=use_max
+            )
+
+        raw = await do_call(primary)
+        parsed = self._parse_post_json(raw, refs)
+        if parsed:
+            return parsed
+        if pn(primary) == pn(cheap):
+            if raw.strip():
+                logger.warning(
+                    "dev_blog writer: unparseable JSON, no alt model (primary==cheap) | %s", raw[:300]
+                )
             return None
-        return self._parse_post_json(raw, refs)
+        raw2 = await do_call(cheap)
+        parsed2 = self._parse_post_json(raw2, refs)
+        if not parsed2 and (raw.strip() or raw2.strip()):
+            logger.warning(
+                "dev_blog writer: unparseable | primary=%s | tail=%s",
+                raw[:220],
+                raw2[:220],
+            )
+        return parsed2
 
     async def generate_agent_post(
         self,
@@ -605,7 +648,27 @@ class BloggerAgent:
             if w:
                 out_posts.append(w)
         if not out_posts:
-            self._last_post_gen_error = "Планировщик дал темы, но написать посты не удалось (пустой ответ LLM или битый JSON)."
+            logger.warning(
+                "generate_agent_post: batch writers returned nothing for %d topics, fallback to single post",
+                len(topics),
+            )
+            one = await self._write_one_agent_post_json(
+                user_material,
+                source_refs,
+                None,
+                avoid_list,
+                identity,
+                soul,
+                post_dev,
+                primary,
+            )
+            if one:
+                return [one]
+            self._last_post_gen_error = (
+                "Планировщик выделил темы, но написать посты не вышло (модель вернула пустой ответ "
+                "или невалидный JSON). Попробуй другую модель в /model или отключи пакет тем: "
+                "`blogger.dev_blog.batch_topics: false`."
+            )
             return []
         return out_posts
 
@@ -644,13 +707,18 @@ class BloggerAgent:
 
     def _parse_post_json(self, raw: str, source_refs: list[str]) -> dict | None:
         """Parse LLM JSON response into post dict."""
-        raw = raw.strip()
+        cleaned = (raw or "").strip()
         # Strip markdown code block if present
-        if raw.startswith("```"):
-            lines = raw.split("\n")
-            raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
-        try:
-            data = json.loads(raw)
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            cleaned = "\n".join(lines[1:-1]) if len(lines) > 2 else cleaned
+        for candidate in (cleaned, _json_object_slice(cleaned)):
+            if not (candidate or "").strip():
+                continue
+            try:
+                data = json.loads(candidate)
+            except json.JSONDecodeError:
+                continue
             n = data.get("notes", "")
             return {
                 "title": data.get("title", ""),
@@ -659,9 +727,8 @@ class BloggerAgent:
                 "source_refs": list(source_refs),
                 "notes": n if isinstance(n, str) else "",
             }
-        except json.JSONDecodeError as exc:
-            logger.error("Failed to parse post JSON: %s | raw=%s", exc, raw[:200])
-            return None
+        logger.error("Failed to parse post JSON | raw=%s", cleaned[:400])
+        return None
 
     # =========================================================================
     # Draft creation & approval
