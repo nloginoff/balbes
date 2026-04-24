@@ -206,6 +206,8 @@ max_tokens: 4000
 temperature: 0.7
 ```
 
+For `server_commands` / `server_commands_ask`, the workspace `allowed_commands` list is **unioned** with the entries from `providers.yaml` (you can add a few extra patterns like `date` without copying the full whitelist). The workspace file path for agent `balbes` is `data/agents/balbes/config.yaml` or, for the legacy layout, `data/agents/orchestrator/config.yaml` (same resolution as the schedule workspace directory).
+
 ---
 
 ## Agent Workspace Files

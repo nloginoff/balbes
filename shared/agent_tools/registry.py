@@ -832,7 +832,11 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
             "description": (
                 "Manage scheduled tasks (cron/interval jobs). "
                 "Jobs are stored per agent in data/agents/<agent>/schedules.yaml (like workspace files). "
-                "Use list/add/remove/enable/disable. Changes take effect within ~30 seconds without a restart."
+                "Use list/add/remove/enable/disable. Changes take effect within ~30 seconds without a restart. "
+                "For a one-time calendar run use trigger=cron and set year, month, day, hour, minute. "
+                "To remind the user all day, add several cron jobs on the same day at different hours "
+                "or a single job whose prompt says to nudge a few times that day. "
+                "For ambiguous dates, call execute_command with a whitelisted 'date' first."
             ),
             "parameters": {
                 "type": "object",
@@ -879,6 +883,22 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Days for cron trigger: mon,tue,wed,thu,fri,sat,sun (or * for every day).",
                     },
+                    "day": {
+                        "type": "integer",
+                        "description": "Day of month (1-31) for cron (optional; use with month/year for a fixed calendar date).",
+                    },
+                    "month": {
+                        "type": "integer",
+                        "description": "Month (1-12) for cron (optional).",
+                    },
+                    "year": {
+                        "type": "integer",
+                        "description": "Optional: limit a cron job to a specific year (e.g. 2026 for a one-time reminder).",
+                    },
+                    "user_id": {
+                        "type": "string",
+                        "description": "Telegram user id to deliver scheduled messages to; default is \"0\" (owner/system).",
+                    },
                     "minutes": {
                         "type": "integer",
                         "description": "Repeat every N minutes (interval trigger).",
@@ -886,6 +906,22 @@ AVAILABLE_TOOLS: list[dict[str, Any]] = [
                     "hours": {
                         "type": "integer",
                         "description": "Repeat every N hours (interval trigger).",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "Repeat every N days (interval trigger).",
+                    },
+                    "weeks": {
+                        "type": "integer",
+                        "description": "Repeat every N weeks (interval trigger).",
+                    },
+                    "seconds": {
+                        "type": "integer",
+                        "description": "Repeat every N seconds (interval trigger).",
+                    },
+                    "second": {
+                        "type": "integer",
+                        "description": "Second (0-59) for cron trigger; rarely needed.",
                     },
                     "debug": {
                         "type": "boolean",

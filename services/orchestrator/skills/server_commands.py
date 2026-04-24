@@ -64,25 +64,46 @@ def _load_full_config() -> dict[str, Any]:
 
 
 def _load_workspace_config(agent_id: str) -> dict[str, Any]:
-    """Load agent's workspace config.yaml if it exists. Returns {} on failure."""
-    try:
-        from pathlib import Path
+    """Load agent's workspace config.yaml if it exists. Returns {} on failure.
 
+    Path matches AgentWorkspace and schedules: for agent_id ``balbes`` use
+    ``data/agents/balbes/`` if present, else ``data/agents/orchestrator/`` (legacy).
+    """
+    try:
         import yaml
 
-        path = (
-            Path(__file__).parent.parent.parent.parent
-            / "data"
-            / "agents"
-            / agent_id
-            / "config.yaml"
-        )
-        if path.exists():
+        from shared.agent_schedules import resolve_agent_dir
+
+        path = resolve_agent_dir(agent_id) / "config.yaml"
+        if path.is_file():
             with open(path, encoding="utf-8") as f:
                 return yaml.safe_load(f) or {}
     except Exception as e:
         logger.warning(f"Failed to load workspace config for {agent_id}: {e}")
     return {}
+
+
+def _merge_server_commands_layer(base: dict[str, Any], ws: dict[str, Any]) -> dict[str, Any]:
+    """Apply workspace server_commands* over base; union ``allowed_commands`` when both are lists.
+
+    Merging two full replaces would drop provider/global commands; listing only extra
+    entries (e.g. ``date``) in workspace is additive.
+    """
+    if not ws:
+        return base
+    out: dict[str, Any] = {**base, **ws}
+    a_base = base.get("allowed_commands")
+    a_ws = ws.get("allowed_commands")
+    if isinstance(a_ws, list):
+        base_list = a_base if isinstance(a_base, list) else []
+        seen: set[str] = set()
+        combined: list[str] = []
+        for x in base_list + a_ws:
+            if isinstance(x, str) and x and x not in seen:
+                seen.add(x)
+                combined.append(x)
+        out["allowed_commands"] = combined
+    return out
 
 
 def _resolve_config(agent_id: str | None = None, mode: str = "agent") -> dict[str, Any]:
@@ -120,7 +141,7 @@ def _resolve_config(agent_id: str | None = None, mode: str = "agent") -> dict[st
 
     merged = {**global_cfg, **providers_override}
     if ws_override:
-        merged = {**merged, **ws_override}
+        merged = _merge_server_commands_layer(merged, ws_override)
     return merged
 
 

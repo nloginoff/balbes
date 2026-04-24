@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Orchestrator: белый список shell и memory workspace** — `data/agents/<balbes→orchestrator>/config.yaml` подхватывается по тому же правилу, что `schedules.yaml` (`shared.agent_schedules.resolve_agent_dir`); `allowed_commands` в workspace **дополняет** (union) вайтлист из `providers.yaml`, не затирая его. В workspace Балбеса добавлены `date` / `date *`. Схема `manage_schedule` расширена полями `day`/`month`/`year` (и вспомогательными) для разовых напоминаний. Обновлены [data/agents/orchestrator/TOOLS.md](data/agents/orchestrator/TOOLS.md), [config/schedules.example.yaml](config/schedules.example.yaml), [docs/ru/CONFIGURATION.md](docs/ru/CONFIGURATION.md), [docs/en/CONFIGURATION.md](docs/en/CONFIGURATION.md).
+
 ### Fixed
 - **Blogger: публикация в канал** — [`TelegramPublisher.publish_to_channel`](services/blogger/publisher.py) шлёт посты **токеном бизнес-бота** (`BUSINESS_BOT_TOKEN`), задан main только без него; в лог — предупреждение при fallback.
 
